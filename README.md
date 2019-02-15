@@ -1,5 +1,7 @@
-# PyTorch implementation of "Unsupervised speech representation learning using
-# WaveNet autoencoders" by Jan Chorowski, Ron Weiss, Samy Bengio, and Aaron van
-# den Oord.
+# PyTorch implementation of Jan Chorowski, Jan 2019 paper"
+
+This is a PyTorch implementation of https://arxiv.org/abs/1901.08810.
+
+
 
 
