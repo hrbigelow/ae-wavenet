@@ -29,7 +29,7 @@ class GatedResidualCondConv(nn.Module):
 
 
 class WaveNet(nn.Module):
-    def __init__(self, n_in, n_kern, n_lc, n_res, n_dil, n_skp, n_post, n_quant,
+    def __init__(self, n_batch, n_in, n_kern, n_lc, n_res, n_dil, n_skp, n_post, n_quant,
             n_blocks, n_block_layers):
         self.n_blocks = n_blocks
         self.n_block_layers = n_block_layers
@@ -37,11 +37,13 @@ class WaveNet(nn.Module):
         self.base_layer = nn.Conv1d(n_in, n_res, self.kern_size, self.stride,
                 dilation=1, bias=self.bias)
         self.conv_layers = nn.ModuleList() 
+        self.conv_state = []
         for b in range(self.n_blocks):
             for bl in range(self.n_block_layers):
                 dil = bl**2
                 self.conv_layers.append(
                         GatedResidualCondConv(n_lc, 2, n_res, n_dil, n_skp, 1, 1, dil))
+                self.conv_state.append(torch.zeros([n_batch, n_res, dil], dtype=torch.float32))
 
         self.post1 = nn.Conv1d(n_skp, n_post, 1, 1, 1, bias)
         self.post2 = nn.Conv1d(n_post, n_quant, 1, 1, 1, bias)
@@ -50,7 +52,8 @@ class WaveNet(nn.Module):
     def forward(x, lc):
         sig = self.base_layer(x) 
         skp_sum = None
-        for l in self.layers:
+        for i, l in enumerate(self.layers):
+            sig = torch.cat([self.conv_state[i], sig], 1)
             sig, skp = l(sig, lc)
             if skp_sum: skp_sum += skp
             else skp_sum = skp

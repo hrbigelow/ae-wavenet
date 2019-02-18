@@ -1,13 +1,17 @@
-class ConvRes(nn.Module):
-    def __init__(self, n_in, n_out, n_kern, stride=1):
-        super(ConvRes, self).__init__()
-        self.conv = nn.Conv1d(n_in, n_out, n_kern, stride)
+from torch import nn
+
+class ConvReLURes(nn.Module):
+    def __init__(self, n_in, n_out, n_kern, stride=1, do_res=True):
+        super(ConvReLURes, self).__init__()
+        self.do_res = do_res
+        self.conv = nn.Conv1d(n_in, n_out, n_kern, stride, padding=int(n_kern/2))
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
         out = self.conv(x)
         out = self.relu(out)
-        out += x
+        if (self.do_res):
+            out += x
         return out
 
 class FCRes(nn.Module):
@@ -24,18 +28,19 @@ class FCRes(nn.Module):
 
 class Encoder(nn.Module):
     def __init__(self, n_in, n_mid):
+        super(Encoder, self).__init__()
         self.net = nn.Sequential(
-            ConvRes(n_in, n_mid, 3),
-            ConvRes(n_mid, n_mid, 3),
-            ConvRes(n_mid, n_mid, 4, stride=2),
-            ConvRes(n_mid, n_mid, 3),
-            ConvRes(n_mid, n_mid, 3),
-            FCRes(n_mid, n_mid),
-            FCRes(n_mid, n_mid),
-            FCRes(n_mid, n_mid),
-            FCRes(n_mid, n_mid)
+            ConvReLURes(n_in, n_mid, 3, do_res=False),
+            ConvReLURes(n_mid, n_mid, 3),
+            ConvReLURes(n_mid, n_mid, 4, stride=2, do_res=False),
+            ConvReLURes(n_mid, n_mid, 3),
+            ConvReLURes(n_mid, n_mid, 3),
+            ConvReLURes(n_mid, n_mid, 1),
+            ConvReLURes(n_mid, n_mid, 1),
+            ConvReLURes(n_mid, n_mid, 1),
+            ConvReLURes(n_mid, n_mid, 1)
             )
 
-    def forward(x):
+    def forward(self, x):
         out = self.net(x)
         return out

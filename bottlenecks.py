@@ -1,4 +1,5 @@
 from torch import nn
+from torch.distributions import multivariate_normal as dist
 
 class VQVAE(nn.Module):
     def __init__(self, n_in, n_out, bias):
@@ -15,13 +16,13 @@ class VQVAE(nn.Module):
 class VAE(nn.Module):
     def __init__(self, n_in, n_out, bias):
         self.fc = nn.Linear(n_in, n_out * 2, bias)
-        self.sample = gaussian_sample()
-
+        self.dist = dist.MultivariateNormal(torch.zeros(n_out), torch.eye(n_out)) 
 
     def forward(x):
         out = self.fc(x)
-        out = self.sample(out[0:n_out],
-                out[n_out:n_out * 2])
+        self.dist.mean[:] = out[0:n_out]
+        self.dist.covariance_matrix[:,:] = torch.diag(out[n_out:])
+        out = self.dist.sample()
         return out
 
 

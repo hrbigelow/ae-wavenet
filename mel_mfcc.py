@@ -24,17 +24,18 @@
 import librosa
 import numpy as np
 
-class MfccProcess(Object):
-    def __init__(self, sample_rate_sec=16000, window_length_ms=25,
+class MfccProcess(object):
+    def __init__(self, sample_rate_ms=16, window_length_ms=25,
             hop_length_ms=10, n_mels=80, n_mfcc=13):
-        self.sample_rate_sec = sample_rate_sec
+        self.sample_rate_ms = sample_rate_ms
         self.window_length_ms = window_length_ms
         self.hop_length_ms = hop_length_ms
         self.n_mels = n_mels
         self.n_mfcc = n_mfcc
 
-    def func(file):
-        y, _ = librosa.load(self, self.sample_rate_sec)
+    def func(self, file):
+        sample_rate = self.sample_rate_ms * 1000
+        y, _ = librosa.load(file, sample_rate)
         n_fft = self.sample_rate_ms * self.window_length_ms
         hop_length = self.sample_rate_ms * self.hop_length_ms
         mfcc = librosa.feature.mfcc(y=y, sr=sample_rate, n_fft=n_fft,
@@ -43,23 +44,4 @@ class MfccProcess(Object):
         mfcc_delta2 = librosa.feature.delta(mfcc, order=2)
         mfcc_and_derivatives = np.concatenate((mfcc, mfcc_delta, mfcc_delta2), axis=0)
         return mfcc_and_derivatives
-
-
-
-
-
-
-
-
-sample_rate = 16000 # timestep / second
-sample_rate_ms = int(sample_rate / 1000) # timestep / ms 
-window_length_ms = 25 # ms
-hop_length_ms = 10 # ms
-n_mels = 80
-n_mfcc = 13
-
-# encoder
-in_channels = input.shape[0]
-mid_channels = 768
-kernel_size = 3
 
