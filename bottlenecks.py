@@ -16,18 +16,20 @@ class VQVAE(nn.Module):
 class VAE(nn.Module):
     def __init__(self, n_in, n_out, bias):
         self.fc = nn.Linear(n_in, n_out * 2, bias)
-        self.dist = dist.MultivariateNormal(torch.zeros(n_out), torch.eye(n_out)) 
+        # dummy dimensions - will be set in forward
+        self.dist = dist.Normal(torch.tensor([0]), torch.tensor([0]))
 
     def forward(x):
+        # Input: (N, T, I)
         out = self.fc(x)
-        self.dist.mean[:] = out[0:n_out]
-        self.dist.covariance_matrix[:,:] = torch.diag(out[n_out:])
-        out = self.dist.sample()
+        self.dist.loc = out[:,:,:n_out]
+        self.dist.scale = out[:,:,n_out:]
+        out = self.dist.rsample([1]).squeeze(0)
         return out
 
 
 class AE(nn.Module):
-    def __init__(self, n_in, otu_channels, bias):
+    def __init__(self, n_in, n_out, bias):
         self.fc = nn.Linear(n_in, n_out, bias)
 
     def forward(x):
