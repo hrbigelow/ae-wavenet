@@ -2,6 +2,8 @@ import torch
 import wave_encoder as we
 import mel_mfcc as mm
 
+import ae_model as ae
+
 
 sample_rate = 16000 # timestep / second
 sample_rate_ms = int(sample_rate / 1000) # timestep / ms 
@@ -38,4 +40,20 @@ bn_chan = 64
 vae = bn.VAE(mid_chan, bn_chan, bias=False)
 
 vae_samples = vae.forward
+
+def main():
+    args = get_args()
+
+    # Construct model
+    model = ae.AutoEncoder()
+
+    # Restore from checkpoint
+    # Initialize optimizer
+
+    # Start training
+
+
+if __name__ == '__main__':
+    main()
+
 
