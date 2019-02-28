@@ -4,16 +4,7 @@
 # use the list to construct the input
 # perhaps it's better to abstract away the function for reading a file
 # from that used to extract a unit of
-
-# decision
-# 1. parse the main file into a map
-# 2. enqueue the files
-# 3. load them as needed into empty slots. 
-
-# fuctions needed
-
 import numpy as np
-import ckpt
 from sys import stderr, maxsize
 
 #                                      => slice
@@ -26,40 +17,65 @@ from sys import stderr, maxsize
 #    mechanism: in fact, if we adhere to the rule that we only shuffle the whole
 #    catalog each time, then we only need to skip by mod(catalog_size)
 #    But, we do need to initialize the step correctly.
-# Is it worth it to design a checkpointing mechanism that remembers which slice we
-# were in?  That would mean to checkpoint all of the generator states.  So, each
-# instance of a generator would have its own state, and all of these would be
-# checkpointed.  What would that mean?
+from functools import total_ordering
+
+@total_ordering
+class Position(object):
+    def __init__(self, epoch, file_index, slice_index):
+        self.epoch = epoch
+        self.file_index = file_index
+        self.slice_index = slice_index
+
+    def __lt__(self, other):
+        return self.epoch < other.epoch or \
+                self.epoch == other.epoch and \
+                self.file_index < other.file_index
+
+    def __eq__(self, other):
+        return self.epoch == other.epoch and \
+                self.file_index == other.file_index
 
 
+
+
+class IterPosition(object):
+    '''Completely describes data position.  To be used in a global save/restore
+    logic for checkpointing.  '''
+
+    def __init__(self, rand_state, data_position):
+
+        data_position.sort()
+        self.rand_state = rand_state
+        self.start_epoch = data_position[0].epoch
+        self.start_file_index = data_position[0].file_index
+        self.slice_indices = [d.slice_index for d in data_position] 
+
+    @classmethod
+    def default(cls, batch_sz):
+        rand_state = np.random.get_state()
+        data_position = [Position(0, 0, 0)] * batch_sz
+        return cls(rand_state, data_position)
 
 
 class MaskedSliceWav(object):
 
-    def __init__(self, sess, sam_file, sample_rate, slice_sz, prefetch_sz,
-            batch_sz, n_keep_checkpoints, ckpt_path, resume_step):
+    def __init__(self, sam_file, sample_rate, slice_sz, batch_sz, recep_field_sz):
         self.sam_file = sam_file
         self.sample_rate = sample_rate
-        self.prefetch_sz = prefetch_sz
         self.slice_sz = slice_sz
         self.batch_sz = batch_sz
-        self.random_seed = np.random.randint(maxsize)
-        self.ckpt_position = 0
-        
-    # do I need to worry about interrupts here?
-    def save(self, path):
-        import pickle
-        self.rand_state = np.random.get_state()
-        full_state = (self.rand_state, self.epoch, self.file_index,
-                self.slice_indexes)
-        pickle.dump(full_state, path)
+        if self.slice_sz < recep_field_sz:
+            print('Error: slice size of {} too small for receptive field size of {}'.format(
+                self.slice_sz, recep_field_sz))
+            raise ValueError
+        self.recep_field_sz = recep_field_sz
+        self.position = IterPosition.default(batch_sz)
 
-    def load(self, path):
-        import pickle
-        (self.rand_state, self.epoch, self.file_index,
-                self.slice_indexes) = pickle.load(path)
-        np.random.set_state(self.rand_state)
-            
+        
+    def update(self, data_position):
+        '''Run this in a thread together with other state updates'''
+        rs = np.random.get_state()
+        self.position = IterPosition(rs, data_position)
 
 
     def init_sample_catalog(self):
@@ -70,46 +86,27 @@ class MaskedSliceWav(object):
                 self.sample_catalog.append([int(vid), wav_path])
 
 
-    # OK
-    def set_receptive_field_size(self, r_sz):
-        if self.slice_sz < r_sz:
-            print('Error: slice size of {} too small for receptive field size of {}'.format(
-                self.slice_sz, r_sz))
-            raise ValueError
-        self.recep_field_sz = r_sz
-
-    # OK
     def get_max_id(self):
         max_el, _ = max(self.sample_catalog, key=lambda x: x[0])
         return max_el
 
-    def _path_gen(self):
-        epoch = self.epoch
+
+    def _wav_gen(self):
+        import librosa
+        epoch = self.position.start_epoch
 
         while True:
-            shuffle_catalog = np.random.permutation(self.sample_catalog) 
-            for s, file_index in enumerate(shuffle_catalog):
-                next if epoch == self.epoch and file_index < self.file_index
+            shuffle_index = np.random.permutation(len(self.sample_catalog))
+            shuffle_catalog = [self.sample_catalog[i] for i in shuffle_index] 
+            for file_index, s in enumerate(shuffle_catalog):
+                if epoch == self.position.start_epoch \
+                        and file_index < self.position.start_file_index:
+                    continue
                 vid, wav_path = s[0], s[1]
-                #print('Parsing ', wav_path, file=stderr)
-                yield epoch, file_index, vid, wav_path
-            epoch += 1
-
-
-    # probably doesn't make sense to do this - rather incorporate librosa.load into
-    # path_gen
-    def _wav_gen(self, path_gen):
-        '''simple pipe for converting (vid, wav_path) to (vid, [wav,...])
-        '''
-        while True:
-            try:
-                epoch, file_index, vid, wav_path = next(path_gen)
                 wav, _ = librosa.load(wav_path, self.sample_rate)
-                # print('loaded wav of size {}'.format(wav.data.nbytes), file=stderr)
-                yield epoch, file_index, int(vid), wav
-            except StopIteration: 
-                break
-        return
+                #print('Parsing ', wav_path, file=stderr)
+                yield epoch, file_index, vid, wav
+            epoch += 1
 
 
     def _gen_concat_slice_factory(self, wav_gen, batch_chan):
@@ -130,16 +127,15 @@ class MaskedSliceWav(object):
             wav = np.empty(0, np.float)
             ids = np.empty(0, np.int32)
             rf_sz = self.recep_field_sz
+            epoch, file_index, slice_index = 0, 0, 0 
+            fast_forward = True
 
             while True:
                 while len(wav) < self.slice_sz:
                     try:
                         # import pdb; pdb.set_trace()
                         epoch, file_index, vid, wav_nxt = next(wav_gen) 
-
-                        slice_gen.epoch = epoch
-                        slice_gen.file_index = file_index
-                        slice_gen.slice_index = 0
+                        slice_index = 0
 
                         wav_sz = len(wav_nxt)
                         if wav_sz < rf_sz:
@@ -157,99 +153,39 @@ class MaskedSliceWav(object):
 
                 wav_slice, wav = wav[:self.slice_sz + rf_sz], wav[self.slice_sz:]
                 ids_slice, ids = ids[:self.slice_sz + rf_sz], ids[self.slice_sz:]
-                slice_gen.slice_index += 1
+
                 # Fast-forward if loaded position is 
-                next if slice_gen.slice_index < self.slice_indexes[batch_chan]
+                if fast_forward and slice_index < self.slice_indexes[batch_chan]:
+                    continue
+                slice_index += 1
 
-                yield wav_slice, ids_slice
-
-        slice_gen.__dict__ = { 'epoch': 0, 'file_index': 0, 'slice_index': 0 }
+                yield Position(epoch, file_index, slice_index), wav_slice, ids_slice
+                fast_forward = False
 
         return slice_gen 
 
 
-    def _gen_slice_batch(self, path_gen):
+    def batch_gen(self):
         '''generates a batch of concatenated slices
         yields:
+        position[b] = (epoch, file_index, slice_index)
         wav[b][t] = amplitude
-        mel[b][t][c] = freq
         ids[b][t] = vid or zero (mask)
         b = batch, t = timestep, c = channel
         '''
-        wav_gen = self._wav_gen(path_gen)
+        wav_gen = self._wav_gen()
 
         # construct batch_sz slice generators, each sharing the same wav_gen
-        slice_gens = [self._gen_concat_slice_factory(wav_gen)() for _ in range(self.batch_sz)]
+        slice_gens = [self._gen_concat_slice_factory(wav_gen, c)() for c in range(self.batch_sz)]
 
         while True:
             try:
-                # this is probably expensive
                 # import pdb; pdb.set_trace()
                 batch = [next(g) for g in slice_gens]
-                wav = np.stack([b[0] for b in batch])
-                ids = np.stack([b[1] for b in batch])
-                yield wav, ids
+                positions = np.stack([b[0] for b in batch])
+                wav = np.stack([b[3] for b in batch])
+                ids = np.stack([b[4] for b in batch])
+                yield positions, wav, ids
             except StopIteration:
-                # this will be raised if wav_itr runs out
                 break
-
-
-    def build(self):
-        '''parse a sample file and create a ts.data.Dataset of concatenated,
-        labeled slices from it.
-        call this to create a fresh dataset.
-            '''
-        zero_d = tf.TensorShape([])
-        two_d = tf.TensorShape([self.batch_sz, None])
-        three_d = tf.TensorShape([self.batch_sz, None, self.mel_spectrum_sz])
-
-        with tf.name_scope('dataset'):
-            with tf.name_scope('sample_map'):
-                ds = tf.data.Dataset.from_generator(
-                        self._path_gen,
-                        (tf.int32, tf.string, tf.string),
-                        (zero_d, zero_d, zero_d))
-
-            with tf.name_scope('shuffle_repeat'):
-                ds = ds.repeat()
-                buf_sz = len(self.sample_catalog)
-                ds = ds.shuffle(buffer_size=buf_sz, seed=self.random_seed)
-                ds = ds.skip(self.ckpt_position)
-                # this iterator must be initializable because it is dependent
-                # on self.ckpt_position and self.random_seed, which must
-                # be initialized
-                self.path_itr = ds.make_initializable_iterator()
-
-                # used this so a reassignment of 'itr' doesn't break the code
-                def gen_wrap():
-                    return self._gen_slice_batch(gen_wrap.itr)
-                gen_wrap.itr = self.path_itr 
-
-            with tf.name_scope('slice_batch'):
-                ds = tf.data.Dataset.from_generator(
-                        gen_wrap,
-                        (tf.int64, tf.int32, tf.float32, tf.int32),
-                        (zero_d, two_d, three_d, two_d))
-
-            with tf.name_scope('prefetch'):
-                ds = ds.prefetch(buffer_size=self.prefetch_sz)
-
-        self.dataset_itr = ds.make_initializable_iterator()
-
-        # these two determine where in the dataset we will resume
-        self.add_saveable_objects({
-            'random_seed': self.random_seed,
-            'ckpt_position': self.ckpt_position
-            })
-
-        self.add_initializable_ops([self.path_itr, self.dataset_itr])
-
-    def save(self, step, read_count):
-        op = tf.assign(self.ckpt_position, read_count)
-        if tf.executing_eagerly():
-            pass
-        else:
-            self.sess.run(op)
-        return super().save(step)
-
 
