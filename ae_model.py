@@ -1,7 +1,8 @@
 # Full Autoencoder model
 import wave_encoder as enc
-import bottleneck as bn
+import bottlenecks as bn
 import wavenet as dec 
+from torch import nn
 from torch.nn.modules import loss
 
 class AutoEncoder(nn.Module):
@@ -10,14 +11,14 @@ class AutoEncoder(nn.Module):
     '''
     def __init__(self, bottleneck_type, params):
         super().__init__(self) # Is this necessary?
-        self.encoder = enc.Encoder(n_in, n_mod)
+        self.encoder = enc.Encoder(n_in, n_mid)
         if bottleneck_type == 'vqvae':
             self.bottleneck = bn.VQVAE(n_in, n_out, bias)
         elif bottleneck_type == 'vae':
             self.bottleneck = bn.VAE(n_in, n_out, bias)
         elif bottleneck_type == 'ae':
             self.bottleneck = bn.AE(n_in, n_out, bias)
-        else
+        else:
             raise Error()
 
         self.decoder = dec.WaveNet(n_batch)

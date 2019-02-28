@@ -1,0 +1,254 @@
+There are three generators:
+
+1. gen_path: generates the path and ID
+2. _wav_gen: simple pipe for _gen_path
+3. _gen_slice: (gen_function) 
+
+How to restore state?
+
+
+_wav_gen doesn't have any state
+_gen_path can be easily restored, but not necessarily saved...
+
+
+What signals the end of a training regime?  A keyboard interrupt, and
+then a handler for that keyboard interrupt.  That means the iterators in use
+will have a state and they can be stored.
+
+If you re-raise it from each generator, does each one receive it appropriately?  Or,
+only the ones that are currently executing?
+
+For gen_slice, how do we 
+
+
+
+The exception can happen at *any* moment - and, I'm not sure whether this means
+any individual Python statement, or something even more granular.
+
+Suppose you have some statement that affects the state of the generator.  For instance,
+you regard the contents of wav and ids as the 'state' of gen_slice, together with the
+state of wav_gen which it encloses.
+
+There are three statements in the generator.  The first updates wav_gen.  The
+second updates wav, and the third updates ids.  Now, the exception can occur at
+any time, so it might occur in between the first and second, or second and third, or
+after the third.  But, we can only re-start the generator at the beginning.  So, would
+it be possible to write it in such a way that it can be restored to the same state?
+
+In gen_slice, it doesn't appear so.  It appears that  
+
+It is interesting that, perhaps during the creation of the closure, we also give it
+state in the things it encloses?  It could be that just after the yield is the best place
+to record state.  
+
+Think of it like this:  Suppose you had a single generator that generated the counting
+numbers.  You run it for awhile, and then interrupt it.  Then, you record the last
+value that it yielded.  The restore routine could just be to iterate it until it
+yielded the same value.  The only problem is this is wasteful - you are repeating some
+work already done.  However, if you only repeat a little bit of the work, it's okay.
+
+Unfortunately, there isn't a way to rewind an iterator, even by one position.
+
+Let's say you are interrupted at line 130 in data.py.  You've already consumed the
+next wav data from the generator.  In order to restore that, you do the following:
+
+Another problem is that the initial construction of the B slice_gen generators
+doesn't actually draw from wav_gen.  So, if we were to re-execute the _gen_slice_batch
+function, it would have no way to restore 
+
+Perhaps adopt the following principles in constructing a generator.
+
+For one thing, running the generator is the easiest way to change its state - after
+all, that is what it is designed for.  We just need a virtual measure for position,
+
+So, what we would like is to be able to have a virtual 'current' position.  When
+interrupted, we pickle just the current logical position.  To restore, we read the
+pickled current position and instantiate the generators to that position.
+
+How can this be done?
+
+It is likely not possible to recover the exact order in which each wav file is loaded
+into each channel of the batch.  But, the only thing it should affect is the order in
+which gradients are summed.  (Gradient terms never interact across items of a batch,
+and they are summed at the end)
+
+So, here is a proposed protocol for restoring:
+
+1. Retrieve the saved wav_gen current position and instantiate wav_gen generator
+   to one position previous to it.
+
+2. Retrieve each of the B sub-positions of the gen_slice generators.  Instantiate each
+   of these to this position (not the previous) 
+
+
+To write the wav_gen generator to restore to a particular position, we use the
+list iterator.  Actually, I'd like to avoid using pickle.dump due to API compatibility
+issues.  A better way would be to just store simple text integers.
+
+Actually, also, since all slice_gen's share the same wav_gen, we need to find the current
+position of wav_gen and rewind B positions.  Then, there needs to be a repeatable sequence
+of random numbers as well, gah!
+
+But, that is fine.  We just record the following:
+
+1. random_seed
+2. last epoch E
+3. path_gen position P
+4. B slice_gen positions
+
+Or, maybe it's best to just maintain a single E and P for the minimum.  But, this would mean
+maintaining P and E positions for all B batch channels, because we don't know what the next
+minimum will be.
+
+So one way we could achieve this is to return the epoch, file_index, slice_index.  or,
+we could instead maintain these as properties of the slice_gens.  it seems a bit gauche
+to store these properties on the functors themselves.  but is there a better way?
+
+An advantage to function properties is that they are named, and can be accessed at leisure,
+rather than needing to be collected at every call.
+
+So, if I have an interrupt handler, how can I guarantee that the various state variable
+representatives are accurate?
+
+Let's see...at any moment, there can be a keyboard interrupt.  The main thing that's important
+is that the updating of the weights and of the variables describing state of the data
+reader are in sync.  But, obviously, there is no way to make these updates atomic, is there?
+
+
+So, from a high-level point of view, the training will involve two successive changes
+in state.
+
+1. data position
+2. model parameters
+
+So, there are two questions.  These most likely will update in alternating fashion.
+The question is whether there is, or should be any space in between the two.
+
+D  M  D  M  D  M ...
+
+What is actually happening?
+
+1. model initialized randomly
+2. data initialized to starting position
+
+Loop:
+3. compute batch of data 
+4. compute gradients
+5. update model
+6. advance to next data position (and load data))
+
+So, if you checkpointed between 5 and 6, then you would end up re-processing on
+an already-processed slice of data.  So, really, steps 5 and 6 should be uninterruptible.
+
+Then, after that, the signal handler should just write the joint data/model state to disk.
+But, the key is to make those updates atomic.
+
+I think the problem is solved then - write all the update code in a single thread so that
+the collection of variables that are updated in that thread are always in a consistent
+state before and after it executes.  When a KeyboardInterrupt comes in, it won't interrupt
+the execution of that thread, and when the handler gets invoked, it will be guaranteed
+to have those variables in a consistent state for writing to disk.
+
+It doesn't actually matter *where* in the different structures these variables are.
+All that is needed is the update thread can access them.  But, given their logical
+relation, it might be nice to collect them in a convenient place.
+
+For MaskedSliceWav: 
+
+save / load:
+np.random.RandomState
+epoch (earliest among the batch channels)
+file_index (earliest among the batch channels)
+slice_indices (in order of (epoch, file_index))
+
+path_gen should yield:
+epoch
+file_index
+
+
+
+Are we also going to save each slice index position?  If so, we need to
+save each one in association with the file it is part of, I think.
+
+And, that also means saving the epoch for each file index.  The easiest way is
+probably to save the first epoch and file index, and then save the list of
+slice_indices sorted in order of (epoch, file_index).
+
+Then, during restoration, each new instantiation of slice_gen will pull the next
+file, and advance to the appropriate slice
+
+I think the best thing is for each slice_gen object to record its own state, which
+will need to be the associated epoch, file_index and slice_index.
+
+It might be best to write slice_gen in a way that it can be
+
+Each slice_gen just needs to know what index it is, and then it can
+access the class instance variables telling it where to fast-forward.
+
+At what moment do we consider the slice_index to be "current"?
+
+We will have a separate thread that runs the entire syncing routine.  It will
+have to read 
+
+epoch  file_index  slice_index
+
+Now all we need is to translate 'position' into its proper summary statistic.  This
+just requires sorting it by (epoch, file_index), recording the earliest epoch and file_index,
+and recording the order of slice_index field.
+
+But, when should this summary occur?  Just after the final yield, we know that the
+previous position must have been processed.
+
+In fact, it's inappropriate for _gen_slice_batch to yield position, since this information
+is not useful for the model.  But, it is at least tightly coupled to the yielded wav and
+ids data.  If we set the state of MaskedSliceWav object to that position just before
+yielding, then, at the moment when we want to freeze the total state, when should we do that?
+
+
+G: yield (t)
+M: compute gradients (t)
+M: update weights and data position (t)
+M: next(G)
+G: compute new data (t+1)
+G: yield (t+1)
+M: compute gradients (t+1)
+M: update weights and data position (t+1)
+M: next(G)
+
+Note that the process of *updating* the data/model checkpointable state is what needs
+to be uninterruptible.
+
+What's the best way to do this?  We need MaskedSlice 
+
+The checkpointing logic should not be stored in data module, because it must be done
+in coordination with the model.  So, details like the interval, or naming scheme
+need to be handled separately.
+
+In fact, even saving and restoring shouldn't be handled here, because it must be done
+in coordination with the model.  Instead, the data module should just provide
+a single object (called IterPosition) that encapsulates its state that needs to
+be serialized.  And, MaskedSliceWav should provide a public member function that
+allows a client to update its state.  It is the client's responsibility to perform
+these updates in uninterruptible fashion using a separate thread.
+
+Is it perhaps better to create another class that makes the
+
+Now, another wrinkle.  batch_gen is just a function.  it must be called first in order
+to return a  
+
+Can you pass a dict that has extra keys?  No.  It's not possible to do that.
+
+You could instead have a special class that represents all the hyperparams of WaveNet?
+
+Then, you could just use **WaveNetHyper.__dict__ as the arguments to WaveNet
+
+There doesn't seem any way to have the best of both worlds in writing a class __init__
+method.  If you want the __init__ method to be self-documenting, i.e. to have individual
+arguments (as opposed to just one argument which is a dict), then you need to iterate
+through them.
+
+If you do define the WaveNetHyper, then initializing it will also require the same sort of
+work.   Another option is to group arguments logically.  But, it still requires constructing
+other structures and initializing them.  There doesn't seem to be any point to doing that.
+
+So, as far as the argument parsing in the main program, the best would be

@@ -24,7 +24,7 @@
 import librosa
 import numpy as np
 
-class MfccProcess(object):
+class ProcessWav(object):
     def __init__(self, sample_rate_ms=16, window_length_ms=25,
             hop_length_ms=10, n_mels=80, n_mfcc=13):
         self.sample_rate_ms = sample_rate_ms
@@ -33,12 +33,11 @@ class MfccProcess(object):
         self.n_mels = n_mels
         self.n_mfcc = n_mfcc
 
-    def func(self, file):
+    def func(self, wav):
         sample_rate = self.sample_rate_ms * 1000
-        y, _ = librosa.load(file, sample_rate)
         n_fft = self.sample_rate_ms * self.window_length_ms
         hop_length = self.sample_rate_ms * self.hop_length_ms
-        mfcc = librosa.feature.mfcc(y=y, sr=sample_rate, n_fft=n_fft,
+        mfcc = librosa.feature.mfcc(y=wav, sr=sample_rate, n_fft=n_fft,
                 hop_length=hop_length, n_mels=self.n_mels, n_mfcc=self.n_mfcc)
         mfcc_delta = librosa.feature.delta(mfcc)
         mfcc_delta2 = librosa.feature.delta(mfcc, order=2)

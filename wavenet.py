@@ -72,9 +72,10 @@ class Conditioning(nn.Module):
 
 
 class WaveNet(nn.Module):
-    def __init__(self, n_batch, n_win, n_in, n_kern, n_lc_in, n_lc_out, lc_upsample_strides,
-            lc_upsample_kern_sizes, n_res, n_dil, n_skp, n_post, n_quant,
-            n_blocks, n_block_layers, jitter_prob, n_speakers, n_global_embed, bias=True):
+    def __init__(self, n_batch, n_win, n_in, n_kern, n_lc_in, n_lc_out,
+            lc_upsample_strides, lc_upsample_kern_sizes, n_res, n_dil, n_skp,
+            n_post, n_quant, n_blocks, n_block_layers, jitter_prob, n_speakers,
+            n_global_embed, bias=True):
         self.n_blocks = n_blocks
         self.n_block_layers = n_block_layers
         self.bias = bias
@@ -126,7 +127,7 @@ class WaveNet(nn.Module):
             sig = torch.cat([self.conv_state[i], sig], 1)
             sig, skp = l(sig, cond)
             if skp_sum: skp_sum += skp
-            else skp_sum = skp
+            else: skp_sum = skp
             
         post1 = self.post1(nn.ReLU(skp_sum))
         quant = self.post2(nn.ReLU(post1))

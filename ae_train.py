@@ -14,7 +14,37 @@ n_mfcc = 13
 
 def get_args():
     import argparse
-    parser = argparse.ArgumentParser(description='WaveNet Autoencoder Training')
+    import ConfigParser
+
+    conf_parser = argparse.ArgumentParser(add_help=False)
+    conf_parser.add_argument("-c", "--conf_file",
+            help="Specify config file", metavar="FILE")
+    parser.add_argument('--arch-file', '-af', type=str, metavar='ARCH_FILE',
+            help='JSON file specifying architectural parameters')
+    parser.add_argument('--par-file', '-pf', type=str, metavar='PAR_FILE',
+            help='JSON file specifying training and other hyperparameters')
+
+    args, remaining_argv = conf_parser.parse_known_args()
+    if args.arch_file:
+        config = ConfigParser.SafeConfigParser()
+        config.read([args.arch_file])
+        arch_defaults = dict(config.items("Defaults"))
+
+    if args.par_file:
+        config = ConfigParser.SafeConfigParser()
+        config.read([args.par_file])
+        par_defaults = dict(config.items("Defaults"))
+
+    # Don't surpress add_help here so it will handle -h
+    parser = argparse.ArgumentParser(
+            # Inherit options from config_parser
+            parents=[conf_parser],
+            # print script description with -h/--help
+            description=__doc__,
+            # Don't mess with format of description
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            #description='WaveNet Autoencoder Training'
+            )
     parser.add_argument('--resume-step', '-rs', type=int, metavar='INT',
             help='Resume training from '
             + 'CKPT_DIR/<ckpt_pfx>-<resume_step>.')
@@ -36,30 +66,19 @@ def get_args():
     #        help='Loss = Xent loss + l2_factor * l2_loss')
     parser.add_argument('--learning-rate', '-lr', type=float, metavar='FLOAT',
             help='Learning rate (overrides PAR_FILE setting)')
-    parser.add_argument('--num-global-cond', '-gc', type=int, metavar='INT',
-            help='Number of global conditioning categories')
 
     # positional arguments
     parser.add_argument('ckpt_path', type=str, metavar='CKPT_PATH_PFX',
             help='E.g. /path/to/ckpt/pfx, a path and '
             'prefix combination for writing checkpoint files')
-    parser.add_argument('arch_file', type=str, metavar='ARCH_FILE',
-            help='JSON file specifying architectural parameters')
-    parser.add_argument('par_file', type=str, metavar='PAR_FILE',
-            help='JSON file specifying training and other hyperparameters')
     parser.add_argument('sam_file', type=str, metavar='SAMPLES_FILE',
             help='File containing lines:\n'
             + '<id1>\t/path/to/sample1.flac\n'
             + '<id2>\t/path/to/sample2.flac\n')
+    args = parser.parse_args(remaining_argv)
+    return args
 
-    return parser.parse_args()
 
-
-
-# preprocess
-sample_file = '/home/henry/ai/data/LibriSpeech/dev-clean/1272/128104/1272-128104-0000.flac'
-mp = mm.MfccProcess()
-mda = mp.func(sample_file)
 
 # encoder
 kernel_size = 3

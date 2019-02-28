@@ -70,6 +70,11 @@ class MaskedSliceWav(object):
             raise ValueError
         self.recep_field_sz = recep_field_sz
         self.position = IterPosition.default(batch_sz)
+        self.sample_catalog = []
+        with open(self.sam_file) as sam_fh:
+            for s in sam_fh.readlines():
+                (vid, wav_path) = s.strip().split('\t')
+                self.sample_catalog.append([int(vid), wav_path])
 
         
     def update(self, data_position):
@@ -77,13 +82,6 @@ class MaskedSliceWav(object):
         rs = np.random.get_state()
         self.position = IterPosition(rs, data_position)
 
-
-    def init_sample_catalog(self):
-        self.sample_catalog = []
-        with open(self.sam_file) as sam_fh:
-            for s in sam_fh.readlines():
-                (vid, wav_path) = s.strip().split('\t')
-                self.sample_catalog.append([int(vid), wav_path])
 
 
     def get_max_id(self):
@@ -129,6 +127,7 @@ class MaskedSliceWav(object):
             rf_sz = self.recep_field_sz
             epoch, file_index, slice_index = 0, 0, 0 
             fast_forward = True
+            lead = np.full(rf_sz - 1, -1)
 
             while True:
                 while len(wav) < self.slice_sz:
@@ -143,10 +142,8 @@ class MaskedSliceWav(object):
                                     + 'Shorter than receptive field size of {}').format( 
                                     wav_sz, vid, rf_sz))
                             continue
-                        wav.append(wav_nxt)
-                        ### !!! check that contents and length of ids is correct
-                        ids = np.append(np.full(-1, rf_sz - 1),
-                                np.full(vid, len(wav_nxt) - rf_sz + 1))
+                        wav = np.concatenate((wav, wav_nxt), axis=0)
+                        ids = np.concatenate((ids, lead, np.full(wav_sz - len(lead), vid)), axis=0)
                         assert len(wav) == len(ids)
                     except StopIteration:
                         return
@@ -155,7 +152,7 @@ class MaskedSliceWav(object):
                 ids_slice, ids = ids[:self.slice_sz + rf_sz], ids[self.slice_sz:]
 
                 # Fast-forward if loaded position is 
-                if fast_forward and slice_index < self.slice_indexes[batch_chan]:
+                if fast_forward and slice_index < self.position.slice_indices[batch_chan]:
                     continue
                 slice_index += 1
 
@@ -182,9 +179,9 @@ class MaskedSliceWav(object):
             try:
                 # import pdb; pdb.set_trace()
                 batch = [next(g) for g in slice_gens]
-                positions = np.stack([b[0] for b in batch])
-                wav = np.stack([b[3] for b in batch])
-                ids = np.stack([b[4] for b in batch])
+                positions = [b[0] for b in batch]
+                wav = np.stack([b[1] for b in batch])
+                ids = np.stack([b[2] for b in batch])
                 yield positions, wav, ids
             except StopIteration:
                 break
