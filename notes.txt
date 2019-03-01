@@ -252,3 +252,11 @@ work.   Another option is to group arguments logically.  But, it still requires 
 other structures and initializing them.  There doesn't seem to be any point to doing that.
 
 So, as far as the argument parsing in the main program, the best would be
+
+
+
+n_batch, n_win, n_in, n_kern, n_lc_in, n_lc_out, lc_upsample_strides, lc_upsample_kern_sizes, n_res, n_dil, n_skp, n_post, n_quant, n_blocks, n_block_layers, jitter_prob, n_speakers, n_global_embed, bias
+
+What's the deal with Jitter?  WaveNet jitters the local conditioning signal.  But, note
+that the LC signal is one-to-one with 
+

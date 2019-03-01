@@ -7,10 +7,13 @@
 # Regarding training with multiple input windows, I need to figure out how to
 # store autoregressive state so that successive window ranges are properly
 # initialized
+import torch
 from torch import nn
+from torch import distributions as dist
 
 class GatedResidualCondConv(nn.Module):
     def __init__(self, n_cond, n_kern, n_res, n_dil, n_skp, stride, dil, bias=True):
+        super(GatedResidualCondConv, self).__init__()
         self.conv_signal = nn.Conv1d(n_res, n_dil, n_kern, stride, dil, bias)
         self.conv_gate = nn.Conv1d(n_res, n_dil, n_kern, stride, dil, bias)
         self.proj_signal = nn.Conv1d(n_cond, n_res, 1, bias=False)
@@ -28,29 +31,63 @@ class GatedResidualCondConv(nn.Module):
         return sig, skp 
 
 class Jitter(nn.Module):
-    '''Time-jitter regularization.  With probability [p, (1-2p), p], replace element i
-    with element [i-1, i, i+1] respectively.  Disallow a run of 3 identical elements in
-    the output.  Let p = replacement probability, s = "stay probability" = (1-2p).
+    '''Time-jitter regularization.  With probability [p, (1-2p), p], replace
+    element i with element [i-1, i, i+1] respectively.  Disallow a run of 3
+    identical elements in the output.  Let p = replacement probability, s =
+    "stay probability" = (1-2p).
+    
+    tmp[i][j] = Categorical(a, b, c)
+    encodes P(x_t|x_(t-1), x_(t-2)) 
+    a 2nd-order Markov chain which generates a sequence in alphabet {0, 1, 2}. 
+    
+    The following meanings hold:
+
+    0: replace element with previous
+    1: do not replace 
+    2: replace element with following
+
+    For instance, suppose you have:
+    source sequence: ABCDEFGHIJKLM
+    jitter sequence: 0112021012210
+    output sequence: *BCEDGGGIKLLL
+
+    The only triplet that is disallowed is 012, which causes use of the same source
+    element three times in a row.  So, P(x_t=0|x_(t-2)=2, x_(t-1)=1) = 0 and is
+    renormalized.  Otherwise, all conditional distributions have the same shape,
+    [p, (1-2p), p].
+
+    Note: there is currently a design issue with the fact that the successive
+    windows will be overlapping.  However, Jitter is applied *before*
+    upsampling the local conditioning vectors, so the overlap is approximately
+    rf_sz / upsample_factor
     '''
     def __init__(self, n_batch, n_win, replace_prob):
+        super(Jitter, self).__init__()
         p, s = replace_prob, (1 - 2 * replace_prob)
-        tmp = torch.tensor([p, s, p]).repeat(1, 3, 3)
-        tmp[0][1] = torch.tensor([p/(p+s), s/(p+s), 0])
+        tmp = torch.Tensor([p, s, p]).repeat(3, 3, 1)
+        tmp[2][1] = torch.Tensor([0, s/(p+s), p/(p+s)])
         self.cond2d = [ [ dist.Categorical(tmp[i][j]) for i in range(3)] for j in range(3) ]
+        self.n_batch = n_batch
         self.n_win = n_win
-        self.mindex = torch.ones(n_batch, n_win)
+        self.mindex = torch.ones(n_batch, n_win, dtype=torch.long)
 
     def update_mask(self):
         '''populates a tensor mask to be used for jitter, and sends it to GPU for
         next window'''
-        for b in range(n_batch):
-            for t in range(2, n_win):
-                self.mindex = self.cond2d[self.mindex[b][t-2]][self.mindex[b][t-1]].sample()
-            self.mindex += torch.arange(n_win) - 1
+        self.mindex[:,0:2] = 1 # Needed for Markov initialization
+        for b in range(self.n_batch):
+            # The Markov sampling process
+            for t in range(2, self.n_win):
+                self.mindex[b][t] = \
+                        self.cond2d[self.mindex[b][t-2]][self.mindex[b][t-1]].sample()
+        self.mindex += torch.arange(self.n_win) - 1
 
+    # !!! Will this play well with back-prop?
     def forward(self, x):
         '''Input: (B, T, I)'''
-        return torch.index_select(x, 1, self.mindex) 
+        for b in range(self.n_batch):
+            x[b] = torch.index_select(x[b], 0, self.mindex[b])
+        return x
 
 
 class Conditioning(nn.Module):
@@ -58,6 +95,7 @@ class Conditioning(nn.Module):
     with voice ids.
     '''
     def __init__(self, n_speakers, n_embed, n_win, bias):
+        super(Conditioning, self).__init__()
         self.speaker_embedding = nn.Linear(n_speakers, n_embed, bias)
         self.eye = torch.eye(n_speakers)
         self.ones = torch.ones(n_win)
@@ -107,7 +145,7 @@ class WaveNet(nn.Module):
         self.logsoftmax = nn.LogSoftmax(2) # (B, T, C)
 
     def forward(self, x, lc, voice_ids):
-        ''' B = n_batch, T = n_win, I = n_in, L = n_lc_in
+        ''' B, T, I, L = n_batch, n_win, n_in, n_lc_in
         x: (B, T, I)
         lc: (B, T, L)
         voice_ids: (B)
