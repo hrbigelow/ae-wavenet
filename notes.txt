@@ -260,3 +260,5 @@ n_batch, n_win, n_in, n_kern, n_lc_in, n_lc_out, lc_upsample_strides, lc_upsampl
 What's the deal with Jitter?  WaveNet jitters the local conditioning signal.  But, note
 that the LC signal is one-to-one with 
 
+
+
