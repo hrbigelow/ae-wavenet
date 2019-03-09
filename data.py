@@ -1,23 +1,62 @@
-# functions for preprocessing and loading data
-
-# parse a user-provided list of ID's and path names to .wav files
-# use the list to construct the input
-# perhaps it's better to abstract away the function for reading a file
-# from that used to extract a unit of
 import numpy as np
-from sys import stderr, maxsize
-
-#                                      => slice
-# catalog -> repeat -> shuffle -> skip => slice
-#                                      => slice 
-
-# 1. There is no real need to have independent generators passing messages back.
-# 2. The skipping doesn't need to actually read files, just needs to skip through
-#    the sample catalog.  Though it needs to carefully interact with the shuffling
-#    mechanism: in fact, if we adhere to the rule that we only shuffle the whole
-#    catalog each time, then we only need to skip by mod(catalog_size)
-#    But, we do need to initialize the step correctly.
 from functools import total_ordering
+
+def _greatest_lower_bound(a, q): 
+    '''return largest i such that a[i] <= q.  assume a is sorted.
+    if q < a[0], return -1'''
+    l, u = 0, len(a) - 1 
+    while (l < u): 
+        m = u - (u - l) // 2 
+        if a[m] <= q: 
+            l = m 
+        else: 
+            u = m - 1 
+    return l or -1 + (a[l] <= q) 
+
+
+class VirtualPermutation(object):
+    # closest primes to 2^1, ..., 2^40, generated with:
+    # for p in $(seq 1 40); do 
+    #     i=$(echo ' 2^'$p'' | bc);
+    #     primesieve 1 $i -n -q;
+    # done
+    primes = [3, 5, 11, 17, 37, 67, 131, 257, 521, 1031, 2053, 4099, 8209,
+            16411, 32771, 65537, 131101, 262147, 524309, 1048583, 2097169,
+            4194319, 8388617, 16777259, 33554467, 67108879, 134217757,
+            268435459, 536870923, 1073741827, 2147483659, 4294967311,
+            8589934609, 17179869209, 34359738421, 68719476767, 137438953481,
+            274877906951, 549755813911, 1099511627791]
+
+
+    @classmethod
+    def n_items(cls, requested_n_items):
+        ind = _greatest_lower_bound(cls.primes, requested_n_items)
+        if ind == -1:
+            raise InvalidArgument
+        return cls.primes[ind]
+
+
+    def __init__(self, rand_state, requested_n_items):
+        self.rand_state = rand_state
+        self.n_items = self.n_items(requested_n_items)
+
+    def permutation_gen_fn(self, pos):
+        '''
+        # needed to generate pseudo-random permutations with constant memory
+        From accepted answer:
+        https://math.stackexchange.com/questions/2522177/ \
+                generating-random-permutations-without-storing-additional-arrays
+        '''
+        for n in reversed(self.primes):
+            if n <= self.n_items:
+                break
+        assert pos <= n
+        a = self.rand_state.randint(0, n, 1, dtype='int64')[0]
+        b = self.rand_state.randint(n/2, n, 1, dtype='int64')[0]
+        for i in range(pos, n):
+            yield i, (a + i*b) % n
+        return
+
 
 @total_ordering
 class Position(object):
@@ -36,153 +75,125 @@ class Position(object):
                 self.file_index == other.file_index
 
 
-
-
-class IterPosition(object):
-    '''Completely describes data position.  To be used in a global save/restore
-    logic for checkpointing.  '''
-
-    def __init__(self, rand_state, data_position):
-
-        data_position.sort()
+class Checkpoint(object):
+    def __init__(self, rand_state, lead_wavgen_pos, perm_gen_pos):
         self.rand_state = rand_state
-        self.start_epoch = data_position[0].epoch
-        self.start_file_index = data_position[0].file_index
-        self.slice_indices = [d.slice_index for d in data_position] 
-
-    @classmethod
-    def default(cls, batch_sz):
-        rand_state = np.random.get_state()
-        data_position = [Position(0, 0, 0)] * batch_sz
-        return cls(rand_state, data_position)
+        self.lead_wavgen_pos = lead_wavgen_pos
+        self.perm_gen_pos = perm_gen_pos
 
 
-class MaskedSliceWav(object):
+class WavSlices(object):
+    '''
+    Outline:
+    1. Load the list of .wav files with their IDs into sample_catalog
+    2. Generate items from sample_catalog in random order
+    3. Load up to wav_buf_sz (nearest prime number lower bound) timesteps
+    4. Yield them in a rotation-random order using (a + i*b) mod N technique.
 
-    def __init__(self, sam_file, sample_rate, slice_sz, batch_sz, recep_field_sz):
+    WavSlices allows a client to read its (WavSlices) full state, and to
+    restore its state.  One can thus save/restore checkpoint at an arbitrary
+    point, including the start, thus allowing for completely repeatable
+    experiments.
+    '''
+
+    def __init__(self, sam_file, slice_sz, batch_sz, sample_rate,
+            requested_wav_buf_sz):
         self.sam_file = sam_file
-        self.sample_rate = sample_rate
         self.slice_sz = slice_sz
         self.batch_sz = batch_sz
-        if self.slice_sz < recep_field_sz:
-            print('Error: slice size of {} too small for receptive field size of {}'.format(
-                self.slice_sz, recep_field_sz))
-            raise ValueError
-        self.recep_field_sz = recep_field_sz
-        self.position = IterPosition.default(batch_sz)
+        self.sample_rate = sample_rate
+        self.rand_state = np.random.mtrand.RandomState()
+        #self.position = IterPosition()
+        self.wav_gen = None
+        self.perm = VirtualPermutation(self.rand_state, requested_wav_buf_sz)
+        self.ckpt = Checkpoint(None, 0, 0)
+        try:
+            self.wav_buf = np.empty(self.perm.n_items)
+        except MemoryError:
+            from sys import stderr, exit
+            print('Out of memory.  Please use smaller requested_wav_buf_sz.', file=stderr)
+            exit(1) 
+
         self.sample_catalog = []
         with open(self.sam_file) as sam_fh:
             for s in sam_fh.readlines():
                 (vid, wav_path) = s.strip().split('\t')
                 self.sample_catalog.append([int(vid), wav_path])
 
+        # Note: need save/restore logic here
+        # 
+        self.position = None
+
+
+    def restore(self):
+        '''After calling restore, a call to _slice_gen_fn produces a generator
+        object with the same state as when it was saved'''
         
-    def update(self, data_position):
-        '''Run this in a thread together with other state updates'''
-        rs = np.random.get_state()
-        self.position = IterPosition(rs, data_position)
+        self.rand_state.set_state(self.ckpt.prev_wg_rand_state)
+        self.wav_gen = self.wav_gen_fn(self.ckpt.lead_wg_pos)
+        self.pg_pos = self.ckpt.pg_pos
+    
+    def save(self):
+        self.ckpt.lead_wg_pos = 0 # !!!
+        self.ckpt.pg_pos = 0 # !!!
+        assert False
 
 
-
-    def get_max_id(self):
-        max_el, _ = max(self.sample_catalog, key=lambda x: x[0])
-        return max_el
-
-
-    def _wav_gen(self):
+    def _wav_gen_fn(self, pos):
+        '''random order generation of one epoch of whole wav files.'''
         import librosa
-        epoch = self.position.start_epoch
 
-        while True:
-            shuffle_index = np.random.permutation(len(self.sample_catalog))
-            shuffle_catalog = [self.sample_catalog[i] for i in shuffle_index] 
-            for file_index, s in enumerate(shuffle_catalog):
-                if epoch == self.position.start_epoch \
-                        and file_index < self.position.start_file_index:
-                    continue
-                vid, wav_path = s[0], s[1]
-                wav, _ = librosa.load(wav_path, self.sample_rate)
-                #print('Parsing ', wav_path, file=stderr)
-                yield epoch, file_index, vid, wav
-            epoch += 1
+        self.ckpt.prev_wg_rand_state = self.rand_state.get_state()
+        shuffle_index = self.rand_state.permutation(len(self.sample_catalog))
+        shuffle_catalog = [self.sample_catalog[i] for i in shuffle_index] 
+        for i, s in enumerate(shuffle_catalog[pos:], pos):
+            vid, wav_path = s[0], s[1]
+            wav, _ = librosa.load(wav_path, self.sample_rate)
+            #print('Parsing ', wav_path, file=stderr)
+            yield i, vid, wav
+
+        # Completed a full epoch
+        self.position.epoch += 1
 
 
-    def _gen_concat_slice_factory(self, wav_gen, batch_chan):
-        '''factory function for creating a new generator function.  The
-        returned function encloses wav_gen.
-        '''
+    def _load_wav_buffer(self):
+        '''Fully load the wav file buffer.  Consumes remaining contents of
+        current wav_gen, reissuing generators as needed.'''
+        tpos, vpos, ind = 0, 0, 0
+        self.wav_starts = []
+        self.offsets = []
+        if self.wav_gen is None:
+            self.wav_gen = self._wav_gen_fn(0)
 
-        def slice_gen():
-            '''generates a slice from concatenated set of .wav files.
-
-            concatenate slices of self.slice_sz where:
-            wav[t] = wav_val
-            ids[t] = mapping_id 
-
-            mapping_id = voice_id for valid, or zero for invalid windows
-            generates (spliced_wav, spliced_ids)
-            '''
-            wav = np.empty(0, np.float)
-            ids = np.empty(0, np.int32)
-            rf_sz = self.recep_field_sz
-            epoch, file_index, slice_index = 0, 0, 0 
-            fast_forward = True
-            lead = np.full(rf_sz - 1, -1)
-
-            while True:
-                while len(wav) < self.slice_sz:
-                    try:
-                        # import pdb; pdb.set_trace()
-                        epoch, file_index, vid, wav_nxt = next(wav_gen) 
-                        slice_index = 0
-
-                        wav_sz = len(wav_nxt)
-                        if wav_sz < rf_sz:
-                            print(('Warning: skipping length {} wav file (voice id {}).  '
-                                    + 'Shorter than receptive field size of {}').format( 
-                                    wav_sz, vid, rf_sz))
-                            continue
-                        wav = np.concatenate((wav, wav_nxt), axis=0)
-                        ids = np.concatenate((ids, lead, np.full(wav_sz - len(lead), vid)), axis=0)
-                        assert len(wav) == len(ids)
-                    except StopIteration:
-                        return
-
-                wav_slice, wav = wav[:self.slice_sz + rf_sz], wav[self.slice_sz:]
-                ids_slice, ids = ids[:self.slice_sz + rf_sz], ids[self.slice_sz:]
-
-                # Fast-forward if loaded position is 
-                if fast_forward and slice_index < self.position.slice_indices[batch_chan]:
-                    continue
-                slice_index += 1
-
-                yield Position(epoch, file_index, slice_index), wav_slice, ids_slice
-                fast_forward = False
-
-        return slice_gen 
-
-
-    def batch_gen(self):
-        '''generates a batch of concatenated slices
-        yields:
-        position[b] = (epoch, file_index, slice_index)
-        wav[b][t] = amplitude
-        ids[b][t] = vid or zero (mask)
-        b = batch, t = timestep, c = channel
-        '''
-        wav_gen = self._wav_gen()
-
-        # construct batch_sz slice generators, each sharing the same wav_gen
-        slice_gens = [self._gen_concat_slice_factory(wav_gen, c)() for c in range(self.batch_sz)]
-
-        while True:
+        while tpos < self.perm.n_items:
             try:
-                # import pdb; pdb.set_trace()
-                batch = [next(g) for g in slice_gens]
-                positions = [b[0] for b in batch]
-                wav = np.stack([b[1] for b in batch])
-                ids = np.stack([b[2] for b in batch])
-                yield positions, wav, ids
+                i, vid, wav = next(self.wav_gen)
             except StopIteration:
-                break
+                self.wav_gen = self._wav_gen_fn(0)
+                i, vid, wav = next(self.wav_gen)
+
+            n_add = min(len(wav), self.perm.n_items - tpos)
+            self.wav_buf[tpos:tpos + n_add] = wav[0:n_add]
+            self.wav_starts.append(tpos)
+            self.offsets.append(vpos)
+            self.ids.append(vid)
+            tpos += n_add 
+            vpos += n_add - self.slice_sz # !!! check this
+        self.wg_pos = i
+
+
+    def _slice_gen_fn(self):
+        self._load_wav_buffer()
+        perm_gen = self.perm.permutation_gen_fn(self.pg_pos)
+        self.pg_pos = 0
+        for slice_num, vpos in perm_gen:
+            i = _greatest_lower_bound(self.voff, vpos)
+            off = vpos - self.voff[i]
+            wpos = self.wav_starts[i] + off
+            yield slice_num, vpos, self.ids[i], self.wav_buf[wpos:wpos + self.slice_sz]
+
+
+    def batch_slice_gen_fn(self):
+        pass
+
 

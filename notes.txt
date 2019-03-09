@@ -262,3 +262,228 @@ that the LC signal is one-to-one with
 
 
 
+Get RF size for a single phoneme embedding.  This will be a function of:
+
+1) window size for MFCC calculation
+2) stride of the MFCC calculations (160)
+3) filter sizes of each convolution
+4) strides of each of these filters
+
+
+Get RF size for a single local conditioning vector (upsampled from the phoneme embeddings)
+
+This will be a function of:
+
+1) sizes and inverse strides of each transpose convolution.
+
+Besides that, we need to decide the phase of each of these operations.  Do we regard
+the output of one of these transpose convolutions as aligned to the left, the right,
+or the center of its receptive field?  To me, it makes the most intuitive sense to
+define it as centered.
+
+
+Conv4:                                                *
+Conv3:
+Conv2:
+Conv1:          *************************************************************
+MFCC:   *   *   *   *   *   *   *   *   *   *   *   *   *   *   *   *   *   *   *   *   *
+
+
+Cumulative Inverse Stride is just the product of stacked inverse strides.
+Cumulative Receptive Field size is R1 + R2 - 1
+
+
+Level              1    2    3   4
+InvStride          5    4    4   4
+FilterElems        5    5    5   5
+FilterSpan        21   17   17  17
+FilterSpanCumul   21   37   53  69
+InvStrideCumul     5   20   80 320
+CumulInputs        5   
+
+One useful way to look at it is to list the absolute positions of the first and last
+elements (whether they are real inputs or zero paddings) at each level:
+
+
+
+
+
+
+3.          960  1024
+2.      800     1120
+1.     1 1600  320  1920    
+
+
+Do it inductively, starting with position p, and working downward.
+
+One can recast the stacked transpose convolution architecture as a static, repeating
+architecture with the same filter placed at every position (at the time resolution t)
+
+Actually, no, that is not correct.  You would need to connect it up in the way
+
+
+So, does it make sense to design the decoder (WaveNet) to use a centered context to compute
+local conditioning vectors, but to not have the encoder use a centered context?  
+
+It's an odd thing - I can't really see what principle is operating here.  We could look
+at the following:
+
+1. Take the receptive field of WaveNet for generating just the next time step.  This is the
+positions [t-2048, t-1].  Now, look at the receptive field in terms of the embedding vectors
+to generate the local conditioning vectors in that window.  It'll actually be:
+
+[t-2856, t+808]
+
+Now, take the receptive field of the actual wav file used to generate the embedding vectors in
+that window.  This will now be something even wider, such as:
+
+[t-3000, t+1000]
+
+Should it bother us that there is a different context being used to generate the next timestep
+as the one used for the inputs for that generation?
+
+Well, it doesn't break any autoregressive factorization, because WaveNet doesn't need to compute
+embedding vectors.  But, we *do* want the embedding vectors to be trained in such a way that the
+input used roughly corresponds to the output produced from each one.  The problem is that, while
+there is a definite stretch of input wav form that is used to produce each embedding vector, there
+isn't any real way to assign a "definite" stretch of wav that is being generated from
+the 
+
+
+Training regimen
+
+Note that the encoder produces outputs at 50 Hz (for a 16000 Hz input), thus it
+consumes windows of input skipping 320 positions each time.  The decoder
+consumes windows at 16000 Hz.  So, one inference event from the encoder is used
+as input for 320 inference events for the decoder.  This seems to imply (I
+could maybe check with Jan) that the encoder should receive gradients averaged
+over all 320 events of the decoder (WaveNet).
+
+But, this situation is really no different than any many-to-one architecture,
+such as convolutions.  Gradients are averaged in this case.
+
+Now, how should we deal with the following issues in the context of
+concatenated, sliced inputs.  As a refresher, this means:  whole wav files are
+parsed and virtually concatenated, and from this concatenation, we take
+individual slices.  Each slice is meant as a collection of overlapping windows,
+where each window is a single training example.  Note that now, a "batch" of
+samples has two dimensions, which I denote (n_batch, n_win).  n_batch is the
+number of wav files being processed in parallel.  n_win is the number of
+consecutive, overlapping windows being processed at a time.
+
+1. logically invalid windows.  Any logical window that spans a boundary between
+two different wav files is logically invalid.
+
+2. need to trim output of librosa's mfcc function, since it automatically does
+padding.
+
+3. how to coordinate the encoder window and decoder window correspondence?  In
+this case, the problem is solved by requiring the second batch dimension, n_win,
+to be a multiple of 320.
+
+There seems to be another weird wrinkle to this.  Suppose the wavenet decoder
+architecture dictates that we need 20 embedding vectors to produce a set of
+2048 local conditioning vectors needed to do a single inference.  Now, thinking
+in groups of 320, we could naturally get 2368 (2048 + 320) local conditioning
+vectors, since this is inherent in the WaveNet model's transpose convolution
+upsampling module.  Thus, from the perspective of the encoder, it has produced
+20 independent inferences, each from an input window.  This set of 20 different
+inferences will be used in the 320 inferences of WaveNet, so we will naturally
+average the gradients.
+
+However, when we move over one encoder input window position (320 timesteps), we
+will be repeating 19 of these inferences, and each of those will again be exposed
+to an additional 320 WaveNet inferences, with their averaged gradients.  So,
+overall, each encoder inference will be used in 6400 output inferences.  Is it
+necessary to average these all at once?
+
+I don't see why.  After all, note that the minibatch gradient calculation is
+just an approximation anyway.  And, we just as well repeat the same data some
+times.
+
+So, I *think* that, if we follow the rule that we feed the system overlapping
+windows, and we calculate the encoder input overlap so that the successive
+decoder inputs are non-repeating and complete (i.e. first batch is inputs
+1-5000, second batch is inputs 5001-10000), then each encoder input training
+example will be exposed to the same number (i.e. 6400) of decoder inferences.
+So, for instance, in many of these, all 6400 will be processed at once.  In the
+examples towards the end of a batch, we would have a gradually diminishing
+number of them, diminishing by 320 each time. (i.e. 6400, 6080, 5760, ..., 320)
+and towards the beginning of a batch, also gradually decreasing in the same
+manner.
+
+So, the key design principle here is to
+
+1. make the batch n_win size a multiple of 320
+2. make consecutive windows overlap by one step (320 time steps) less than
+   the receptive field of a single 
+
+There are a few remaining issues.
+
+1. Given the fact that the autoencoder requires two different windows (possibly
+   one containing the other) of wav input, one or both may span a boundary and 
+   thus be invalid.  So, we want a mask to be provided to deactivate gradient
+   tallying for these windows.
+
+But, we need a coordinate system for this mask.  The mask should have
+one element per logical sample.  So, its dimension should be (B, N), and the
+dimensions of the two input wav windows should be:
+
+(B, N + hybrid RF)
+(B, N + decoder RF)
+
+where it is understood that "hybrid RF" is the RF induced by a single local
+conditioning vector, first back onto the encoder output (via transposed
+convolution), and then from encoder output to encoder input.
+
+The output tensor of WaveNet (and thus the autoencoder) will be the same dimension as
+the number of samples (B, N) and thus of the mask.  So, naturally, the coordinates
+of the mask will correspond to each output element.  There will be no issue in
+applying the mask just before the loss function.
+
+In short, each element of the mask should be true or false depending on whether the
+joint receptive fields giving rise to the single element prediction at that position
+are both valid or not.  To calculate this, we take:
+
+1. the decoder receptive field sized window of wav input to the left of the predicted element.
+2. the joint receptive field of the same-sized window of local conditioning vectors
+   in terms of encoding vectors (which is determined by WaveNet's transpose convolution
+   module.
+3. the joint receptive field of the encoder corresponding to the set of encoding vectors.
+
+To get a picture of what this looks like, note that, with a single receptive field, the
+window of invalid positions around a boundary is twice the width of the receptive field,
+and it is suitably offset by whatever the relation is between the position of the predicted
+element and its receptive field.  So, in the case of WaveNet alone, if we have a single
+input Wav file, it has two boundaries (it's start and end).  The invalid windows are
+the size of the receptive field on either end.  
+
+Instead, let's make the mask the same size as the wav input.  So, we don't have to worry
+about an "offset".  Then, the mask just has a pretty simple pattern - we start with all true,
+then we superimpose the field of influence of each boundary on the mask.  In the case of a 
+single input / single receptive field, this is a single field of influence.  In the present
+case, we have two inputs, each with a different sized receptive field.  The field of influence
+is the same size as the receptive field, and the offset between the position of the boundary
+in the input and the start position of the field of influence in the mask is the same as
+the offset between the start of the receptive field and the predicted element.
+
+One complicating factor for this particular case is that, unlike with simple WaveNet, this
+offset is not a constant in the autoencoder, due to the difference in stride .
+
+So, what do we need to implement the mask properly?  We just need to be able to calculate
+four numbers - the start and end points of each receptive field, in the coordinates of
+the input wav file.  Assuming the two intervals overlap, (which I believe they do) we then
+take the union of the interval, and compute the offset relative to the position in the
+mask.  If any boundary resides within these two offsets, we mark the mask position as invalid.
+
+
+Scrapped the idea of masks.  Instead, we just use a buffered data provider that gives
+100% valid sample windows, batched by (B, N).  Depending on the user's choice of a memory
+buffer, it pre-reads wav file content, then exhaustively iterates through all possible
+permutations of it before moving onto the next content.  One can also adjust this to
+go through only some fraction of it, so as to increase mixing with the rest of the 
+data set.
+
+In any case, here's the outline:
+
+

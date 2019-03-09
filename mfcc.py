@@ -32,6 +32,8 @@ class ProcessWav(object):
         self.hop_length_ms = hop_length_ms
         self.n_mels = n_mels
         self.n_mfcc = n_mfcc
+        self.n_out = n_mfcc * 3
+
 
     def func(self, wav):
         sample_rate = self.sample_rate_ms * 1000
