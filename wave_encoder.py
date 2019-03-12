@@ -65,7 +65,7 @@ class Encoder(nn.Module):
 
     def forward(self, wav):
         '''
-        B, T = n_batch, n_win
+        B, T = n_batch, n_win + rf_size - 1
         wav: (B, T)
         '''
         mfcc = self.pre.func(wav)

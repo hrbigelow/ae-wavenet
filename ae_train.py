@@ -1,7 +1,5 @@
 import torch
 import wave_encoder as we
-import mel_mfcc as mm
-
 import ae_model as ae
 
 
@@ -14,24 +12,24 @@ n_mfcc = 13
 
 def get_args():
     import argparse
-    import ConfigParser
+    import configparser as cp
 
     conf_parser = argparse.ArgumentParser(add_help=False)
     conf_parser.add_argument("-c", "--conf_file",
             help="Specify config file", metavar="FILE")
-    parser.add_argument('--arch-file', '-af', type=str, metavar='ARCH_FILE',
-            help='JSON file specifying architectural parameters')
-    parser.add_argument('--par-file', '-pf', type=str, metavar='PAR_FILE',
-            help='JSON file specifying training and other hyperparameters')
+    conf_parser.add_argument('--arch-file', '-af', type=str, metavar='ARCH_FILE',
+            help='INI file specifying architectural parameters')
+    conf_parser.add_argument('--par-file', '-pf', type=str, metavar='PAR_FILE',
+            help='INI file specifying training and other hyperparameters')
 
     args, remaining_argv = conf_parser.parse_known_args()
     if args.arch_file:
-        config = ConfigParser.SafeConfigParser()
+        config = cp.SafeConfigParser()
         config.read([args.arch_file])
         arch_defaults = dict(config.items("Defaults"))
 
     if args.par_file:
-        config = ConfigParser.SafeConfigParser()
+        config = cp.SafeConfigParser()
         config.read([args.par_file])
         par_defaults = dict(config.items("Defaults"))
 
@@ -80,39 +78,10 @@ def get_args():
 
 
 
-# encoder
-kernel_size = 3
-in_chan = mda.shape[0]
-mid_chan = 768
-enc = we.Encoder(in_chan, mid_chan)
-
-print('mda.shape = ', mda.shape)
-
-
-mda_ten = torch.tensor(mda, dtype=torch.float32)
-mda_ten = mda_ten.unsqueeze(0)
-
-latents = enc.forward(mda_ten)
-
-print('latents.shape = ', latents.shape)
-
-# bottleneck
-bn_chan = 64
-vae = bn.VAE(mid_chan, bn_chan, bias=False)
-
-vae_samples = vae.forward
-
 def main():
     args = get_args()
 
-    import json
     from sys import stderr
-
-    with open(args.arch_file, 'r') as fp:
-        arch = json.load(fp)
-
-    with open(args.par_file, 'r') as fp:
-        par = json.load(fp)
 
     # args consistency checks
     if args.num_global_cond is None and 'n_gc_category' not in arch:
@@ -130,7 +99,11 @@ def main():
             arch['n_gc_category'] = args.num_global_cond
     
     # Construct model
-    model = ae.AutoEncoder()
+    encoder_params = config['encoder']
+    bn_params = config['bottleneck'] 
+    decoder_params = config['decoder'] 
+
+    model = ae.AutoEncoder(encoder_params, bn_params, decoder_params)
 
     # Set CPU or GPU context
 
@@ -146,13 +119,13 @@ def main():
     step = args.resume_step or 1
     while step < args.max_steps:
 
-    if step % args.save_interval == 0 and step != args.resume_step:
-        net_save_path = net.save(step)
-        dset_save_path = dset.save(step, file_read_count)
-        print('Saved checkpoints to {} and {}'.format(net_save_path, dset_save_path),
-                file=stderr)
+        if step % args.save_interval == 0 and step != args.resume_step:
+            net_save_path = net.save(step)
+            dset_save_path = dset.save(step, file_read_count)
+            print('Saved checkpoints to {} and {}'.format(net_save_path, dset_save_path),
+                    file=stderr)
 
-    step += 1
+        step += 1
 
 if __name__ == '__main__':
     main()

@@ -487,3 +487,30 @@ data set.
 In any case, here's the outline:
 
 
+What would be a good unit test for checkpointing?
+
+Problem: without using masks, and using slices of wav files that are consecutive overlapping
+windows of samples, there is no way to ensure sampling evenly from each wav file, unless
+the wav file is of length n * n_win + rf_sz.
+
+But, since using a mask is prohibitively complicated, and using individual samples is
+prohibitively inefficient, we instead just try to minimize the unevenness by choosing
+a modest value for n_win.  This way, the wav files are close to some multiple of n_win,
+and we still get some degree of efficiency but without compromising much on the 
+evenness of the distribution.
+
+In order to implement this, we will need just one more level of processing.  We start
+with the current setup, considering all slice start positions from [0, n_items) (where n_items
+is a prime number).
+
+However, to really make use of this, we instead need to generate the x % n_win == offset ones.
+How many?  We ask the user for a memory estimate, then we divide by n_win, and choose the
+greatest lower bound prime number, then generate random permutations from [0, glb).  For each
+drawing d, we take n_win * d + off, and use that as the logical start position for a slice.
+
+Upon the next buffer reloading (instantiation of slice_gen), we choose a different offset
+based on random state.
+
+This whole thing will take only five or six lines of additional code.
+
+ 
