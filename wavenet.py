@@ -12,9 +12,9 @@ from torch import nn
 from torch import distributions as dist
 
 class GatedResidualCondConv(nn.Module):
-    def __init__(self, n_cond, n_kern, n_res, n_dil, n_skp, stride, dil, bias=True):
+    def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, n_kern=2, bias=True):
         '''
-        n_kern: # elements in the kernel
+        n_kern: # elements in the dilated kernels
         n_cond: # channels of local condition vectors
         n_res : # residual channels
         n_dil : # output channels for dilated kernel

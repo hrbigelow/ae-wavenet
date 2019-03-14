@@ -2,7 +2,8 @@ from torch import nn
 from torch.distributions import multivariate_normal as dist
 
 class VQVAE(nn.Module):
-    def __init__(self, n_in, n_out, bias):
+    def __init__(self, n_in, n_out, bias=True):
+        super(VQVAE, self).__init__()
         self.proto_vec = 0
         self.fc = nn.Linear(n_in, n_out, bias)
         self.nearest_proto()
@@ -14,7 +15,8 @@ class VQVAE(nn.Module):
 
 
 class VAE(nn.Module):
-    def __init__(self, n_in, n_out, bias):
+    def __init__(self, n_in, n_out, bias=True):
+        super(VAE, self).__init__()
         self.fc = nn.Linear(n_in, n_out * 2, bias)
         # dummy dimensions - will be set in forward
         self.dist = dist.Normal(torch.tensor([0]), torch.tensor([0]))
@@ -29,7 +31,8 @@ class VAE(nn.Module):
 
 
 class AE(nn.Module):
-    def __init__(self, n_in, n_out, bias):
+    def __init__(self, n_in, n_out, bias=True):
+        super(AE, self).__init__()
         self.fc = nn.Linear(n_in, n_out, bias)
 
     def forward(x):

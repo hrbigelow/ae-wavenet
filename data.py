@@ -91,20 +91,22 @@ class WavSlices(object):
     experiments.
     '''
 
-    def __init__(self, sam_file, n_win, recep_field_sz, batch_sz, sample_rate,
-            fraction_use_perm, requested_wav_buf_sz):
+    def __init__(self, sam_file, n_win, n_batch, sample_rate,
+            frac_permutation_use, requested_wav_buf_sz):
         '''
-        fraction_use_perm:  fraction [0, 1] in which to 
+        frac_permutation_use:  fraction [0, 1] in which to 
         '''
         self.sam_file = sam_file
-        self.batch_sz = batch_sz
+        self.n_batch = n_batch
         self.n_win = n_win
-        self.recep_field_sz = recep_field_sz
+
+        # Call self.set_receptive_field() after building the model
+        self.recep_field_sz = None
         self.sample_rate = sample_rate
-        if fraction_use_perm <= 0 or fraction_use_perm > 1.0:
+        if frac_permutation_use <= 0 or frac_permutation_use > 1.0:
             raise ValueError
 
-        self.frac_use_perm = fraction_use_perm
+        self.frac_perm_use = frac_permutation_use
 
         self.rand_state = np.random.mtrand.RandomState()
         self.wav_gen = None
@@ -131,6 +133,13 @@ class WavSlices(object):
                 self.sample_catalog.append([int(vid), wav_path])
 
         self.current_epoch = 1 
+
+    def set_receptive_field(self, recep_field_sz):
+        self.recep_field_sz = recep_field_sz
+
+
+    def n_speakers(self):
+        return len(set(id for id,__ in self.sample_catalog))
 
     def slice_size(self):
         return self.n_win + self.recep_field_sz - 1
@@ -217,7 +226,7 @@ class WavSlices(object):
 
         def gen_fn():
             perm_gen = self.perm.permutation_gen_fn(self.perm_gen_pos,
-                    int(self.perm.n_items * self.frac_use_perm))
+                    int(self.perm.n_items * self.frac_perm_use))
             for iter_pos, vind in perm_gen:
                 vpos = self.offset + vind * self.n_win
                 wav_file_ind = _greatest_lower_bound(self.vstart, vpos)
@@ -239,10 +248,10 @@ class WavSlices(object):
 
         def gen_fn(sg):
             b = 0
-            wavs = np.empty((self.batch_sz, self.slice_size()), dtype='float64')
-            ids = np.empty(self.batch_sz, dtype='int32')
+            wavs = np.empty((self.n_batch, self.slice_size()), dtype='float64')
+            ids = np.empty(self.n_batch, dtype='int32')
             while True:
-                while b < self.batch_sz:
+                while b < self.n_batch:
                     try:
                         wav_file_ind, wav_off, vind, wav_id, wav_slice = next(sg)
                     except StopIteration:

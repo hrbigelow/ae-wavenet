@@ -10,11 +10,14 @@ class AutoEncoder(nn.Module):
     Full Autoencoder model
     '''
     def __init__(self, encoder_params, bn_params, decoder_params):
-        super().__init__(self) # Is this necessary?
+        super(AutoEncoder, self).__init__() 
 
         self.encoder = enc.Encoder(**encoder_params)
 
         bn_type = bn_params.pop('type')
+
+        # connecting encoder to bottleneck
+        bn_params['n_in'] = encoder_params['n_out']
     
         if bn_type == 'vqvae':
             self.bottleneck = bn.VQVAE(**bn_params)
@@ -25,10 +28,15 @@ class AutoEncoder(nn.Module):
         else:
             raise InvalidArgument 
 
+        # connecting bottleneck to decoder.
+        decoder_params['n_in'] = bn_params['n_out']
         self.decoder = dec.WaveNet(**decoder_params)
 
         # Does the complete model need the loss function defined as well?
         self.loss = loss.CrossEntropyLoss() 
+
+    def get_receptive_field(self):
+        raise NotImplementedError
 
     def forward(self, wav, voice_ids):
         enc = self.encoder(wav)

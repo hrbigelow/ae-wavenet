@@ -13,7 +13,7 @@ class ConvReLURes(nn.Module):
 
     def forward(self, x):
         '''
-        B, C, T = n_batch, n_in_chan, n_win
+        B, C, T = n_batch, n_in, n_win
         x: (B, C, T)
         '''
         out = self.conv(x)
@@ -32,7 +32,7 @@ class FCRes(nn.Module):
 
     def forward(self, x):
         '''
-        B, T, C = n_batch, n_win, n_in_chan
+        B, T, C = n_batch, n_win, n_in
         x: (B, T, C)
         '''
         out = self.fc(x)
@@ -42,8 +42,8 @@ class FCRes(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, n_mid, sample_rate_ms, 
-            win_length_ms, hop_length_ms, n_mels, n_mfcc):
+    def __init__(self, sample_rate_ms, win_length_ms, hop_length_ms,
+            n_mels, n_mfcc, n_out):
         super(Encoder, self).__init__()
 
         self.pre = mfcc.ProcessWav(
@@ -52,15 +52,15 @@ class Encoder(nn.Module):
         n_in = self.pre.n_out
         
         self.net = nn.Sequential(
-            ConvReLURes(n_in, n_mid, 3, do_res=False),
-            ConvReLURes(n_mid, n_mid, 3),
-            ConvReLURes(n_mid, n_mid, 4, stride=2, do_res=False),
-            ConvReLURes(n_mid, n_mid, 3),
-            ConvReLURes(n_mid, n_mid, 3),
-            ConvReLURes(n_mid, n_mid, 1),
-            ConvReLURes(n_mid, n_mid, 1),
-            ConvReLURes(n_mid, n_mid, 1),
-            ConvReLURes(n_mid, n_mid, 1)
+            ConvReLURes(n_in, n_out, 3, do_res=False),
+            ConvReLURes(n_out, n_out, 3),
+            ConvReLURes(n_out, n_out, 4, stride=2, do_res=False),
+            ConvReLURes(n_out, n_out, 3),
+            ConvReLURes(n_out, n_out, 3),
+            ConvReLURes(n_out, n_out, 1),
+            ConvReLURes(n_out, n_out, 1),
+            ConvReLURes(n_out, n_out, 1),
+            ConvReLURes(n_out, n_out, 1)
         )
 
     def forward(self, wav):
