@@ -23,22 +23,24 @@
 # Workflow
 import librosa
 import numpy as np
+import rfield as rf 
 
-class ProcessWav(object):
-    def __init__(self, sample_rate_ms=16, window_length_ms=25,
+class ProcessWav(object, rf.FieldOffset):
+    def __init__(self, samples_per_ms=16, window_length_ms=25,
             hop_length_ms=10, n_mels=80, n_mfcc=13):
-        self.sample_rate_ms = sample_rate_ms
+        super(ProcessWav, self).__init__() # What to put here?
+        self.samples_per_ms = samples_per_ms
         self.window_length_ms = window_length_ms
         self.hop_length_ms = hop_length_ms
         self.n_mels = n_mels
         self.n_mfcc = n_mfcc
         self.n_out = n_mfcc * 3
-
+        self.foff = rf.FieldOffset(filter_sz=samples_per_ms * window_length_ms)
 
     def func(self, wav):
-        sample_rate = self.sample_rate_ms * 1000
-        n_fft = self.sample_rate_ms * self.window_length_ms
-        hop_length = self.sample_rate_ms * self.hop_length_ms
+        sample_rate = self.samples_per_ms * 1000
+        n_fft = self.samples_per_ms * self.window_length_ms
+        hop_length = self.samples_per_ms * self.hop_length_ms
         mfcc = librosa.feature.mfcc(y=wav, sr=sample_rate, n_fft=n_fft,
                 hop_length=hop_length, n_mels=self.n_mels, n_mfcc=self.n_mfcc)
         mfcc_delta = librosa.feature.delta(mfcc)

@@ -10,24 +10,37 @@
 import torch
 from torch import nn
 from torch import distributions as dist
+import rfield as rf
 
 class GatedResidualCondConv(nn.Module):
-    def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, n_kern=2, bias=True):
+    def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, filter_sz=2, bias=True):
         '''
-        n_kern: # elements in the dilated kernels
+        filter_sz: # elements in the dilated kernels
         n_cond: # channels of local condition vectors
         n_res : # residual channels
         n_dil : # output channels for dilated kernel
         n_skp : # channels output to skip connections
         '''
         super(GatedResidualCondConv, self).__init__()
-        self.conv_signal = nn.Conv1d(n_res, n_dil, n_kern, dilation=dil, bias=bias)
-        self.conv_gate = nn.Conv1d(n_res, n_dil, n_kern, dilation=dil, bias=bias)
+        self.conv_signal = nn.Conv1d(n_res, n_dil, filter_sz, dilation=dil, bias=bias)
+        self.conv_gate = nn.Conv1d(n_res, n_dil, filter_sz, dilation=dil, bias=bias)
         self.proj_signal = nn.Conv1d(n_cond, n_dil, kernel_size=1, bias=False)
         self.proj_gate = nn.Conv1d(n_cond, n_dil, kernel_size=1, bias=False)
         self.dil_res = nn.Conv1d(n_dil, n_res, kernel_size=1, bias=False)
         self.dil_skp = nn.Conv1d(n_dil, n_skp, kernel_size=1, bias=False)
-        self.lead = (n_kern - 1) * dil
+
+        # The dilated autoregressive convolution produces an output at the
+        # right-most position of the receptive field.  (At the very end of a
+        # stack of these, the output corresponds to the position just after
+        # this, but within the stack of convolutions, outputs right-aligned.
+        recep_field = (filter_sz - 1) * dil + 1
+        self.foff = rf.FieldOffset(offsets=(recep_field - 1, 0))
+
+        # kernel size is 1 for conditioning vectors, but filter_sz * dil + 1
+        # for dilated convolutions.  So, the output of proj_* is longer than
+        # conv_* by self.lead.  This is accounted for during the summation
+        # steps in forward()
+        self.lead = (filter_sz - 1) * dil
 
     def forward(self, x, cond):
         '''
@@ -75,7 +88,7 @@ class Jitter(nn.Module):
     pre-constructed to have {0, ..., n_win
 
     '''
-    def __init__(self, n_batch, n_win, n_overlap, replace_prob):
+    def __init__(self, replace_prob):
         '''n_win gives number of 
         '''
         super(Jitter, self).__init__()
@@ -83,44 +96,30 @@ class Jitter(nn.Module):
         tmp = torch.Tensor([p, s, p]).repeat(3, 3, 1)
         tmp[2][1] = torch.Tensor([0, s/(p+s), p/(p+s)])
         self.cond2d = [ [ dist.Categorical(tmp[i][j]) for i in range(3)] for j in range(3) ]
-        self.n_batch = n_batch
-        self.n_win = n_win
-        self.n_overlap = n_overlap
 
-        # adjusts so that temporary value of mindex[i] = {0, 1, 2} => {i-1, i, i+1}
-        self.adjust = torch.arange(n_win + 2, dtype=torch.long).repeat(n_batch, 1) - 1
 
-        # initial value corresponds to a tempoaray value of {1, 1, ...}, i.e. no
-        # replacement.
-        self.mindex = torch.empty(n_batch, n_win + 2, dtype=torch.long)
-
-        self.mindex[:,0:2] = 1
-        for b in range(self.n_batch):
-            # The Markov sampling process
-            for t in range(2, self.n_win + 1):
-                self.mindex[b,t] = \
-                        self.cond2d[self.mindex[b,t-2]][self.mindex[b,t-1]].sample()
-            self.mindex[b,self.n_win + 1] = 1
-        self.mindex += self.adjust 
-
-    def update_mask(self):
+    def gen_mask(self, n_batch, n_win):
         '''populates a tensor mask to be used for jitter, and sends it to GPU for
         next window'''
-        # We only depend on two steps when moving over to the next window
-        self.mindex[:,0:self.n_overlap] = self.mindex[:,-self.n_overlap:] - \
-                self.adjust[:, -self.n_overlap:] 
-        for b in range(self.n_batch):
+        self.mindex = torch.empty(n_batch, n_win + 2, dtype=torch.long)
+        self.mindex[:,0:2] = 1
+        for b in range(n_batch):
             # The Markov sampling process
-            for t in range(self.n_overlap, self.n_win):
+            for t in range(2, n_win + 1):
                 self.mindex[b,t] = \
                         self.cond2d[self.mindex[b,t-2]][self.mindex[b,t-1]].sample()
-            self.mindex[b,self.n_win + 1] = 1
-        self.mindex += self.adjust 
+            self.mindex[b, n_win + 1] = 1
 
-    # !!! Will this play well with back-prop?
-    # 
+        # adjusts so that temporary value of mindex[i] = {0, 1, 2} => {i-1, i, i+1}
+        self.mindex += torch.arange(n_win + 2, dtype=torch.long).repeat(n_batch, 1) - 1
+
+
+    # Will this play well with back-prop?
     def forward(self, x):
         '''Input: (B, I, T)'''
+        n_batch, n_win = x.shape[0], x.shape[2]
+        self.update_mask(n_batch, n_win)
+
         assert x.shape[2] == self.mindex.shape[1]
         y = torch.empty(x.shape, dtype=x.dtype)
         for b in range(self.n_batch):
@@ -145,7 +144,7 @@ class Conditioning(nn.Module):
     '''Module for merging up-sampled local conditioning vectors
     with voice ids.
     '''
-    def __init__(self, n_speakers, n_embed, n_win, bias=True):
+    def __init__(self, n_speakers, n_embed, bias=True):
         super(Conditioning, self).__init__()
         self.speaker_embedding = nn.Linear(n_speakers, n_embed, bias)
         self.eye = torch.eye(n_speakers)
@@ -163,55 +162,63 @@ class Conditioning(nn.Module):
         return all_cond
 
 
-def _list_prod(l):
-    from operator import mul
-    from functools import reduce
-    return reduce(mul, l, 1)
+class Upsampling(nn.Module):
+    '''Computes a one-per-timestep conditioning vector from a
+    less-frequent input'''
+    def __init__(self, n_lc_chan, lc_upsample_filt_sizes, lc_upsample_strides):
+        tmp_mods = []
+        for kern_size, stride in zip(lc_upsample_filt_sizes, lc_upsample_strides):
+            tmp_mods.append(nn.ConvTranspose1d(n_lc_chan, n_lc_chan, kern_size, stride))
+        self.lc_upsample = nn.Sequential(*tmp_mods)
+        self.foff = rf.FieldOffset() # !!! 
 
-def _recep_field_sz(n_blocks, n_block_layers):
-    return n_blocks * sum([2**l for l in range(n_block_layers)])
+    def forward(lc):
+        '''B, T, S, C: batch_sz, timestep, less-frequent timesteps, input channels
+        lc: (B, S, C)
+        returns: (B, T, C)
+        '''
+        return self.lc_upsample(lc)
+
 
 
 class WaveNet(nn.Module):
-    def __init__(self, n_batch, n_win, n_in, n_kern, n_lc_in, n_lc_out,
-            lc_upsample_strides, lc_upsample_kern_sizes, n_res, n_dil, n_skp,
-            n_post, n_quant, n_blocks, n_block_layers, jitter_prob, n_speakers,
-            n_global_embed, bias=True):
+    def __init__(self, n_in, filter_sz, n_lc_in, n_lc_out, lc_upsample_filt_sizes,
+            lc_upsample_strides, n_res, n_dil, n_skp, n_post, n_quant,
+            n_blocks, n_block_layers, jitter_prob, n_speakers, n_global_embed,
+            bias=True):
         super(WaveNet, self).__init__()
 
         self.n_blocks = n_blocks
         self.n_block_layers = n_block_layers
         self.bias = bias
-        lc_stride = _list_prod(lc_upsample_strides)
-        rf_sz = _recep_field_sz(n_blocks, n_block_layers)
-        lc_rf_sz = rf_sz / lc_stride # how does this work out?
-        n_lc_win = n_win / lc_stride
 
-        self.jitter = Jitter(n_batch, n_lc_win, lc_rf_sz, jitter_prob)
+        self.jitter = Jitter(jitter_prob)
         self.lc_conv = nn.Conv1d(n_lc_in, n_lc_out, 3, 1, bias=self.bias)
-        # LC upsampling layers
-        tmp_mods = []
-        for kern_size, stride in zip(lc_upsample_kern_sizes, lc_upsample_strides):
-            tmp_mods.append(nn.ConvTranspose1d(n_lc_out, n_lc_out, kern_size, stride))
-
-        self.lc_upsample = nn.Sequential(*tmp_mods)
-        self.cond = Conditioning(n_speakers, n_global_embed, n_win)
+        self.lc_upsample = Upsampling(n_lc_out, lc_upsample_filt_sizes, lc_upsample_strides)
+        self.cond = Conditioning(n_speakers, n_global_embed)
 
         self.base_layer = nn.Conv1d(n_in, n_res, 1, 1, dilation=1, bias=self.bias)
 
         self.conv_layers = nn.ModuleList() 
-        self.conv_state = []
         n_cond = n_lc_out + n_global_embed
         for b in range(self.n_blocks):
             for bl in range(self.n_block_layers):
                 dil = bl**2
                 self.conv_layers.append(
-                        GatedResidualCondConv(n_cond, 2, n_res, n_dil, n_skp, 1, 1, dil))
-                self.conv_state.append(torch.zeros([n_batch, n_res, dil], dtype=torch.float32))
+                        GatedResidualCondConv(n_cond, 2, n_res, n_dil, n_skp, 1, 1, dil, filter_sz))
 
         self.post1 = nn.Conv1d(n_skp, n_post, 1, 1, 1, bias)
         self.post2 = nn.Conv1d(n_post, n_quant, 1, 1, 1, bias)
         self.logsoftmax = nn.LogSoftmax(2) # (B, T, C)
+
+        # Calculate receptive field offsets.  Only the upsampling module and
+        # the dilated convolution stack give non-zero offsets
+        stack_loff = sum(m.foff.left for m in self.conv_layers.children())
+        stack_roff = sum(m.foff.right for m in self.conv_layers.children())
+        lc_loff = self.lc_upsample.foff.left
+        lc_roff = self.lc_upsample.foff.right
+        self.foff = rc.FieldOffset(offsets=(stack_loff + lc_loff, stack_roff + lc_roff))
+
 
     def forward(self, x, lc, voice_ids):
         ''' B, T, I, L: n_batch, n_win, n_in, n_lc_in
@@ -231,7 +238,6 @@ class WaveNet(nn.Module):
         sig = self.base_layer(x) 
         skp_sum = None
         for i, l in enumerate(self.conv_layers):
-            sig = torch.cat([self.conv_state[i], sig], 1)
             sig, skp = l(sig, cond)
             if skp_sum: skp_sum += skp
             else: skp_sum = skp

@@ -1,15 +1,22 @@
 from torch import nn
 import mfcc
+import rfield as rf
 
 
 class ConvReLURes(nn.Module):
-    def __init__(self, n_in, n_out, n_kern, stride=1, do_res=True):
-        super(ConvReLURes, self).__init__()
+    def __init__(self, n_in, n_out, filter_sz, stride=1, do_res=True):
         self.do_res = do_res
+        if self.do_res:
+            if stride != 1:
+                print('Stride must be 1 for residually connected convolution',
+                        file=sys.stderr)
+                raise ValueError
+
         self.n_in = n_in
         self.n_out = n_out
-        self.conv = nn.Conv1d(n_in, n_out, n_kern, stride, padding=int(n_kern/2))
+        self.conv = nn.Conv1d(n_in, n_out, filter_sz, stride, padding=0)
         self.relu = nn.ReLU(inplace=True)
+        self.foff = rf.FieldOffset(filter_sz=filter_sz)
 
     def forward(self, x):
         '''
@@ -19,9 +26,10 @@ class ConvReLURes(nn.Module):
         out = self.conv(x)
         out = self.relu(out)
         if (self.do_res):
-            # Residual connection only works if in and out dimensions are equal
-            assert self.n_in == self.n_out
-            out += x
+            # Must suitably trim the residual based on how much the convolution
+            # shrinks the input.
+            # assert self.n_in == self.n_out
+            out += x[self.foff.left:-self.foff.right]
         return out
 
 class FCRes(nn.Module):
@@ -62,6 +70,10 @@ class Encoder(nn.Module):
             ConvReLURes(n_out, n_out, 1),
             ConvReLURes(n_out, n_out, 1)
         )
+
+        left_off = self.pre.left + sum(m.left for m in self.net.children())
+        right_off = self.pre.right + sum(m.right for m in self.net.children())
+        self.foff = rf.FieldOffset(offsets=(left_off, right_off))
 
     def forward(self, wav):
         '''

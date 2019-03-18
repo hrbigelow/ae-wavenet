@@ -7,7 +7,7 @@ import data as D
 def get_opts():
     import argparse
 
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = argparse.ArgumentParser(add_help=False, )
     parser.add_argument('--arch-file', '-af', type=str, metavar='ARCH_FILE',
             help='INI file specifying architectural parameters')
     parser.add_argument('--train-file', '-pf', type=str, metavar='PAR_FILE',
@@ -36,6 +36,8 @@ def get_opts():
             help='number of output channels for the bottleneck')
 
     # Decoder architectural parameters
+    parser.add_argument('--dec-n-kern', '-dnk', type=int, default=2,
+            help='decoder number of dilation kernel elements')
     parser.add_argument('--dec-n-lc-in', '-dli', type=int, default=-1,
             help='decoder number of local conditioning input channels')
     parser.add_argument('--dec-n-lc-out', '-dlo', type=int, default=-1,
@@ -80,7 +82,10 @@ def get_opts():
 
     default_opts = parser.parse_args()
 
-    cli_parser = argparse.ArgumentParser(parents=[parser], argument_default=argparse.SUPPRESS)
+    cli_parser = argparse.ArgumentParser(parents=[parser])
+    dests = {co.dest:argparse.SUPPRESS for co in cli_parser._actions}
+    cli_parser.set_defaults(**dests)
+    cli_parser._defaults = {} # hack to overcome bug in set_defaults
     cli_opts = cli_parser.parse_args()
 
     # Each option follows the rule:
@@ -106,7 +111,6 @@ def get_opts():
         exit(1)
 
     # Override with command-line settings, then defaults
-    pdb.set_trace()
     merged_opts = vars(default_opts)
     merged_opts.update(arch_opts)
     merged_opts.update(train_opts)
@@ -114,6 +118,7 @@ def get_opts():
 
     # Convert back to a Namespace object
     return argparse.Namespace(**merged_opts) 
+    # return cli_opts
 
 
 def get_prefixed_items(d, pfx):
@@ -123,8 +128,6 @@ def get_prefixed_items(d, pfx):
 
 def main():
     opts = get_opts()
-    print(opts)
-    return
 
     from sys import stderr
     
@@ -139,8 +142,6 @@ def main():
             opts.requested_wav_buf_sz)
 
     decoder_params['n_speakers'] = data.n_speakers()
-    decoder_params['n_batch'] = opts.n_batch
-    decoder_params['n_win'] = opts.n_win
 
     model = ae.AutoEncoder(encoder_params, bn_params, decoder_params)
 

@@ -595,4 +595,42 @@ if __name__ == '__main__':
 
     main(args)
 
- 
+
+At what point should we decide the size of the full input window?  There will just be
+one window - it will be fed to the encoder, which will produce a down-sampled set of
+local conditioning vectors.  These will be upsampled at the same rate, but without padding.
+So, we will then have a smaller set of local conditioning vectors for use with WaveNet.
+
+It's probably best to write Jitter so that it just mimicks its input length on-the-fly.
+That's one less calculation to get wrong.  kj
+
+Okay, so we need to calculate the receptive field offsets for each module.  The
+only complicated thing seems to be the upsampling.  But, the key insight here
+is that the receptive field offsets of the upsampling module are indeed
+constant, but the actual source of data needed (the ones not filled in with
+zeros) occur only every 320 time steps.  When you then look at their collective
+receptive field, you get a window that moves in jumps of 320.  But, it is still
+easy to calculate, because each stage of the calculation involves a fixed offset,
+followed by an upper bound mod at the stride provided.  I'm still not quite sure
+what pattern this will eventually lead to, but it is easily calculable through
+an iterative function.  The final challenge will be to make the function
+unobtrusive, but deployed at each layer somehow so that the inputs are not somehow
+duplicated elsewhere.
+
+
+New question: why do we really need padding?  we don't actually need to use padding
+either.  We just need to make sure that the input is suitably trimmed before it is
+applied as a residual connection. 
+
+So, is there any reason to use padded convolutions?  I don't think so - there is no
+real merit to it.  So, 
+
+
+When do we need these offset values?  Actually, we want something slightly different,
+which is the reverse of the function we have.  What are the left and right offsets
+induced for a particular filter size
+
+
+
+
+
