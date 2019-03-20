@@ -144,8 +144,9 @@ def main():
     decoder_params['n_speakers'] = data.n_speakers()
 
     model = ae.AutoEncoder(encoder_params, bn_params, decoder_params)
+    enc_bounds, dec_bounds = model.get_receptive_bounds()
 
-    data.set_receptive_field(model.get_receptive_field())
+    data.set_receptive_field(enc_bounds[1] - enc_bounds[0])
 
     # Set CPU or GPU context
 

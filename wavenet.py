@@ -164,20 +164,46 @@ class Conditioning(nn.Module):
 
 class Upsampling(nn.Module):
     '''Computes a one-per-timestep conditioning vector from a
-    less-frequent input'''
+    less-frequent input.   
+    '''
     def __init__(self, n_lc_chan, lc_upsample_filt_sizes, lc_upsample_strides):
-        tmp_mods = []
-        for kern_size, stride in zip(lc_upsample_filt_sizes, lc_upsample_strides):
-            tmp_mods.append(nn.ConvTranspose1d(n_lc_chan, n_lc_chan, kern_size, stride))
-        self.lc_upsample = nn.Sequential(*tmp_mods)
-        self.foff = rf.FieldOffset() # !!! 
+        self.tconvs = []
+        self.wings = []
+        
+        for filt_size, stride in zip(lc_upsample_filt_sizes, lc_upsample_strides):
+            left_wing_sz = (filt_sz - 1) // 2
+            right_wing_sz = (filt_sz - 1) - left_wing_sz
+            # Recall Pytorch's padding semantics for transpose conv.
+            tconv = nn.ConvTranspose1d(n_lc_chan, n_lc_chan, filt_size, stride,
+                    padding=left_wing_sz)
+            self.tconvs.append(tconv)
+            self.wings.append((left_wing_sz, right_wing_sz))
+
+        n = len(lc_upsample_strides)
+        # sub_strides[i] will be the stride of the output of layer i relative to
+        # the base-level timestep.
+        sub_strides = [1] * n
+        for i in reversed(range(n - 1)):
+            sub_strides[i] = sub_strides[i+1] * lc_upsample_strides[i+1]
+        
+        loff, roff = 0, 0
+        for i in range(n):
+            loff += self.wings[i][0] * sub_strides[i]
+            roff += self.wings[i][1] * sub_strides[i]
+
+        self.foff = rf.FieldOffset(offsets=(loff, roff))
 
     def forward(lc):
         '''B, T, S, C: batch_sz, timestep, less-frequent timesteps, input channels
         lc: (B, S, C)
         returns: (B, T, C)
+        Here, we trim the output of each transpose convolution, in order to discard
+        output units that don't have full coverage of the filter with the input.
         '''
-        return self.lc_upsample(lc)
+        for tconv, (left_wing_sz, right_wing_sz) in zip(self.tconvs, self.wings):
+            lc = tconv.forward(lc)[:,:,left_wing_sz:-right_wing_sz]
+
+        return lc
 
 
 

@@ -630,7 +630,82 @@ When do we need these offset values?  Actually, we want something slightly diffe
 which is the reverse of the function we have.  What are the left and right offsets
 induced for a particular filter size
 
+The overall calculation needed requires:
+
+1. main_stride
+2. sub_stride 
+3. filter_sz
+
+The actual left and right offsets will be:
+
+total_off = filter_sz - 1
+loff = total_off // 2
+roff = total_off - loff
+# loff and roff are in units of sub_stride
+# we now need to truncate them to the nearest node in the main stride
+
+assert main_stride % sub_stride == 0
+stride_ratio = main_stride // sub_stride
+
+# round loff to the nearest main_stride
+rem = stride_ratio - (loff % stride_ratio)
+loff += rem
+
+# round roff down to the nearest main_stride
+rem = roff % stride_ratio
+roff -= rem 
+
+loff = loff_tmp * main_stride
+roff = roff_tmp * main_stride
+
+# Now, how do we know the main and sub-strides?  We are only
+# given the ratio actually.  
+
+The steps involved could also be:
+
+1. calculate filter left and right offsets
+2. shrink both offsets to nearest main positions
+3. multiply by next dilation factor
+
+The problem with this is that the offset at the first level must be multiplied
+by three successive dilation factors.  The offsets at the second level by two
+factors.  This seems complicated.
+
+It might be better to instead pre-calculate total strides in terms of the 
+final coordinate system.  For a system of strides [5, 4, 4, 4], we have a total
+factor of 5 * 4 * 4 * 4 = 320.
+
+This is sort of what we need:
+
+layer strides  main sub  filter_sz  loff    roff   loff_rnd  roff_rnd
+4     4          4   1   16         7*1     8*1
+3     4         16   4   16         7*4     8*4
+2     4         64  16   16         7*16    8*16
+1     5        320  64   25         12*64   12*64  
+
+
+From the convolution / transpose convolution experiment I did a few months ago,
+I discovered that 
+
+main(l) = prod_i{l..n}{strides[i]}
+sub(l) = prod_i{l+1..n}{strides[i]}
+loff(l) = (filter_sz[l] - 1) // 2 * sub(l)
+roff(l) = (filter_sz[l] - 1) //+ 2 * sub(l)
+
+So, unfortunately, it turns out that the transpose convolution does generate
+output for partial filter overlaps, and this is not desirable.
+
+In keeping with the principle of always using complete convolutions, we will need
+to trim the output of transpose convolutions, since unfortunately, there is no
+other way to prevent the incomplete ones on the ends.  But, at least this allows
+for a consistent left offset.  And, for the right offset, we really just want the
+maximal offset, because that guarantees that we have sufficient output.
+
+If we do this, we get a set of offsets such that we can guarantee the desired final
+output size.
 
 
 
+Where should we specify n_win?  On the one hand, it would be nice to keep it completely
+agnostic, and just calculate it from the given window.  But, we do need to know
 

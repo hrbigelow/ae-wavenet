@@ -35,8 +35,16 @@ class AutoEncoder(nn.Module):
         # Does the complete model need the loss function defined as well?
         self.loss = loss.CrossEntropyLoss() 
 
-    def get_receptive_field(self):
-        raise NotImplementedError
+    def get_receptive_bounds(self):
+        '''Calculate encoder and decoder input bounds relative to
+        an output position at zero'''
+        dec_beg = -self.decoder.foff.left
+        dec_end = self.decoder.foff.right
+        enc_beg = dec_beg - self.encoder.foff.left
+        enc_end = dec_end + self.encoder.foff.right 
+        return (enc_beg, enc_end), (dec_beg, dec_end) 
+
+
 
     def forward(self, wav, voice_ids):
         enc = self.encoder(wav)
