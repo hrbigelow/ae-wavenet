@@ -247,10 +247,11 @@ class WaveNet(nn.Module):
 
 
     def forward(self, x, lc, voice_ids):
-        ''' B, T, I, L: n_batch, n_win, n_in, n_lc_in
+        ''' B, T, I, L, Q: n_batch, n_win, n_in, n_lc_in, n_quant
         x: (B, I, T)
         lc: (B, L, T)
         voice_ids: (B, T)
+        outputs: (B, T, Q)
         '''
         lc = self.jitter(lc)
         lc = self.lc_conv(lc) 
@@ -270,18 +271,10 @@ class WaveNet(nn.Module):
             
         post1 = self.post1(nn.ReLU(skp_sum))
         quant = self.post2(nn.ReLU(post1))
-        logits = self.logsoftmax(quant) 
+        # we only need this for inference time
+        # logits = self.logsoftmax(quant) 
 
-        # logits: (B, T, Q), Q = n_quant
-        return logits 
-
-
-
-class CrossEntLoss(nn.Module):
-    '''computes cross-entropy loss between one-hot representation
-    of the input waveform, and the output softmax categorical
-    distribution
-    '''
-
+        # quant: (B, T, Q), Q = n_quant
+        return quant 
 
 

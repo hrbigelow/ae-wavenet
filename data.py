@@ -85,16 +85,44 @@ class WavSlices(object):
     3. Load up to wav_buf_sz (nearest prime number lower bound) timesteps
     4. Yield them in a rotation-random order using (a + i*b) mod N technique.
 
-    WavSlices allows a client to read its (WavSlices) full state, and to
-    restore its state.  One can thus save/restore checkpoint at an arbitrary
-    point, including the start, thus allowing for completely repeatable
+    a WavSlices instance can report its full state to a client, and allows the
+    client to restore its state, thus allowing checkpointing from an arbitrary
+    point, including the start.  This is necessary for completely repeatable
     experiments.
+
+    From a purely statistical ideal, this generator would break up the entire
+    data set into its distinct sample windows, and then yield them in a random
+    order.  However, since the encoder and decoder work in convolutional
+    windows, this approach would miss the opportunity to reuse overlapping
+    convolutional output values between overlapping samples.  So, we instead
+    yield groups of n_win samples as one chunk.
+
+    However, yielding these windows randomly across the data set would be
+    somewhat inefficient, because it would mean re-reading an entire wav file
+    each time a new sample group was needed.  Instead, we take the following
+    approach:
+
+    1.  Load a 'wav buffer' of complete wav files into memory, consuming up to
+    a user-specified amount of memory.
+
+    2.  Yield slices from that buffer in a random permutation ordering.  Only a
+    fraction of all possible slices, set by frac_permutation_use, is yielded.
+
+    3.  Once this fraction is yielded, the wav buffer is reloaded with the next
+    available wav files, and the process is repeated.
+
+    A lower value of frac_perm_use will result in more frequent reloading of
+    the wav buffer, but it will also cause the yielded slices to more closely
+    resemble a globally random order across the whole data set.
+
+    Also, if the user memory (requested_wav_buf_sz) is as large as the full
+    data set, then the order will be globally random, and frac_permutation_use
+    should be set to 1 in order to minimize buffer reloads.
     '''
 
     def __init__(self, sam_file, n_win, n_batch, sample_rate,
             frac_permutation_use, requested_wav_buf_sz):
         '''
-        frac_permutation_use:  fraction [0, 1] in which to 
         '''
         self.sam_file = sam_file
         self.n_batch = n_batch
@@ -111,12 +139,17 @@ class WavSlices(object):
         self.rand_state = np.random.mtrand.RandomState()
         self.wav_gen = None
         
-        # Used in checkpointing
+        # Used in checkpointing state
         self.wavgen_rand_state = None
         self.wavgen_pos = None 
         self.lead_wavgen_rand_state = None 
         self.lead_wavgen_pos = None 
         self.perm_gen_pos = None 
+
+        # Used in save/restore (initialized in enable_checkpointing)
+        self.ckpt_dir = None
+        self.ckpt_file_template = None
+
 
         # estimated number of total slices we can process in a buffer
         # of requested size (= number of time steps)
@@ -144,8 +177,37 @@ class WavSlices(object):
     def slice_size(self):
         return self.n_win + self.recep_field_sz - 1
 
+    def enable_file_checkpointing(self, ckpt_dir, ckpt_file_template):
+        '''prepare data module for checkpointing'''
+        # Unfortunately, Python doesn't provide a way to hold an open directory
+        # handle, so we just check whether the directory path exists and is
+        # writable during this call.
+        import os
+        if not os.access(ckpt_dir, os.R_OK|os.W_OK):
+            raise ValueError('Cannot read and write checkpoint directory {}'.format(ckpt_dir))
+        # test if ckpt_file_template is valid  
+        try:
+            test_file = ckpt_file_template.format(1000)
+        except IndexError:
+            test_file = ''
+        # '1000' is 2 longer than '{}'
+        if len(test_file) != len(ckpt_file_template) + 2:
+            raise ValueError('Checkpoint template "{}" ill-formed. ' 
+                    '(should have exactly one "{{}}")'.format(ckpt_file_template))
+        try:
+            test_path = '{}/{}'.format(ckpt_dir, test_file)
+            if not os.access(test_path, os.R_OK):
+                fp = open(test_path, 'w')
+                fp.close()
+                os.remove(fp.name)
+        except IOError:
+            raise ValueError('Cannot create a test checkpoint file {}'.format(test_path))
 
-    def get_checkpoint(self):
+        self.ckpt_dir = ckpt_dir
+        self.ckpt_file_template = ckpt_file_template
+        
+
+    def state_to_ckpt(self):
         if self.lead_wavgen_rand_state is None:
             print('No generator created yet, so no checkpoint defined.')
             return None
@@ -153,7 +215,7 @@ class WavSlices(object):
                 self.lead_wavgen_pos, self.perm_gen_pos)
 
 
-    def restore_checkpoint(self, ckpt):
+    def ckpt_to_state(self, ckpt):
         '''After calling restore_checkpoint, a call to _slice_gen_fn produces a
         generator object with the same state as when it was saved'''
         self.rand_state.set_state(ckpt.lead_wavgen_rand_state)
@@ -161,7 +223,13 @@ class WavSlices(object):
         self.lead_wavgen_pos = ckpt.lead_wavgen_pos
         self.perm_gen_pos = ckpt.perm_gen_pos
 
+    def ckpt_to_file(self, ckpt, step):
+        pass
+
+    def file_to_ckpt(self, step):
+        pass
     
+
     def _wav_gen_fn(self, pos):
         '''random order generation of one epoch of whole wav files.'''
         import librosa
@@ -186,10 +254,12 @@ class WavSlices(object):
 
 
     def _load_wav_buffer(self):
-        '''Fully load the wav file buffer.  Consumes remaining contents of
-        current wav_gen, reissuing generators as needed.
-        This function relies on the checkpoint state through self.wav_gen and
-        self.rand_state
+        '''Fully load the wav file buffer, which is a list of full wav arrays
+        taking up up to the requested memory size.
+        
+        Consumes remaining contents of current wav_gen, reissuing generators as
+        needed.  This function relies on the checkpoint state through
+        self.wav_gen and self.rand_state
         '''
         vpos = 0
         self.wav_buf = []
@@ -218,7 +288,11 @@ class WavSlices(object):
 
 
     def _slice_gen_fn(self):
-        '''
+        '''Extracts slices from the wav buffer (see self._load_wav_buffer) in 
+        a random permutation ordering.  Only extracts a fraction of the total
+        available slices (set by self.frac_perm_use) before exhausting.
+        of the 
+
         '''
         self._load_wav_buffer()
         if self.perm_gen_pos is None:

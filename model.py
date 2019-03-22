@@ -35,9 +35,16 @@ class AutoEncoder(nn.Module):
         # Does the complete model need the loss function defined as well?
         self.loss = loss.CrossEntropyLoss() 
 
+        # offsets between the encoder window bounds and
+        # corresponding decoder window bounds
+        self.enc_dec_loff = self.decoder.foff.left - self.encoder.foff.left
+        self.enc_dec_roff = self.encoder.foff.right - self.decoder.foff.right
+        assert self.enc_dec_loff > 0
+        assert self.enc_dec_roff > 0
+
     def get_receptive_bounds(self):
         '''Calculate encoder and decoder input bounds relative to
-        an output position at zero'''
+        an output position at zero.'''
         dec_beg = -self.decoder.foff.left
         dec_end = self.decoder.foff.right
         enc_beg = dec_beg - self.encoder.foff.left
@@ -45,10 +52,34 @@ class AutoEncoder(nn.Module):
         return (enc_beg, enc_end), (dec_beg, dec_end) 
 
 
-
-    def forward(self, wav, voice_ids):
-        enc = self.encoder(wav)
+    def forward(self, wav_enc, wav_dec, voice_ids):
+        '''
+        B, T: n_batch, n_win + recep_field_sz - 1
+        T': subset of T, trimmed by self.enc_dec_{loff/roff}
+        Q: n_quant
+        wav_enc: (B, T)
+        wav_dec: (B, T') 
+        outputs: (B, T, Q)  
+        '''
+        enc = self.encoder(wav_enc)
         enc_bn = self.bottleneck(enc)
-        logits = self.decoder(wav, enc_bn, voice_ids)
-        return logits
+        quant = self.decoder(wav_dec, enc_bn, voice_ids)
+        return quant 
+
+    def loss_factory(self, batch_gen):
+        _xent_loss = torch.CrossEntropyLoss()
+        def loss():
+            ids, wavs_enc = next(batch_gen)
+            wavs_dec = wavs_enc[:,self.enc_dec_loff:-self.enc_dec_roff]
+            # quant[0] is a prediction for wavs_dec[1], etc
+            # quant: (B, W, 
+            quant = self.forward(wavs_enc, wavs_dec, ids)
+            return _xent_loss(quant[:,:-1], wavs_dec[:,1:])
+        return loss
+
+
+            
+
+
+
 

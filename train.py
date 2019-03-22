@@ -7,7 +7,7 @@ import data as D
 def get_opts():
     import argparse
 
-    parser = argparse.ArgumentParser(add_help=False, )
+    parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument('--arch-file', '-af', type=str, metavar='ARCH_FILE',
             help='INI file specifying architectural parameters')
     parser.add_argument('--train-file', '-pf', type=str, metavar='PAR_FILE',
@@ -58,18 +58,31 @@ def get_opts():
             help='Batch size')
     parser.add_argument('--n-win', '-nw', type=int, metavar='INT',
             help='# of consecutive window training samples in one batch channel' )
-    parser.add_argument('--learning-rate', '-lr', type=float, metavar='FLOAT',
-            help='Learning rate')
-    #parser.add_argument('--l2-factor', '-l2', type=float, metavar='FLOAT',
-    #        help='Loss = Xent loss + l2_factor * l2_loss')
-    parser.add_argument('--cpu-only', '-cpu', action='store_true', default=False,
-            help='If present, do all computation on CPU')
+    parser.add_argument('--frac-permutation-use', '-fpu', type=float,
+            metavar='FLOAT', help='Fraction of each random data permutation to
+            use.  Lower fraction ' 'causes more frequent reading of data from
+            disk, but more globally random order ' 'of data samples presented
+            to the model')
+    parser.add_argument('--requested-wav-buf-sz', '-rws', type=int,
+            metavar='INT', help='Size in bytes of the total memory available '
+            'to buffer training data.  A higher value will minimize re-reading
+            of ' 'data and allow more globally random sample order')
+    parser.add_argument('--max-steps', '-ms', type=int, default=1e20,
+            help='Maximum number of training steps')
+    parser.add_argument('--resume-step', '-rst', type=int, default=0,
+            help='Step to resume training.  If > 0, the checkpoint file is '
+            'determined from ckpt_path and --resume-step')
     parser.add_argument('--save-interval', '-si', type=int, default=1000, metavar='INT',
             help='Save a checkpoint after this many steps each time')
     parser.add_argument('--progress-interval', '-pi', type=int, default=10, metavar='INT',
             help='Print a progress message at this interval')
-    parser.add_argument('--max-steps', '-ms', type=int, default=1e20,
-            help='Maximum number of training steps')
+    parser.add_argument('--cpu-only', '-cpu', action='store_true', default=False,
+            help='If present, do all computation on CPU')
+    parser.add_argument('--learning-rate-steps', '-lrs', type=int, nargs='+',
+            metavar='INT', help='Learning rate starting steps to apply --learning-rate-rates')
+    parser.add_argument('--learning-rate-rates', '-lrr', type=float, nargs='+',
+            metavar='FLOAT', help='Each of these learning rates will be applied at the '
+            'corresponding value for --learning-rate-steps')
 
     # positional arguments
     parser.add_argument('ckpt_path', type=str, metavar='CKPT_PATH_PFX',
@@ -144,23 +157,49 @@ def main():
     decoder_params['n_speakers'] = data.n_speakers()
 
     model = ae.AutoEncoder(encoder_params, bn_params, decoder_params)
+
+    # ranges of the receptive fields of the encoder and decoder,
+    # in the timestep domain, relative to an output timestep at zero.
     enc_bounds, dec_bounds = model.get_receptive_bounds()
 
+    # the receptive_field is the length of one logical sample.  the data module
+    # yields n_batch * n_win logical samples at a time.  since the logical
+    # samples from one .wav file are overlapping, this amounts to a window of
+    # n_win + receptive_field_sz - 1 from each of the n_batch wav files.
     data.set_receptive_field(enc_bounds[1] - enc_bounds[0])
 
     # Set CPU or GPU context
 
-    # Restore from checkpoint
-    if opts.resume_step:
-        pass
+    # Restore from checkpoint, or initialize model parameters
+    step = opts.resume_step or 0
+    if step > 0:
+        ckpt_file = parse_ckpt_file(ckpt_path, step)
+        try:
+            with open(ckpt_file) as fp:
+                ckpt = read(fp)
+        except FileNotFoundError, IOError:
+            print("Error: Couldn't find or read checkpoint file {}".format(ckpt_file),
+                    file=stderr)
+            exit(2)
+        data.restore_checkpoint(ckpt)
+        # !!! Implement this.
+        # model.restore_checkpoint(ckpt)
         print('Restored net and dset from checkpoint', file=stderr)
+    else:
+        # initialize model parameters
 
     # Initialize optimizer
+    model_params = model.parameters()
+    loss_fcn = model.loss_factory(data.batch_slice_gen_fn())
 
     # Start training
     print('Starting training...', file=stderr)
-    step = opts.resume_step or 1
+
+    learning_rates = dict(zip(opts.learning_rate_steps, opts.learning_rate_rates))
     while step < opts.max_steps:
+        if step in learning_rates:
+            optim = torch.optim.Adam(params=model_params, lr=learning_rates[step])
+        optim.step(loss_fcn)
 
         if step % opts.save_interval == 0 and step != opts.resume_step:
             net_save_path = net.save(step)
@@ -172,7 +211,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-
 

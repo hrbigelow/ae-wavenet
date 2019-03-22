@@ -704,8 +704,23 @@ maximal offset, because that guarantees that we have sufficient output.
 If we do this, we get a set of offsets such that we can guarantee the desired final
 output size.
 
-
-
 Where should we specify n_win?  On the one hand, it would be nice to keep it completely
 agnostic, and just calculate it from the given window.  But, we do need to know
+
+Now we need a closure for generating the next loss.  This should manage fetching
+the next batch of data, running the full model, and computing the loss using the
+shifted input.
+
+What module should it be?  Probably it should be just another function
+in the autoencoder module.  That way, the logic of calculating the offset
+for the encoder input, decoder input, and loss input is local with the
+module, as it should be.
+
+Again, we need both the model and data classes to be able to save/restore from
+checkpoint.
+ 
+
+In the data module, we separate the saving and restoring of a checkpoint state
+in two stages.  File <-> Encapsulated Checkpoint state <-> Class state
+
 
