@@ -2,6 +2,7 @@
 import wave_encoder as enc
 import bottlenecks as bn
 import wavenet as dec 
+import util
 from torch import nn
 from torch.nn.modules import loss
 
@@ -42,6 +43,8 @@ class AutoEncoder(nn.Module):
         assert self.enc_dec_loff > 0
         assert self.enc_dec_roff > 0
 
+        self.ckpt_path = util.CheckpointPath()
+
     def get_receptive_bounds(self):
         '''Calculate encoder and decoder input bounds relative to
         an output position at zero.'''
@@ -50,7 +53,6 @@ class AutoEncoder(nn.Module):
         enc_beg = dec_beg - self.encoder.foff.left
         enc_end = dec_end + self.encoder.foff.right 
         return (enc_beg, enc_end), (dec_beg, dec_end) 
-
 
     def forward(self, wav_enc, wav_dec, voice_ids):
         '''
@@ -76,10 +78,5 @@ class AutoEncoder(nn.Module):
             quant = self.forward(wavs_enc, wavs_dec, ids)
             return _xent_loss(quant[:,:-1], wavs_dec[:,1:])
         return loss
-
-
-            
-
-
 
 

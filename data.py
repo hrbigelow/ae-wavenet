@@ -1,6 +1,7 @@
 import numpy as np
 from functools import total_ordering
 from sys import stderr
+import util
 
 def _greatest_lower_bound(a, q): 
     '''return largest i such that a[i] <= q.  assume a is sorted.
@@ -146,10 +147,8 @@ class WavSlices(object):
         self.lead_wavgen_pos = None 
         self.perm_gen_pos = None 
 
-        # Used in save/restore (initialized in enable_checkpointing)
-        self.ckpt_dir = None
-        self.ckpt_file_template = None
-
+        # Used in save/restore (initialized in enable_file_checkpointing)
+        self.ckpt_paths = util.CheckpointPaths()
 
         # estimated number of total slices we can process in a buffer
         # of requested size (= number of time steps)
@@ -177,58 +176,59 @@ class WavSlices(object):
     def slice_size(self):
         return self.n_win + self.recep_field_sz - 1
 
-    def enable_file_checkpointing(self, ckpt_dir, ckpt_file_template):
-        '''prepare data module for checkpointing'''
-        # Unfortunately, Python doesn't provide a way to hold an open directory
-        # handle, so we just check whether the directory path exists and is
-        # writable during this call.
-        import os
-        if not os.access(ckpt_dir, os.R_OK|os.W_OK):
-            raise ValueError('Cannot read and write checkpoint directory {}'.format(ckpt_dir))
-        # test if ckpt_file_template is valid  
-        try:
-            test_file = ckpt_file_template.format(1000)
-        except IndexError:
-            test_file = ''
-        # '1000' is 2 longer than '{}'
-        if len(test_file) != len(ckpt_file_template) + 2:
-            raise ValueError('Checkpoint template "{}" ill-formed. ' 
-                    '(should have exactly one "{{}}")'.format(ckpt_file_template))
-        try:
-            test_path = '{}/{}'.format(ckpt_dir, test_file)
-            if not os.access(test_path, os.R_OK):
-                fp = open(test_path, 'w')
-                fp.close()
-                os.remove(fp.name)
-        except IOError:
-            raise ValueError('Cannot create a test checkpoint file {}'.format(test_path))
 
-        self.ckpt_dir = ckpt_dir
-        self.ckpt_file_template = ckpt_file_template
-        
+    # The following four functions implement the transitions:
+    # [Checkpoint File] <=> [Checkpoint instance] <=> [WavSlices state]
+
 
     def state_to_ckpt(self):
+        '''convert generator state to a Checkpoint instance'''
         if self.lead_wavgen_rand_state is None:
-            print('No generator created yet, so no checkpoint defined.')
-            return None
+            raise RuntimeError('No generator created yet, so no checkpoint defined.')
         return Checkpoint(self.lead_wavgen_rand_state,
                 self.lead_wavgen_pos, self.perm_gen_pos)
 
 
     def ckpt_to_state(self, ckpt):
-        '''After calling restore_checkpoint, a call to _slice_gen_fn produces a
-        generator object with the same state as when it was saved'''
+        '''update the generator state with that saved in ckpt'''
         self.rand_state.set_state(ckpt.lead_wavgen_rand_state)
         self.wav_gen = self._wav_gen_fn(ckpt.lead_wavgen_pos)
         self.lead_wavgen_pos = ckpt.lead_wavgen_pos
         self.perm_gen_pos = ckpt.perm_gen_pos
 
-    def ckpt_to_file(self, ckpt, step):
-        pass
 
     def file_to_ckpt(self, step):
-        pass
-    
+        '''Parse a checkpoint file, identified by step and the preset
+        checkpointing details, returning a Checkpoint object.
+        self.enable_file_checkpointing must be called first.'''
+        if not self.ckpt_path.enabled:
+            raise RuntimeError('Must call self.enable_file_checkpointing first')
+        from pickle import load 
+        path = self.ckpt_path.path(step)
+        try:
+            with open(path, 'rb') as fp:
+                ckpt = load(fp)
+        except IOError:
+            raise RuntimeError('Cannot find checkpoint file {}'.format(path))
+        except UnpicklingError:
+            raise RuntimeError('Checkpoint file {} is not a valid pickle file.'.format(path))
+        
+        return ckpt
+
+
+    def ckpt_to_file(self, ckpt, step):
+        '''Save ckpt to disk, using the preset checkpointing details and step
+        as a naming scheme.  self.enable_file_checkpointing must be called first.'''
+        if not self.ckpt_path.enabled:
+            raise RuntimeError('Must call self.enable_file_checkpointing first')
+        from pickle import dump
+        path = self.ckpt_path.path(step)
+        try:
+            with open(path, 'wb') as fp:
+                dump(ckpt, fp)
+        except IOError:
+            raise RuntimeError('Cannot write a file named {}'.format(path))
+
 
     def _wav_gen_fn(self, pos):
         '''random order generation of one epoch of whole wav files.'''
@@ -319,6 +319,8 @@ class WavSlices(object):
 
     def batch_slice_gen_fn(self):
         '''infinite generator for batched slices of wav files'''
+        if self.recep_field_sz is None:
+            raise RuntimeError('Must call self.set_receptive_field() before calling this function')
 
         def gen_fn(sg):
             b = 0

@@ -85,13 +85,15 @@ def get_opts():
             'corresponding value for --learning-rate-steps')
 
     # positional arguments
-    parser.add_argument('ckpt_path', type=str, metavar='CKPT_PATH_PFX',
-            help='E.g. /path/to/ckpt/pfx, a path and '
-            'prefix combination for writing checkpoint files')
     parser.add_argument('sam_file', type=str, metavar='SAMPLES_FILE',
             help='File containing lines:\n'
             + '<id1>\t/path/to/sample1.flac\n'
             + '<id2>\t/path/to/sample2.flac\n')
+    parser.add_argument('checkpoint_dir', type=str, metavar='DIR',
+            'Directory for writing checkpoint files')
+    parser.add_argument('checkpoint_template', type=str,
+            metavar='STR', 'Filename template, with one "{}" for step number,
+            for writing checkpoint files')
 
     default_opts = parser.parse_args()
 
@@ -154,9 +156,15 @@ def main():
             encoder_params['sample_rate_ms'] * 1000, opts.frac_permutation_use,
             opts.requested_wav_buf_sz)
 
-    decoder_params['n_speakers'] = data.n_speakers()
 
+    data_ckpt_file_template = opts.ckpt_file_template + '.data.ckpt'
+    model_ckpt_file_template = opts.ckpt_file_template + '.model.ckpt'
+
+    data.ckpt_path.enable(opts.ckpt_dir, data_ckpt_file_template)
+
+    decoder_params['n_speakers'] = data.n_speakers()
     model = ae.AutoEncoder(encoder_params, bn_params, decoder_params)
+    model.ckpt_path.enable(opts.ckpt_dir, model_ckpt_file_template)
 
     # ranges of the receptive fields of the encoder and decoder,
     # in the timestep domain, relative to an output timestep at zero.
@@ -173,18 +181,9 @@ def main():
     # Restore from checkpoint, or initialize model parameters
     step = opts.resume_step or 0
     if step > 0:
-        ckpt_file = parse_ckpt_file(ckpt_path, step)
-        try:
-            with open(ckpt_file) as fp:
-                ckpt = read(fp)
-        except FileNotFoundError, IOError:
-            print("Error: Couldn't find or read checkpoint file {}".format(ckpt_file),
-                    file=stderr)
-            exit(2)
-        data.restore_checkpoint(ckpt)
-        # !!! Implement this.
-        # model.restore_checkpoint(ckpt)
-        print('Restored net and dset from checkpoint', file=stderr)
+        data.ckpt_to_state(data.file_to_ckpt(step))
+        model.load_state_dict(torch.load(model.ckpt_path.path(step)))
+        print('Restored model and data from checkpoint', file=stderr)
     else:
         # initialize model parameters
 
