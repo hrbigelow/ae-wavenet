@@ -8,7 +8,7 @@
     "bn_type": "ae",
     "bn_n_out": 64,
     "dec_jitter_prob": 0.12,
-    "dec_n_kern": 2,
+    "dec_filter_sz": 2,
     "dec_n_lc_in": 64,
     "dec_n_lc_out": 128,
     "dec_lc_upsample_strides": [5, 4, 4, 4],

@@ -8,7 +8,7 @@ class VQVAE(nn.Module):
         self.fc = nn.Linear(n_in, n_out, bias)
         self.nearest_proto()
 
-    def forward(x):
+    def forward(self, x):
         out = self.fc(x)
         out = self.nearest_proto(out)
         return out
@@ -21,7 +21,7 @@ class VAE(nn.Module):
         # dummy dimensions - will be set in forward
         self.dist = dist.Normal(torch.tensor([0]), torch.tensor([0]))
 
-    def forward(x):
+    def forward(self, x):
         # Input: (N, T, I)
         out = self.fc(x)
         self.dist.loc = out[:,:,:n_out]
@@ -33,9 +33,10 @@ class VAE(nn.Module):
 class AE(nn.Module):
     def __init__(self, n_in, n_out, bias=True):
         super(AE, self).__init__()
+        # !!! Should be Conv1d
         self.fc = nn.Linear(n_in, n_out, bias)
 
-    def forward(x):
+    def forward(self, x):
         out = self.fc(x)
         return out
 

@@ -1,10 +1,14 @@
+import torch
 from torch import nn
 import mfcc
 import rfield as rf
+import numpy as np
+
 
 
 class ConvReLURes(nn.Module):
     def __init__(self, n_in, n_out, filter_sz, stride=1, do_res=True):
+        super(ConvReLURes, self).__init__()
         self.do_res = do_res
         if self.do_res:
             if stride != 1:
@@ -29,23 +33,7 @@ class ConvReLURes(nn.Module):
             # Must suitably trim the residual based on how much the convolution
             # shrinks the input.
             # assert self.n_in == self.n_out
-            out += x[self.foff.left:-self.foff.right]
-        return out
-
-class FCRes(nn.Module):
-    def __init__(self, n_in, n_out, bias=True):
-        super(FCRes, self).__init__()
-        self.fc = nn.Linear(n_in, n_out, bias)
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        '''
-        B, T, C = n_batch, n_win, n_in
-        x: (B, T, C)
-        '''
-        out = self.fc(x)
-        out = self.relu(out)
-        out += x
+            out += x[:,:,self.foff.left:-self.foff.right or None]
         return out
 
 
@@ -71,16 +59,18 @@ class Encoder(nn.Module):
             ConvReLURes(n_out, n_out, 1)
         )
 
-        left_off = self.pre.left + sum(m.left for m in self.net.children())
-        right_off = self.pre.right + sum(m.right for m in self.net.children())
+        left_off = self.pre.foff.left + sum(m.foff.left for m in self.net.children())
+        right_off = self.pre.foff.right + sum(m.foff.right for m in self.net.children())
         self.foff = rf.FieldOffset(offsets=(left_off, right_off))
+
 
     def forward(self, wav):
         '''
         B, T = n_batch, n_win + rf_size - 1
         wav: (B, T)
         '''
-        mfcc = self.pre.func(wav)
-        out = self.net(mfcc)
+        mels = torch.tensor(np.apply_along_axis(self.pre.func, axis=1, arr=wav),
+                dtype=torch.float)
+        out = self.net(mels)
         return out
 

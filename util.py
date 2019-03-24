@@ -25,13 +25,13 @@ def _validate_checkpoint_info(ckpt_dir, ckpt_file_template):
 
 
 class CheckpointPath(object):
-    def __init__():
+    def __init__(self):
         self.dir = None
         self.file_template = None
         self.enabled = False
 
     def enable(self, _dir, file_template):
-        validate_checkpoint_info(_dir, file_template)
+        _validate_checkpoint_info(_dir, file_template)
         self.dir = _dir
         self.file_template = file_template
         self.enabled = True

@@ -148,7 +148,7 @@ class WavSlices(object):
         self.perm_gen_pos = None 
 
         # Used in save/restore (initialized in enable_file_checkpointing)
-        self.ckpt_paths = util.CheckpointPaths()
+        self.ckpt_path = util.CheckpointPath()
 
         # estimated number of total slices we can process in a buffer
         # of requested size (= number of time steps)

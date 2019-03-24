@@ -25,7 +25,7 @@ import librosa
 import numpy as np
 import rfield as rf 
 
-class ProcessWav(object, rf.FieldOffset):
+class ProcessWav(rf.FieldOffset):
     def __init__(self, samples_per_ms=16, window_length_ms=25,
             hop_length_ms=10, n_mels=80, n_mfcc=13):
         super(ProcessWav, self).__init__() # What to put here?

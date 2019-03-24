@@ -36,7 +36,7 @@ def get_opts():
             help='number of output channels for the bottleneck')
 
     # Decoder architectural parameters
-    parser.add_argument('--dec-n-kern', '-dnk', type=int, default=2,
+    parser.add_argument('--dec-filter-sz', '-dfs', type=int, default=2,
             help='decoder number of dilation kernel elements')
     parser.add_argument('--dec-n-lc-in', '-dli', type=int, default=-1,
             help='decoder number of local conditioning input channels')
@@ -59,14 +59,14 @@ def get_opts():
     parser.add_argument('--n-win', '-nw', type=int, metavar='INT',
             help='# of consecutive window training samples in one batch channel' )
     parser.add_argument('--frac-permutation-use', '-fpu', type=float,
-            metavar='FLOAT', help='Fraction of each random data permutation to
-            use.  Lower fraction ' 'causes more frequent reading of data from
-            disk, but more globally random order ' 'of data samples presented
-            to the model')
+            metavar='FLOAT', help='Fraction of each random data permutation to '
+            'use.  Lower fraction causes more frequent reading of data from '
+            'disk, but more globally random order of data samples presented '
+            'to the model')
     parser.add_argument('--requested-wav-buf-sz', '-rws', type=int,
             metavar='INT', help='Size in bytes of the total memory available '
-            'to buffer training data.  A higher value will minimize re-reading
-            of ' 'data and allow more globally random sample order')
+            'to buffer training data.  A higher value will minimize re-reading '
+            'of data and allow more globally random sample order')
     parser.add_argument('--max-steps', '-ms', type=int, default=1e20,
             help='Maximum number of training steps')
     parser.add_argument('--resume-step', '-rst', type=int, default=0,
@@ -89,11 +89,12 @@ def get_opts():
             help='File containing lines:\n'
             + '<id1>\t/path/to/sample1.flac\n'
             + '<id2>\t/path/to/sample2.flac\n')
-    parser.add_argument('checkpoint_dir', type=str, metavar='DIR',
-            'Directory for writing checkpoint files')
+    parser.add_argument('checkpoint_dir', type=str, metavar='CHECKPOINT_DIR',
+            help='Directory for writing checkpoint files')
     parser.add_argument('checkpoint_template', type=str,
-            metavar='STR', 'Filename template, with one "{}" for step number,
-            for writing checkpoint files')
+            metavar='CHECKPOINT_TEMPLATE',
+            help='Filename template, with one "{}" for step number, '
+            'for writing checkpoint files')
 
     default_opts = parser.parse_args()
 
@@ -157,24 +158,20 @@ def main():
             opts.requested_wav_buf_sz)
 
 
-    data_ckpt_file_template = opts.ckpt_file_template + '.data.ckpt'
-    model_ckpt_file_template = opts.ckpt_file_template + '.model.ckpt'
+    data_ckpt_file_template = opts.checkpoint_template + '.data.ckpt'
+    model_ckpt_file_template = opts.checkpoint_template + '.model.ckpt'
 
-    data.ckpt_path.enable(opts.ckpt_dir, data_ckpt_file_template)
+    data.ckpt_path.enable(opts.checkpoint_dir, data_ckpt_file_template)
 
     decoder_params['n_speakers'] = data.n_speakers()
     model = ae.AutoEncoder(encoder_params, bn_params, decoder_params)
-    model.ckpt_path.enable(opts.ckpt_dir, model_ckpt_file_template)
-
-    # ranges of the receptive fields of the encoder and decoder,
-    # in the timestep domain, relative to an output timestep at zero.
-    enc_bounds, dec_bounds = model.get_receptive_bounds()
+    model.ckpt_path.enable(opts.checkpoint_dir, model_ckpt_file_template)
 
     # the receptive_field is the length of one logical sample.  the data module
     # yields n_batch * n_win logical samples at a time.  since the logical
     # samples from one .wav file are overlapping, this amounts to a window of
     # n_win + receptive_field_sz - 1 from each of the n_batch wav files.
-    data.set_receptive_field(enc_bounds[1] - enc_bounds[0])
+    data.set_receptive_field(model.receptive_field_size())
 
     # Set CPU or GPU context
 
@@ -185,7 +182,8 @@ def main():
         model.load_state_dict(torch.load(model.ckpt_path.path(step)))
         print('Restored model and data from checkpoint', file=stderr)
     else:
-        # initialize model parameters
+        print('Initializing model parameters', file=stderr)
+        model.initialize_weights()
 
     # Initialize optimizer
     model_params = model.parameters()
@@ -201,10 +199,11 @@ def main():
         optim.step(loss_fcn)
 
         if step % opts.save_interval == 0 and step != opts.resume_step:
-            net_save_path = net.save(step)
-            dset_save_path = dset.save(step, file_read_count)
-            print('Saved checkpoints to {} and {}'.format(net_save_path, dset_save_path),
-                    file=stderr)
+            torch.save(model.state_dict(), model.ckpt_path.path(step))
+            data.ckpt_to_file(data.state_to_ckpt(), step)
+            print('Saved checkpoints to {} and {}'.format(data.ckpt_path.path(step),
+                model.ckpt_path.path(step)),
+                file=stderr)
 
         step += 1
 

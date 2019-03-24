@@ -3,8 +3,10 @@ import wave_encoder as enc
 import bottlenecks as bn
 import wavenet as dec 
 import util
+import torch
 from torch import nn
 from torch.nn.modules import loss
+import rfield as rf
 
 class AutoEncoder(nn.Module):
     '''
@@ -36,28 +38,40 @@ class AutoEncoder(nn.Module):
         # Does the complete model need the loss function defined as well?
         self.loss = loss.CrossEntropyLoss() 
 
-        # offsets between the encoder window bounds and
-        # corresponding decoder window bounds
-        self.enc_dec_loff = self.decoder.foff.left - self.encoder.foff.left
-        self.enc_dec_roff = self.encoder.foff.right - self.decoder.foff.right
-        assert self.enc_dec_loff > 0
-        assert self.enc_dec_roff > 0
+        # Offsets from encoder wav input and corresponding decoder wav input.
+        # The decoder takes a much smaller wav input.
+        ae_loff = self.encoder.foff.left + self.decoder.lc_foff.left
+        ae_roff = self.encoder.foff.right + self.decoder.lc_foff.right
+        self.ae_foff = rf.FieldOffset(offsets=(ae_loff, ae_roff))
 
         self.ckpt_path = util.CheckpointPath()
 
-    def get_receptive_bounds(self):
-        '''Calculate encoder and decoder input bounds relative to
-        an output position at zero.'''
-        dec_beg = -self.decoder.foff.left
-        dec_end = self.decoder.foff.right
-        enc_beg = dec_beg - self.encoder.foff.left
-        enc_end = dec_end + self.encoder.foff.right 
-        return (enc_beg, enc_end), (dec_beg, dec_end) 
+    def receptive_field_size(self):
+        '''number of audio timesteps needed for a single output timestep prediction'''
+        return self.ae_foff.total() + self.decoder.stack_foff.total()
 
-    def forward(self, wav_enc, wav_dec, voice_ids):
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0.2)
+            elif isinstance(m, nn.ConvTranspose1d):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0.2)
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.constant_(m.bias, 0)
+            else:
+                print('Warning: unknown module instance: {}'.format(str(type(m))))
+
+
+    def forward(self, wav_enc, voice_ids):
         '''
         B, T: n_batch, n_win + recep_field_sz - 1
-        T': subset of T, trimmed by self.enc_dec_{loff/roff}
+        T': subset of T, trimmed by self.ae_{loff/roff}
         Q: n_quant
         wav_enc: (B, T)
         wav_dec: (B, T') 
@@ -65,18 +79,17 @@ class AutoEncoder(nn.Module):
         '''
         enc = self.encoder(wav_enc)
         enc_bn = self.bottleneck(enc)
+        wav_dec = wav_enc[:,self.ae_foff.left:-self.ae_foff.right or None]
         quant = self.decoder(wav_dec, enc_bn, voice_ids)
         return quant 
 
     def loss_factory(self, batch_gen):
-        _xent_loss = torch.CrossEntropyLoss()
+        _xent_loss = torch.nn.CrossEntropyLoss()
+        pred_off = self.ae_foff.left + self.decoder.stack_foff.left + 1 
         def loss():
-            ids, wavs_enc = next(batch_gen)
-            wavs_dec = wavs_enc[:,self.enc_dec_loff:-self.enc_dec_roff]
-            # quant[0] is a prediction for wavs_dec[1], etc
-            # quant: (B, W, 
-            quant = self.forward(wavs_enc, wavs_dec, ids)
-            return _xent_loss(quant[:,:-1], wavs_dec[:,1:])
+            ids, wav = next(batch_gen)
+            quant = self.forward(wav, ids)
+            return _xent_loss(quant, wav[:,pred_off:-self.ae_foff.right or None])
         return loss
 
 

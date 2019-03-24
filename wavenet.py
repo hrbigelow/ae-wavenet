@@ -1,12 +1,3 @@
-# Issues:  1. We do NOT want padded convolutions - we will assume that x and lc
-# have the same time-step resolution, and the same dimension for batching.
-
-# Regarding batching, I need to figure out what dimension that will be on
-# as well, and how nn.Conv1d deals with it.
-
-# Regarding training with multiple input windows, I need to figure out how to
-# store autoregressive state so that successive window ranges are properly
-# initialized
 import torch
 from torch import nn
 from torch import distributions as dist
@@ -167,14 +158,15 @@ class Upsampling(nn.Module):
     less-frequent input.   
     '''
     def __init__(self, n_lc_chan, lc_upsample_filt_sizes, lc_upsample_strides):
-        self.tconvs = []
+        super(Upsampling, self).__init__()
+        self.tconvs = nn.ModuleList() 
         self.wings = []
         
-        for filt_size, stride in zip(lc_upsample_filt_sizes, lc_upsample_strides):
+        for filt_sz, stride in zip(lc_upsample_filt_sizes, lc_upsample_strides):
             left_wing_sz = (filt_sz - 1) // 2
             right_wing_sz = (filt_sz - 1) - left_wing_sz
             # Recall Pytorch's padding semantics for transpose conv.
-            tconv = nn.ConvTranspose1d(n_lc_chan, n_lc_chan, filt_size, stride,
+            tconv = nn.ConvTranspose1d(n_lc_chan, n_lc_chan, filt_sz, stride,
                     padding=left_wing_sz)
             self.tconvs.append(tconv)
             self.wings.append((left_wing_sz, right_wing_sz))
@@ -201,9 +193,10 @@ class Upsampling(nn.Module):
         output units that don't have full coverage of the filter with the input.
         '''
         for tconv, (left_wing_sz, right_wing_sz) in zip(self.tconvs, self.wings):
-            lc = tconv.forward(lc)[:,:,left_wing_sz:-right_wing_sz]
+            lc = tconv.forward(lc)[:,:,left_wing_sz:-right_wing_sz or None]
 
         return lc
+
 
 
 
@@ -231,19 +224,22 @@ class WaveNet(nn.Module):
             for bl in range(self.n_block_layers):
                 dil = bl**2
                 self.conv_layers.append(
-                        GatedResidualCondConv(n_cond, 2, n_res, n_dil, n_skp, 1, 1, dil, filter_sz))
+                        GatedResidualCondConv(n_cond, n_res, n_dil, n_skp, 1, dil, filter_sz))
 
         self.post1 = nn.Conv1d(n_skp, n_post, 1, 1, 1, bias)
         self.post2 = nn.Conv1d(n_post, n_quant, 1, 1, 1, bias)
         self.logsoftmax = nn.LogSoftmax(2) # (B, T, C)
 
-        # Calculate receptive field offsets.  Only the upsampling module and
-        # the dilated convolution stack give non-zero offsets
+        # Calculate receptive field offsets, separately for the convolutional
+        # stack, and for the upsampling of local conditioning
         stack_loff = sum(m.foff.left for m in self.conv_layers.children())
         stack_roff = sum(m.foff.right for m in self.conv_layers.children())
+        self.stack_foff = rf.FieldOffset(offsets=(stack_loff, stack_roff))
+
         lc_loff = self.lc_upsample.foff.left
         lc_roff = self.lc_upsample.foff.right
-        self.foff = rc.FieldOffset(offsets=(stack_loff + lc_loff, stack_roff + lc_roff))
+        self.lc_foff = rf.FieldOffset(offsets=(lc_loff, lc_roff))
+
 
 
     def forward(self, x, lc, voice_ids):
