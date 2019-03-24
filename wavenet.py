@@ -92,30 +92,37 @@ class Jitter(nn.Module):
     def gen_mask(self, n_batch, n_win):
         '''populates a tensor mask to be used for jitter, and sends it to GPU for
         next window'''
-        self.mindex = torch.empty(n_batch, n_win + 2, dtype=torch.long)
+        self.mindex = torch.empty(n_batch, n_win + 1, dtype=torch.long)
         self.mindex[:,0:2] = 1
         for b in range(n_batch):
             # The Markov sampling process
-            for t in range(2, n_win + 1):
+            for t in range(2, n_win):
                 self.mindex[b,t] = \
                         self.cond2d[self.mindex[b,t-2]][self.mindex[b,t-1]].sample()
-            self.mindex[b, n_win + 1] = 1
+            self.mindex[b, n_win] = 1
 
-        # adjusts so that temporary value of mindex[i] = {0, 1, 2} => {i-1, i, i+1}
-        self.mindex += torch.arange(n_win + 2, dtype=torch.long).repeat(n_batch, 1) - 1
+        # adjusts so that temporary value of mindex[i] = {0, 1, 2} imply {i-1,
+        # i, i+1} also, first and last elements of mindex mean 'do not replace
+        # the element with previous or next, but choose the existing element.
+        # This prevents attempting to replace the first element of the input
+        # with a non-existent 'previous' element, and likewise with the last
+        # element.
+        self.mindex = self.mindex[:,1:] 
+        self.mindex += torch.arange(n_win, dtype=torch.long).repeat(n_batch, 1) - 1
 
 
     # Will this play well with back-prop?
     def forward(self, x):
         '''Input: (B, I, T)'''
         n_batch, n_win = x.shape[0], x.shape[2]
-        self.update_mask(n_batch, n_win)
+        self.gen_mask(n_batch, n_win)
 
         assert x.shape[2] == self.mindex.shape[1]
         y = torch.empty(x.shape, dtype=x.dtype)
-        for b in range(self.n_batch):
+        for b in range(n_batch):
             y[b] = torch.index_select(x[b], 1, self.mindex[b])
-        return y[:,:,1:-1]
+        return y 
+
 
 def _gather_md(input, dim, index):
     '''Gathers each sub-tensor in input, as specified by
@@ -185,7 +192,7 @@ class Upsampling(nn.Module):
 
         self.foff = rf.FieldOffset(offsets=(loff, roff))
 
-    def forward(lc):
+    def forward(self, lc):
         '''B, T, S, C: batch_sz, timestep, less-frequent timesteps, input channels
         lc: (B, S, C)
         returns: (B, T, C)
@@ -193,7 +200,8 @@ class Upsampling(nn.Module):
         output units that don't have full coverage of the filter with the input.
         '''
         for tconv, (left_wing_sz, right_wing_sz) in zip(self.tconvs, self.wings):
-            lc = tconv.forward(lc)[:,:,left_wing_sz:-right_wing_sz or None]
+            lc = tconv(lc)
+            lc = lc[:,:,left_wing_sz:-right_wing_sz or None]
 
         return lc
 
@@ -222,7 +230,7 @@ class WaveNet(nn.Module):
         n_cond = n_lc_out + n_global_embed
         for b in range(self.n_blocks):
             for bl in range(self.n_block_layers):
-                dil = bl**2
+                dil = 2**bl
                 self.conv_layers.append(
                         GatedResidualCondConv(n_cond, n_res, n_dil, n_skp, 1, dil, filter_sz))
 
@@ -242,23 +250,32 @@ class WaveNet(nn.Module):
 
 
 
-    def forward(self, x, lc, voice_ids):
-        ''' B, T, I, L, Q: n_batch, n_win, n_in, n_lc_in, n_quant
-        x: (B, I, T)
-        lc: (B, L, T)
-        voice_ids: (B, T)
-        outputs: (B, T, Q)
+    def forward(self, wav, lc_sparse, voice_ids):
         '''
-        lc = self.jitter(lc)
-        lc = self.lc_conv(lc) 
-        lc = self.lc_upsample(lc)
-        cond = self.cond(lc, voice_ids)
+        B: n_batch (# of separate wav streams being processed)
+        N: n_win (# consecutive samples processed in one batch channel)
+        R: wav receptive field (stack_foff.total() + n_win)
+        T: local conditioning receptive field (R + lc_foff.total())
+        uf: upsampling_factor (
+        I: n_in
+        L: n_lc_in
+        Q: n_quant
+
+        wav: (B, I, R)
+        lc: (B, L, T//uf)
+        voice_ids: (B, T)
+        outputs: (B, N, Q)
+        '''
+        lc_sparse = self.jitter(lc_sparse)
+        lc_sparse = self.lc_conv(lc_sparse) 
+        lc_dense = self.lc_upsample(lc_sparse)
+        cond = self.cond(lc_dense, voice_ids)
         # "The conditioning signal was passed separately into each layer" - p 5 pp 1.
         # Oddly, they claim the global signal is just passed in as one-hot vectors.
         # But, this means wavenet's parameters would have N_s baked in, and wouldn't
         # be able to operate with a new voice ID.
 
-        sig = self.base_layer(x) 
+        sig = self.base_layer(wav) 
         skp_sum = None
         for i, l in enumerate(self.conv_layers):
             sig, skp = l(sig, cond)

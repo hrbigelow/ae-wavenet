@@ -64,18 +64,20 @@ class AutoEncoder(nn.Module):
             elif isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
                 nn.init.constant_(m.bias, 0)
-            else:
-                print('Warning: unknown module instance: {}'.format(str(type(m))))
+            #else:
+                # print('Warning: unknown module instance: {}'.format(str(type(m))))
 
 
     def forward(self, wav_enc, voice_ids):
         '''
-        B, T: n_batch, n_win + recep_field_sz - 1
-        T': subset of T, trimmed by self.ae_{loff/roff}
+        B: n_batch
+        T: total receptive field size of complete autoencoder model
+        R: size of local conditioning output of encoder (T - encoder.foff.total())
+        N: n_win (# consecutive samples processed in one batch channel)
         Q: n_quant
         wav_enc: (B, T)
         wav_dec: (B, T') 
-        outputs: (B, T, Q)  
+        outputs: (B, N, Q)  
         '''
         enc = self.encoder(wav_enc)
         enc_bn = self.bottleneck(enc)

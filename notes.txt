@@ -723,4 +723,35 @@ checkpoint.
 In the data module, we separate the saving and restoring of a checkpoint state
 in two stages.  File <-> Encapsulated Checkpoint state <-> Class state
 
+We need to tell the data module the size of windows to produce, and 
+
+
+         1         2         3
+1234567890123456789012345678901234567890
+*----*----*----*----*
+*********************
+
+
+
+
+What do we want?  We would like only "valid" outputs of the transpose convolution,
+which means simply that all of 
+
+
+It appears that what is happening is the following:
+
+1. pytorch inserts (stride-1) zero elements between each pair of input elements.
+So, if there are 5 input elements, the zero-padded input will be 5 + (4 * 4) = 21
+
+2. the filter element is applied in every possible position that overlaps the
+input by at least one element, unless padding is non-zero.
+
+With zero padding, this consists of 21 positions in which the key filter
+element is positioned atop one of the input positions, plus (21-1)//2 = 12
+outputs in which the left wing of the filter is positioned on the first input
+element, plus (21-1)//2 = 12 outputs in which the right wing of the filter is
+positioned on the last input element.
+
+for each quantity of padding = 1, 2, etc, another of these positions where the key
+element is not within the input is eliminated.  So,  
 

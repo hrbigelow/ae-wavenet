@@ -20,6 +20,9 @@ class ConvReLURes(nn.Module):
         self.n_out = n_out
         self.conv = nn.Conv1d(n_in, n_out, filter_sz, stride, padding=0)
         self.relu = nn.ReLU(inplace=True)
+
+        # Offsets of the timestep boundaries between the input wav stream
+        # and the output encoding vectors
         self.foff = rf.FieldOffset(filter_sz=filter_sz)
 
     def forward(self, x):
