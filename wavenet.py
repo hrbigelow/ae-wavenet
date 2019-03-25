@@ -161,22 +161,25 @@ class Conditioning(nn.Module):
 
 
 class Upsampling(nn.Module):
-    '''Computes a one-per-timestep conditioning vector from a
-    less-frequent input.   
+    '''
+    Computes a one-per-timestep conditioning vector from a less-frequent
+    input.  Padding and offsets are computed as described in
+    upsampling_notes.txt
     '''
     def __init__(self, n_lc_chan, lc_upsample_filt_sizes, lc_upsample_strides):
         super(Upsampling, self).__init__()
         self.tconvs = nn.ModuleList() 
-        self.wings = []
+        self.offsets = []
         
         for filt_sz, stride in zip(lc_upsample_filt_sizes, lc_upsample_strides):
             left_wing_sz = (filt_sz - 1) // 2
             right_wing_sz = (filt_sz - 1) - left_wing_sz
+            end_padding = stride - 1
             # Recall Pytorch's padding semantics for transpose conv.
             tconv = nn.ConvTranspose1d(n_lc_chan, n_lc_chan, filt_sz, stride,
-                    padding=left_wing_sz)
+                    padding=filt_sz - stride)
             self.tconvs.append(tconv)
-            self.wings.append((left_wing_sz, right_wing_sz))
+            self.offsets.append((left_wing_sz - end_padding, right_wing_sz - end_padding))
 
         n = len(lc_upsample_strides)
         # sub_strides[i] will be the stride of the output of layer i relative to
@@ -187,8 +190,8 @@ class Upsampling(nn.Module):
         
         loff, roff = 0, 0
         for i in range(n):
-            loff += self.wings[i][0] * sub_strides[i]
-            roff += self.wings[i][1] * sub_strides[i]
+            loff += self.offsets[i][0] * sub_strides[i]
+            roff += self.offsets[i][1] * sub_strides[i]
 
         self.foff = rf.FieldOffset(offsets=(loff, roff))
 
@@ -196,12 +199,9 @@ class Upsampling(nn.Module):
         '''B, T, S, C: batch_sz, timestep, less-frequent timesteps, input channels
         lc: (B, S, C)
         returns: (B, T, C)
-        Here, we trim the output of each transpose convolution, in order to discard
-        output units that don't have full coverage of the filter with the input.
         '''
-        for tconv, (left_wing_sz, right_wing_sz) in zip(self.tconvs, self.wings):
+        for tconv in self.tconvs:
             lc = tconv(lc)
-            lc = lc[:,:,left_wing_sz:-right_wing_sz or None]
 
         return lc
 

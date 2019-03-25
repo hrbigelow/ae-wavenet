@@ -1,0 +1,242 @@
+Design of the local conditioning upsampling module
+
+The paper mentions (p. 5, first paragraph), "The representation was then
+upsampled 320 times (to match the 16kHz audio sampling rate)..."  It isn't
+specified in the paper how upsampling is performed.  In the original wavenet
+paper (https://arxiv.org/pdf/1609.03499.pdf) mentions that the upsampling uses
+transposed convolutions, but does not give any detail about how many transposed
+convolutions, strides, filter sizes, or padding strategies.
+
+Here, I adopt a few strategies:
+
+Strategy 1: I think obvious, the product of strides needs to be 320.  My
+default is to use strides [5, 4, 4, 4].
+
+Strategy 2: Use filter sizes large enough to cover at least a few
+non-zero-padding inputs.  For example, for a stride of 5, if we want to use 5
+non-zero inputs, the filter must be at least 21 units long.
+
+Strategy 3: To make successive convolutions use a consistent number of non-zero
+inputs, the length of the filter must be a multiple of the stride.  Thus, using
+exactly 5 non-zero inputs with a stride of 5 implies a filter size of 25.
+
+Strategy 4: Only use convolution positions that span filter_sz // stride
+non-zero inputs.  In the above example, this would be 25 // 5 = 5 non-zero
+inputs.
+
+Strategy 5: For symmetry, have the same number of convolutions at each of the 5
+phases in the stride.  This is admittedly a weakly supported strategy, but to
+me it feels like the best way to minimize any "edge effects"
+
+In order to achieve all of these goals using PyTorch's nn.ConvTranspose1d, we
+need to make careful use of the 'padding' parameter, and also trim the output
+of invalid filter positions.
+
+Here's an experiment with the padding parameter, with an input size of 7 and a
+stride of 5:
+
+x = torch.randn(1, 1, 7)
+for pad in range(28): 
+    tconv = nn.ConvTranspose1d(1, 1, kernel_size=25, stride=5, padding=pad) 
+    result = tconv(x) 
+    print(pad, result.shape) 
+
+0 torch.Size([1, 1, 55])
+1 torch.Size([1, 1, 53])
+2 torch.Size([1, 1, 51])
+3 torch.Size([1, 1, 49])
+4 torch.Size([1, 1, 47])
+5 torch.Size([1, 1, 45])
+6 torch.Size([1, 1, 43])
+7 torch.Size([1, 1, 41])
+8 torch.Size([1, 1, 39])
+9 torch.Size([1, 1, 37])
+10 torch.Size([1, 1, 35])
+11 torch.Size([1, 1, 33])
+12 torch.Size([1, 1, 31])
+13 torch.Size([1, 1, 29])
+14 torch.Size([1, 1, 27])
+15 torch.Size([1, 1, 25])
+16 torch.Size([1, 1, 23])
+17 torch.Size([1, 1, 21])
+18 torch.Size([1, 1, 19])
+19 torch.Size([1, 1, 17])
+20 torch.Size([1, 1, 15])
+21 torch.Size([1, 1, 13])
+22 torch.Size([1, 1, 11])
+23 torch.Size([1, 1, 9])
+24 torch.Size([1, 1, 7])
+25 torch.Size([1, 1, 5])
+26 torch.Size([1, 1, 3])
+27 torch.Size([1, 1, 1])
+
+What seems to be happening is, between each neighboring pair of input elements,
+PyTorch adds (stride-1) zero-valued elements.  With a padding=0 argument, at
+each end, it adds filt_sz - 1 zero-valued elements.  Each additional padding
+value reduces by one the padding on the ends of the input.  Here is the same
+experiment, showing first and last filter positions as [ ], and { }, with ^
+marking the central position of the filter and also the "position" of the
+convolution result.
+
+
+position:      0        10        20        30        40        50        60        70
+position:      |         |         |         |         |         |         |         |
+spaced input:  ------------------------*----*----*----*----*----*----*------------------------
+(pad=0)        [           ^           ]                             {           ^           }
+(pad=1)         [           ^           ]                           {           ^           }
+(pad=2)          [           ^           ]                         {           ^           }
+(pad=3)           [           ^           ]                       {           ^           }
+(pad=4)            [           ^           ]                     {           ^           }
+(pad=5)             [           ^           ]                   {           ^           }
+(pad=6)              [           ^           ]                 {           ^           }
+(pad=7)               [           ^           ]               {           ^           }
+(pad=8)                [           ^           ]             {           ^           }
+(pad=9)                 [           ^           ]           {           ^           }
+(pad=10)                 [           ^           ]         {           ^           }
+(pad=11)                  [           ^           ]       {           ^           }
+(pad=12)                   [           ^           ]     {           ^           }
+(pad=13)                    [           ^           ]   {           ^           }
+(pad=14)                     [           ^           ] {           ^           }
+(pad=15)                      [           ^           I           ^           }
+(pad=16)                       [           ^         { ]         ^           }
+(pad=17)                        [           ^       {   ]       ^           }
+(pad=18)                         [           ^     {     ]     ^           }
+(pad=19)                          [           ^   {       ]   ^           }
+(pad=20)                           [           ^ {         ] ^           }
+(pad=21)                            [           {           ]           }
+(pad=22)                             [         { ^         ^ ]         }
+(pad=23)                              [       {   ^       ^   ]       }
+(pad=24)                               [     {     ^     ^     ]     }
+(pad=25)                                [   {       ^   ^       ]   }
+(pad=26)                                 [ {         ^ ^         ] }
+(pad=27)                                  I           ^           I
+spaced input:  ------------------------*----*----*----*----*----*----*------------------------
+position:      |         |         |         |         |         |         |         |
+position:      0        10        20        30        40        50        60        70
+ 
+Note that only padding >= 20 have all filter positions covering exactly 5
+non-zero inputs (marked '*').  Also, note that the filter positions all have a
+"phase", defined by where the central position is in relation to the greatest
+upper bound non-zero element.  The number of filter positions of each phase for
+padding >= 20 are shown here:
+
+pad   phase_pattern     ph0 ph1 ph2 ph3 ph4 out_sz pad_in_sz
+20   340123401234012      3   3   3   3   3     15        39
+21    4012340123401       3   3   2   2   3     13        37 
+22     01234012340        3   2   2   2   1     11        35
+23      123401234         1   2   2   2   1      9        33
+24       2340123          1   1   2   2   1      7        31
+25        34012           1   1   1   1   1      5        29
+26         401            1   1   0   0   1      3        27
+27          0             1   0   0   0   0      1        25
+ 
+Only paddings 20 and 25 satisfy strategy 5.  For these, output size is an even
+multiple of the stride.  Note also that the starting and ending phases of the
+pattern is 3, 2.
+
+PyTorch adds filter_sz - 1 - padding   zero-valued elements to each end of the
+input.  In the below equations, 'padding' refers to the nn.ConvTranspose1d
+formal parameter called 'padding', NOT the number of elements actually added to
+the input on either side.
+
+Any filter position that starts more than stride - 1 positions before the first
+non-zero element will not cover the maximal number of non-zero elements in the
+input, and thus will not satisfy strategy 3.  To summarize:
+
+end_padding = filter_sz - 1 - padding
+end_padding <= stride - 1
+
+filter_sz - 1 - padding <= stride - 1
+filter_sz - padding <= stride
+-padding <= stride - filter_sz
+padding >= filter_sz - stride  (Criterion 1)
+
+So with a filter_sz = 25, stride = 5, padding >= 20, as we saw. 
+
+Next, we want out_sz % stride == 0.  To summarize:
+
+out_sz = pad_in_sz - filter_sz + 1
+pad_in_sz = 2 * end_padding + (num_nonzero - 1) * stride + 1
+
+pad_in_sz = 2 * (filter_sz - 1 - padding) + (num_nonzero - 1) * stride + 1
+out_sz = 2 * (filter_sz - 1 - padding) + (num_nonzero - 1) * stride + 1 - filter_sz + 1
+out_sz = filter_sz - 2 * padding + (num_nonzero - 1) * stride
+out_sz % stride = (filter_sz - 2 * padding) % stride
+out_sz % stride = (-2 * padding) % stride   # filter_sz % stride == 0
+
+which implies padding % stride == 0  (Criterion 2)
+
+Finally, to maximize output, we minimize padding.  The unique value of padding which
+satisfies both critera is just:
+
+padding = filter_sz - stride   (Result)
+
+With this choice:
+
+end_padding = filter_sz - 1 - padding
+            = filter_sz - 1 - (filter_sz - stride)
+            = stride - 1
+
+as can be seen in the diagram above for padding=20.
+
+
+Timestep coordinates
+
+In the context of this paper, the embedding vectors output by the encoder occur
+one every 320 timesteps.  It is a reasonable idea to assign each one to a
+particular timestep relative to the input wav file.  Likewise, in the decoder's
+block of upsampling layers, we take the approach of assigning explicit
+timesteps to each output of the transpose convolution.
+
+Thus, adopting the specific set of strides [5, 4, 4, 4] as mentioned above, the
+input to the upsampling block will have one input for each 320 timesteps.  The next
+layer will have one output for each 64 timesteps, then 16, then 4, then 1.
+
+Also, we can adopt the convention that the output timestep should correspond to
+the position of the central filter element.  This implies an offset between the
+first input position and first output position, and between the last input
+position and last output position.  In the code, these offsets are represented
+using the rfield.Fieldoffset class.
+
+Here is a diagram of the output region produced with padding=20, stride=5,
+filter_sz=25, and input_sz=7.  The input elements '*' are taken to be at a 5x
+lower frequency than the output.  This could represent a frequency from 1/320
+timesteps to 1/64 timesteps, or could be a later layer, from 1/5 timesteps to
+1/1 timesteps. 
+
+output                     +++++++++++++++
+(pad=20)       [           ^ {         ] ^           }
+spaced input:  ----*----*----*----*----*----*----*----
+position:      |         |         |         |         |
+position:      0        10        20        30        40
+
+We want to calculate the offset, in timesteps, between the coordinate of the
+leftmost non-zero element and the left-most output element, and the same idea
+on the right side.  In this case, the offset is 12-4=8 on the left, and 34-26=8
+on the right.
+
+The offset is readily calculated as:
+
+left_wing_sz = (filter_sz - 1) / 2 # distance from left end of filter to center element
+end_padding = stride - 1
+
+left_offset = left_wing_sz - end_padding
+            = (filter_sz - 1) / 2 - (stride - 1)
+
+
+Since the filter_sz is odd, the right_offset is the same.  We now have a way of
+calculating the total size and positioning of output elements in the stack of
+upsampling units.  This allows the decoder (WaveNet) to back-calculate how many
+1/320 timestep embedding vectors are needed for conditioning on the receptive
+field for its own dilated convolutional stack.
+
+In wavenet.py::Upsampling, the full left and right offsets are recorded in the
+'foff' member variable.
+
+
+
+
+
+
+
+
