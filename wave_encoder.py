@@ -7,7 +7,7 @@ import numpy as np
 
 
 class ConvReLURes(nn.Module):
-    def __init__(self, n_in, n_out, filter_sz, stride=1, do_res=True):
+    def __init__(self, n_in_chan, n_out_chan, filter_sz, stride=1, do_res=True):
         super(ConvReLURes, self).__init__()
         self.do_res = do_res
         if self.do_res:
@@ -16,18 +16,16 @@ class ConvReLURes(nn.Module):
                         file=sys.stderr)
                 raise ValueError
 
-        self.n_in = n_in
-        self.n_out = n_out
-        self.conv = nn.Conv1d(n_in, n_out, filter_sz, stride, padding=0)
+        self.n_in = n_in_chan
+        self.n_out = n_out_chan
+        self.conv = nn.Conv1d(n_in_chan, n_out_chan, filter_sz, stride, padding=0)
         self.relu = nn.ReLU(inplace=True)
 
-        # Offsets of the timestep boundaries between the input wav stream
-        # and the output encoding vectors
         self.foff = rf.FieldOffset(filter_sz=filter_sz)
 
     def forward(self, x):
         '''
-        B, C, T = n_batch, n_in, n_win
+        B, C, T = n_batch, n_in_chan, n_win
         x: (B, C, T)
         '''
         out = self.conv(x)
@@ -45,11 +43,13 @@ class Encoder(nn.Module):
             n_mels, n_mfcc, n_out):
         super(Encoder, self).__init__()
 
+        # the "preprocessing"
         self.pre = mfcc.ProcessWav(
                 sample_rate_ms, win_length_ms, hop_length_ms, n_mels, n_mfcc)
 
-        n_in = self.pre.n_out
         
+        # the "stack"
+        n_in = self.pre.n_out
         self.net = nn.Sequential(
             ConvReLURes(n_in, n_out, 3, do_res=False),
             ConvReLURes(n_out, n_out, 3),
@@ -62,17 +62,27 @@ class Encoder(nn.Module):
             ConvReLURes(n_out, n_out, 1)
         )
 
-        left_off = self.pre.foff.left + sum(m.foff.left for m in self.net.children())
-        right_off = self.pre.foff.right + sum(m.foff.right for m in self.net.children())
+        # the offsets in stack element coordinates
+        stack_loff = sum(m.foff.left for m in self.net.children())
+        stack_roff = sum(m.foff.right for m in self.net.children())
+
+        # spacing of the input of the stack in timesteps 
+        input_stepsize = sample_rate_ms * hop_length_ms
+        left_off = self.pre.foff.left + stack_loff * input_stepsize
+        right_off = self.pre.foff.right + stack_roff * input_stepsize
         self.foff = rf.FieldOffset(offsets=(left_off, right_off))
 
 
     def forward(self, wav):
         '''
         B, T = n_batch, n_win + rf_size - 1
-        wav: (B, T)
+        wav: (B, T) (torch.tensor)
         '''
-        mels = torch.tensor(np.apply_along_axis(self.pre.func, axis=1, arr=wav),
+        # Note: for consistency, we would like all 'forward' calls to accept
+        # and return a torch.tensor.  This one happens to require
+        # pre-processing functions that only work on numpy.ndarrays, so first
+        # convert to numpy, and then back.
+        mels = torch.tensor(np.apply_along_axis(self.pre.func, axis=1, arr=wav.numpy()),
                 dtype=torch.float)
         out = self.net(mels)
         return out

@@ -217,11 +217,12 @@ on the right.
 
 The offset is readily calculated as:
 
-left_wing_sz = (filter_sz - 1) / 2 # distance from left end of filter to center element
+left_wing_sz = (filter_sz - 1) // 2 # distance from left end of filter to center element
+right_wing_sz = (filter_sz - 1) - left_wing_sz 
 end_padding = stride - 1
 
 left_offset = left_wing_sz - end_padding
-            = (filter_sz - 1) / 2 - (stride - 1)
+right_offset = right_wing_sz - end_padding
 
 
 Since the filter_sz is odd, the right_offset is the same.  We now have a way of

@@ -50,6 +50,19 @@ class AutoEncoder(nn.Module):
         '''number of audio timesteps needed for a single output timestep prediction'''
         return self.ae_foff.total() + self.decoder.stack_foff.total()
 
+    def print_offsets(self):
+        '''Show the set of offsets for each section of the model'''
+        print('{}\t{}\t{}\t{}\t{}\t{}\n{}'.format(
+            self.encoder.foff.left,
+            self.decoder.lc_foff.left,
+            self.decoder.stack_foff.left,
+            self.decoder.stack_foff.right,
+            self.decoder.lc_foff.right,
+            self.encoder.foff.right,
+            self.encoder.foff.total() +
+            self.decoder.lc_foff.total() +
+            self.decoder.stack_foff.total()))
+
 
     def initialize_weights(self):
         for m in self.modules():
@@ -85,13 +98,18 @@ class AutoEncoder(nn.Module):
         quant = self.decoder(wav_dec, enc_bn, voice_ids)
         return quant 
 
+
     def loss_factory(self, batch_gen):
         _xent_loss = torch.nn.CrossEntropyLoss()
         pred_off = self.ae_foff.left + self.decoder.stack_foff.left + 1 
         def loss():
+            # numpy.ndarray
             ids, wav = next(batch_gen)
-            quant = self.forward(wav, ids)
-            return _xent_loss(quant, wav[:,pred_off:-self.ae_foff.right or None])
+            ids_ten = torch.tensor(ids)
+            wav_ten = torch.tensor(wav)
+
+            quant = self.forward(wav_ten, ids_ten)
+            return _xent_loss(quant, wav_ten[:,pred_off:-self.ae_foff.right or None])
         return loss
 
 

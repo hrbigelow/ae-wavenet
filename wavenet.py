@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from torch import distributions as dist
 import rfield as rf
+from numpy import prod as np_prod
 
 class GatedResidualCondConv(nn.Module):
     def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, filter_sz=2, bias=True):
@@ -125,17 +126,19 @@ class Jitter(nn.Module):
 
 
 def _gather_md(input, dim, index):
-    '''Gathers each sub-tensor in input, as specified by
-    the value of each element in index at dim.
-    Collects subtensors and arranges them by index shape.
-    returns: (X1, ..., X_(d-1), X_(d+1), ... , Xn, I1, ..., Ik)
-    X is index, I is input
+    '''
+    Creats a new tensor by replacing each scalar value s in index[...]
+    with a subtensor input[:,:,...,s,...], where s is the dim'th dimension.
+
+    The resulting gathered tensor has dimensions:
+
+    **index.shape + input_shape_without_dim
     '''
     x = torch.index_select(input, dim, index.flatten())
-    ish = list(input.shape)
-    xsh = list(index.shape)
-    nsh = xsh + [ish[i] for i in range(len(ish)) if i != dim]
-    return x.reshape(nsh) 
+    input_shape = list(input.shape)
+    index_shape = list(index.shape)
+    output_shape = index_shape + [input_shape[i] for i in range(len(input_shape)) if i != dim]
+    return x.reshape(output_shape) 
 
 
 class Conditioning(nn.Module):
@@ -182,16 +185,16 @@ class Upsampling(nn.Module):
             self.offsets.append((left_wing_sz - end_padding, right_wing_sz - end_padding))
 
         n = len(lc_upsample_strides)
-        # sub_strides[i] will be the stride of the output of layer i relative to
-        # the base-level timestep.
-        sub_strides = [1] * n
+        # layer_stepsize[i] is the number of timesteps between consecutive
+        # units in layer i
+        layer_stepsize = [1] * n
         for i in reversed(range(n - 1)):
-            sub_strides[i] = sub_strides[i+1] * lc_upsample_strides[i+1]
+            layer_stepsize[i] = layer_stepsize[i+1] * lc_upsample_strides[i+1]
         
         loff, roff = 0, 0
         for i in range(n):
-            loff += self.offsets[i][0] * sub_strides[i]
-            roff += self.offsets[i][1] * sub_strides[i]
+            loff += self.offsets[i][0] * layer_stepsize[i]
+            roff += self.offsets[i][1] * layer_stepsize[i]
 
         self.foff = rf.FieldOffset(offsets=(loff, roff))
 
@@ -220,7 +223,11 @@ class WaveNet(nn.Module):
         self.bias = bias
 
         self.jitter = Jitter(jitter_prob)
-        self.lc_conv = nn.Conv1d(n_lc_in, n_lc_out, 3, 1, bias=self.bias)
+        post_jitter_filt_sz = 3
+        lc_input_stepsize = np_prod(lc_upsample_strides) 
+
+        self.lc_conv = nn.Conv1d(n_lc_in, n_lc_out,
+                kernel_size=post_jitter_filt_sz, stride=1, bias=self.bias)
         self.lc_upsample = Upsampling(n_lc_out, lc_upsample_filt_sizes, lc_upsample_strides)
         self.cond = Conditioning(n_speakers, n_global_embed)
 
@@ -246,7 +253,8 @@ class WaveNet(nn.Module):
 
         lc_loff = self.lc_upsample.foff.left
         lc_roff = self.lc_upsample.foff.right
-        self.lc_foff = rf.FieldOffset(offsets=(lc_loff, lc_roff))
+        conv_foff = rf.FieldOffset(filter_sz=post_jitter_filt_sz, multiplier=lc_input_stepsize)
+        self.lc_foff = rf.FieldOffset(offsets=(lc_loff + conv_foff.left, lc_roff + conv_foff.right))
 
 
 

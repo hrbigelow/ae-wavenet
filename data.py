@@ -342,10 +342,3 @@ class WavSlices(object):
         return gen_fn(self._slice_gen_fn())
 
 
-
-
-
-
-            
-
-
