@@ -3,6 +3,8 @@ from torch import nn
 from torch import distributions as dist
 import rfield as rf
 from numpy import prod as np_prod
+import util
+
 
 class GatedResidualCondConv(nn.Module):
     def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, filter_sz=2, bias=True):
@@ -125,21 +127,6 @@ class Jitter(nn.Module):
         return y 
 
 
-def _gather_md(input, dim, index):
-    '''
-    Creats a new tensor by replacing each scalar value s in index[...]
-    with a subtensor input[:,:,...,s,...], where s is the dim'th dimension.
-
-    The resulting gathered tensor has dimensions:
-
-    **index.shape + input_shape_without_dim
-    '''
-    x = torch.index_select(input, dim, index.flatten())
-    input_shape = list(input.shape)
-    index_shape = list(index.shape)
-    output_shape = index_shape + [input_shape[i] for i in range(len(input_shape)) if i != dim]
-    return x.reshape(output_shape) 
-
 
 class Conditioning(nn.Module):
     '''Module for merging up-sampled local conditioning vectors
@@ -150,16 +137,17 @@ class Conditioning(nn.Module):
         self.speaker_embedding = nn.Linear(n_speakers, n_embed, bias)
         self.eye = torch.eye(n_speakers)
 
-    def forward(self, lc, ids):
+    def forward(self, lc, speaker_inds):
         '''
         I, G, S: n_in_chan, n_embed_chan, n_speakers
         lc : (B, T, I)
-        ids: (B, T)
+        speaker_inds: (B, T)
         returns: (B, T, I+G)
         '''
-        one_hot = _gather_md(self.eye, 0, ids) # one_hot: (B, T, S)
+        one_hot = util.gather_md(self.eye, 0, speaker_inds) # one_hot: (B, T, S)
         gc = self.speaker_embedding(one_hot) # gc: (B, T, G)
-        all_cond = torch.cat((lc, gc), dim=2) 
+        gc_rep = gc.reshape(gc.shape[0], 1, gc.shape[1]).repeat(1, lc.shape[1], 1)
+        all_cond = torch.cat((lc, gc_rep), dim=2) 
         return all_cond
 
 
@@ -212,7 +200,7 @@ class Upsampling(nn.Module):
 
 
 class WaveNet(nn.Module):
-    def __init__(self, n_in, filter_sz, n_lc_in, n_lc_out, lc_upsample_filt_sizes,
+    def __init__(self, filter_sz, n_lc_in, n_lc_out, lc_upsample_filt_sizes,
             lc_upsample_strides, n_res, n_dil, n_skp, n_post, n_quant,
             n_blocks, n_block_layers, jitter_prob, n_speakers, n_global_embed,
             bias=True):
@@ -220,6 +208,8 @@ class WaveNet(nn.Module):
 
         self.n_blocks = n_blocks
         self.n_block_layers = n_block_layers
+        self.n_quant = n_quant
+        self.quant_onehot = torch.eye(self.n_quant)
         self.bias = bias
 
         self.jitter = Jitter(jitter_prob)
@@ -231,7 +221,8 @@ class WaveNet(nn.Module):
         self.lc_upsample = Upsampling(n_lc_out, lc_upsample_filt_sizes, lc_upsample_strides)
         self.cond = Conditioning(n_speakers, n_global_embed)
 
-        self.base_layer = nn.Conv1d(n_in, n_res, 1, 1, dilation=1, bias=self.bias)
+        self.base_layer = nn.Conv1d(n_quant, n_res, kernel_size=1, stride=1,
+                dilation=1, bias=self.bias)
 
         self.conv_layers = nn.ModuleList() 
         n_cond = n_lc_out + n_global_embed
@@ -256,9 +247,18 @@ class WaveNet(nn.Module):
         conv_foff = rf.FieldOffset(filter_sz=post_jitter_filt_sz, multiplier=lc_input_stepsize)
         self.lc_foff = rf.FieldOffset(offsets=(lc_loff + conv_foff.left, lc_roff + conv_foff.right))
 
+    def one_hot(self, wav_compand):
+        '''wav_compand: (B, T)
+        B: n_batch
+        T: n_timesteps
+        Q: n_quant
+        returns: (B, Q, T)
+        '''
+        return util.gather_md(self.quant_onehot, 0, wav_compand.long()).transpose(1, 2)
 
 
-    def forward(self, wav, lc_sparse, voice_ids):
+
+    def forward(self, wav_onehot, lc_sparse, speaker_inds):
         '''
         B: n_batch (# of separate wav streams being processed)
         N: n_win (# consecutive samples processed in one batch channel)
@@ -271,19 +271,19 @@ class WaveNet(nn.Module):
 
         wav: (B, I, R)
         lc: (B, L, T//uf)
-        voice_ids: (B, T)
+        speaker_inds: (B, T)
         outputs: (B, N, Q)
         '''
         lc_sparse = self.jitter(lc_sparse)
         lc_sparse = self.lc_conv(lc_sparse) 
         lc_dense = self.lc_upsample(lc_sparse)
-        cond = self.cond(lc_dense, voice_ids)
+        cond = self.cond(lc_dense, speaker_inds)
         # "The conditioning signal was passed separately into each layer" - p 5 pp 1.
         # Oddly, they claim the global signal is just passed in as one-hot vectors.
         # But, this means wavenet's parameters would have N_s baked in, and wouldn't
-        # be able to operate with a new voice ID.
+        # be able to operate with a new speaker ID.
 
-        sig = self.base_layer(wav) 
+        sig = self.base_layer(wav_onehot) 
         skp_sum = None
         for i, l in enumerate(self.conv_layers):
             sig, skp = l(sig, cond)

@@ -82,7 +82,7 @@ class Encoder(nn.Module):
         # and return a torch.tensor.  This one happens to require
         # pre-processing functions that only work on numpy.ndarrays, so first
         # convert to numpy, and then back.
-        mels = torch.tensor(np.apply_along_axis(self.pre.func, axis=1, arr=wav.numpy()),
+        mels = torch.tensor(np.apply_along_axis(self.pre.func, axis=1, arr=wav),
                 dtype=torch.float)
         out = self.net(mels)
         return out

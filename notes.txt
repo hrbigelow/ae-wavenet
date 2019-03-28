@@ -755,3 +755,26 @@ positioned on the last input element.
 for each quantity of padding = 1, 2, etc, another of these positions where the key
 element is not within the input is eliminated.  So,  
 
+
+When, during the flow of data, should you convert from numpy ndarrays to torch tensors,
+move them to GPU
+
+Obviously, they need to be tensors at or before they must be on GPU.  Also, it seems
+cleaner to convert them all at the same time.  The only sticking point is that
+there are certain functions that don't exist for torch tensors that still must be
+done, like in the preprocessing stages.
+
+The problem currently is that the full autoencoder model includes a pre-processing
+step that requires first processing
+
+Where to convert real IDs to consecutive integers?  The data module is in the best
+position to do it.  But, the model is where the logic really happens.  
+
+
+It's the decoder that needs the voice ids.  Where are we going to actually report
+these?  From our point of view, the model also is "learning" a mapping between
+the voice ids and consecutive integers, because it is in the model parameters that
+the integers are actually manifest.  So, it seems appropriate from a design
+point of view to store the map in the model.
+
+The 

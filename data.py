@@ -166,12 +166,12 @@ class WavSlices(object):
 
         self.current_epoch = 1 
 
+    def speaker_ids(self):
+        return set(id for id,__ in self.sample_catalog)
+
     def set_receptive_field(self, recep_field_sz):
         self.recep_field_sz = recep_field_sz
 
-
-    def n_speakers(self):
-        return len(set(id for id,__ in self.sample_catalog))
 
     def slice_size(self):
         return self.n_win + self.recep_field_sz - 1

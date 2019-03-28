@@ -163,8 +163,9 @@ def main():
 
     data.ckpt_path.enable(opts.checkpoint_dir, data_ckpt_file_template)
 
-    decoder_params['n_speakers'] = data.n_speakers()
-    model = ae.AutoEncoder(encoder_params, bn_params, decoder_params)
+    speaker_ids = data.speaker_ids()
+    decoder_params['n_speakers'] = len(speaker_ids) 
+    model = ae.AutoEncoder(encoder_params, bn_params, decoder_params, speaker_ids)
     model.ckpt_path.enable(opts.checkpoint_dir, model_ckpt_file_template)
 
     # the receptive_field is the length of one logical sample.  the data module

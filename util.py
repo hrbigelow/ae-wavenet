@@ -1,3 +1,6 @@
+import numpy as np
+import torch
+
 def _validate_checkpoint_info(ckpt_dir, ckpt_file_template):
     # Unfortunately, Python doesn't provide a way to hold an open directory
     # handle, so we just check whether the directory path exists and is
@@ -40,3 +43,39 @@ class CheckpointPath(object):
         if not self.enabled:
             raise RuntimeError('Must call enable first.')
         return '{}/{}'.format(self.dir, self.file_template.format(step))
+
+
+def mu_encode_np(x, n_quanta):
+    '''mu-law encode and quantize'''
+    mu = n_quanta - 1
+    amp = np.sign(x) * np.log1p(mu * np.abs(x)) / np.log1p(mu)
+    quant = (amp + 1) * 0.5 * mu + 0.5
+    return quant.astype(np.int32)
+
+
+def mu_decode_np(quant, n_quanta):
+    '''accept an integer mu-law encoded quant, and convert
+    it back to the pre-encoded value'''
+    mu = n_quanta - 1
+    qf = quant.astype(np.float32)
+    inv_mu = 1.0 / mu
+    a = (2 * qf - 1) * inv_mu - 1
+    x = np.sign(a) * ((1 + mu)**np.fabs(a) - 1) * inv_mu
+    return x
+
+
+def gather_md(input, dim, index):
+    '''
+    Creats a new tensor by replacing each scalar value s in index[...]
+    with a subtensor input[:,:,...,s,...], where s is the dim'th dimension.
+
+    The resulting gathered tensor has dimensions:
+
+    **index.shape + **input_shape_without_dim
+    '''
+    x = torch.index_select(input, dim, index.flatten())
+    input_shape = list(input.shape)
+    index_shape = list(index.shape)
+    output_shape = index_shape + [input_shape[i] for i in range(len(input_shape)) if i != dim]
+    return x.reshape(output_shape) 
+
