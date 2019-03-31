@@ -146,8 +146,8 @@ class Conditioning(nn.Module):
         '''
         one_hot = util.gather_md(self.eye, 0, speaker_inds) # one_hot: (B, T, S)
         gc = self.speaker_embedding(one_hot) # gc: (B, T, G)
-        gc_rep = gc.reshape(gc.shape[0], 1, gc.shape[1]).repeat(1, lc.shape[1], 1)
-        all_cond = torch.cat((lc, gc_rep), dim=2) 
+        gc_rep = gc.unsqueeze(2).expand(-1, -1, lc.shape[2])
+        all_cond = torch.cat((lc, gc_rep), dim=1) 
         return all_cond
 
 
@@ -166,7 +166,8 @@ class Upsampling(nn.Module):
             left_wing_sz = (filt_sz - 1) // 2
             right_wing_sz = (filt_sz - 1) - left_wing_sz
             end_padding = stride - 1
-            # Recall Pytorch's padding semantics for transpose conv.
+            # See upsampling_notes.txt: padding = filter_sz - stride
+            # and: left_offset = left_wing_sz - end_padding
             tconv = nn.ConvTranspose1d(n_lc_chan, n_lc_chan, filt_sz, stride,
                     padding=filt_sz - stride)
             self.tconvs.append(tconv)
@@ -244,8 +245,9 @@ class WaveNet(nn.Module):
 
         lc_loff = self.lc_upsample.foff.left
         lc_roff = self.lc_upsample.foff.right
-        conv_foff = rf.FieldOffset(filter_sz=post_jitter_filt_sz, multiplier=lc_input_stepsize)
+        conv_foff = rf.FieldOffset(filter_sz=post_jitter_filt_sz, field_spacing=lc_input_stepsize)
         self.lc_foff = rf.FieldOffset(offsets=(lc_loff + conv_foff.left, lc_roff + conv_foff.right))
+
 
     def one_hot(self, wav_compand):
         '''wav_compand: (B, T)

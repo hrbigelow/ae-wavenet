@@ -1,0 +1,77 @@
+Notes on librosa.feature.mfcc
+
+librosa.feature.mfcc considers all positions as valid, those in which the
+center element of the window covers one of the input elements.  In the case of
+an even-lengthed window, if either the left or right center element covers one
+of the input elements, the position is considered valid.  For this reason, we
+see I+1 outputs for an even sized window, hop length 1 and input length I.
+
+However, we only consider window positions valid if the full window overlaps
+input.   So, the code in mfcc.py:ProcessWav::func corrects for this by first
+doing left-padding of the input, so that one of the window positions will
+have its left edge overlap the first element of the input.  And, we then trim
+the output of librosa.feature.mfcc of its invalid window positions.
+
+The calculations are as follows:
+
+
+1. calculate left_wing_sz, relative to the left center element.  for odd-length
+filters, regard the center element as both left and right center.
+
+2. pad the left input by H - (L % H)
+
+3. trim left of output by L // H. 
+
+4. assume we have an input size such that one of the outputs aligns with the
+   end of the input at the right side of the window
+
+4. trim right of output by R // H  # The number of additional invalid positions
+   that librosa will use.
+
+
+So, now that we have trimmed the output and padded the input, we need to indicate what
+the left and right offsets are.  But, these are simple, because we've already basically
+wrapped the librosa procedure in such a way that it generates valid, maximal convolutions.
+
+5. foff.left = left_wing_sz
+6. foff.right = right_wing_sz  (includes right center element if it exists)
+
+
+F = filter_length
+H = hop_length
+L = left wing size
+R = right wing size (including the right center element if it exists)
+I = input length
+I' = I + (1 - F % 2)  # This is the number of positions that librosa may place
+                      # the center element.
+C means index of the left center positions of the window
+B means index of the start of the window
+E means index of the end of the window
+D means index in the original input of the start of the window
+Q means index in the original input of the end of the window
+
+Z = ((I' - 1)// H   # The last multiple 
+
+C:   0  H     2H     3H     4H    ...    ZH
+B:  -L  H-L   2H-L   3H-L   4H-L  ...    ZH-L
+E:   R  H+R   2H+R   3H+R   4H+R  ...    ZH+R
+D: -P-L  -P+H-L -P+2H-L -P+3H-L -P+4H-L ...   -P+ZH-L
+Q: -P+R  -P+H+R -P+2H+R -P+3H+R -P+4H+R ...   -P+ZH+R
+
+
+Calculation of padding
+
+(P + nH - L) % H = 0  for P "and some n"
+
+(P - L) % H = 0
+P % H = H - (L % H)   
+P = H - (L % H)
+
+
+Calculation of left trimming.  The first valid position places the left center element
+at index L.  We thus have L more positions, and are consuming them at a hop size of H,
+so L // H is the number.  
+
+
+
+

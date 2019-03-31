@@ -96,9 +96,9 @@ class AutoEncoder(nn.Module):
         wav_onehot_trim: (B, T') 
         outputs: (B, N, Q)  
         '''
-        enc = self.encoder(wav_raw)
-        enc_bn = self.bottleneck(enc)
-        quant = self.decoder(wav_onehot_trim, enc_bn, voice_ids)
+        encoding = self.encoder(wav_raw)
+        encoding_bn = self.bottleneck(encoding)
+        quant = self.decoder(wav_onehot_trim, encoding_bn, voice_ids)
         return quant 
 
 
@@ -116,6 +116,11 @@ class AutoEncoder(nn.Module):
             wav_compand_pred = wav_compand_dec[:,pred_off:]
             wav_onehot_dec = self.decoder.one_hot(wav_compand_dec)
             speaker_inds_ten = torch.tensor(ids_to_inds(ids))
+
+            assert wav_raw.shape[1] == \
+                    wav_onehot_dec.shape[2] + \
+                    self.encoder.foff.total() + \
+                    self.decoder.lc_foff.total()
             quant = self.forward(wav_raw, wav_onehot_dec, speaker_inds_ten)
             return _xent_loss(quant, wav_compand_pred)
         return loss

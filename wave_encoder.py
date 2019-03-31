@@ -7,7 +7,8 @@ import numpy as np
 
 
 class ConvReLURes(nn.Module):
-    def __init__(self, n_in_chan, n_out_chan, filter_sz, stride=1, do_res=True):
+    def __init__(self, n_in_chan, n_out_chan, filter_sz, stride=1,
+            input_field_spacing=1, do_res=True):
         super(ConvReLURes, self).__init__()
         self.do_res = do_res
         if self.do_res:
@@ -21,7 +22,8 @@ class ConvReLURes(nn.Module):
         self.conv = nn.Conv1d(n_in_chan, n_out_chan, filter_sz, stride, padding=0)
         self.relu = nn.ReLU(inplace=True)
 
-        self.foff = rf.FieldOffset(filter_sz=filter_sz)
+        self.foff = rf.FieldOffset(filter_sz=filter_sz,
+                field_spacing=input_field_spacing * stride)
 
     def forward(self, x):
         '''
@@ -34,7 +36,7 @@ class ConvReLURes(nn.Module):
             # Must suitably trim the residual based on how much the convolution
             # shrinks the input.
             # assert self.n_in == self.n_out
-            out += x[:,:,self.foff.left:-self.foff.right or None]
+            out += x[:,:,self.foff.left_ind:-self.foff.right_ind or None]
         return out
 
 
@@ -47,29 +49,29 @@ class Encoder(nn.Module):
         self.pre = mfcc.ProcessWav(
                 sample_rate_ms, win_length_ms, hop_length_ms, n_mels, n_mfcc)
 
-        
         # the "stack"
-        n_in = self.pre.n_out
-        self.net = nn.Sequential(
-            ConvReLURes(n_in, n_out, 3, do_res=False),
-            ConvReLURes(n_out, n_out, 3),
-            ConvReLURes(n_out, n_out, 4, stride=2, do_res=False),
-            ConvReLURes(n_out, n_out, 3),
-            ConvReLURes(n_out, n_out, 3),
-            ConvReLURes(n_out, n_out, 1),
-            ConvReLURes(n_out, n_out, 1),
-            ConvReLURes(n_out, n_out, 1),
-            ConvReLURes(n_out, n_out, 1)
-        )
+        stack_in_chan = [self.pre.n_out, n_out, n_out, n_out, n_out, n_out, n_out, n_out, n_out]
+        stack_filter_sz = [3, 3, 4, 3, 3, 1, 1, 1, 1]
+        #stack_strides = [1, 1, 2, 1, 1, 1, 1, 1, 1]
+        stack_strides = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+        stack_residual = [False, True, False, True, True, True, True, True, True]
+
+        self.net = nn.Sequential()
+        field_spacing = self.pre.hop_sz 
+
+        for i in range(len(stack_in_chan)):
+            mod = ConvReLURes(stack_in_chan[i], n_out, stack_filter_sz[i], 
+                    stack_strides[i], field_spacing, stack_residual[i])
+            self.net.add_module(str(i), mod)
+            field_spacing = mod.foff.field_spacing
 
         # the offsets in stack element coordinates
         stack_loff = sum(m.foff.left for m in self.net.children())
         stack_roff = sum(m.foff.right for m in self.net.children())
 
         # spacing of the input of the stack in timesteps 
-        input_stepsize = sample_rate_ms * hop_length_ms
-        left_off = self.pre.foff.left + stack_loff * input_stepsize
-        right_off = self.pre.foff.right + stack_roff * input_stepsize
+        left_off = self.pre.foff.left + stack_loff
+        right_off = self.pre.foff.right + stack_roff
         self.foff = rf.FieldOffset(offsets=(left_off, right_off))
 
 

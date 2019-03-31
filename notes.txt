@@ -777,4 +777,40 @@ the voice ids and consecutive integers, because it is in the model parameters th
 the integers are actually manifest.  So, it seems appropriate from a design
 point of view to store the map in the model.
 
-The 
+The problem is, the input offsets are controlled both by this module and others.
+
+Or, is that true?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

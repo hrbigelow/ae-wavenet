@@ -221,7 +221,7 @@ left_wing_sz = (filter_sz - 1) // 2 # distance from left end of filter to center
 right_wing_sz = (filter_sz - 1) - left_wing_sz 
 end_padding = stride - 1
 
-left_offset = left_wing_sz - end_padding
+left_offset = left_wing_sz - end_padding   (Result 2)
 right_offset = right_wing_sz - end_padding
 
 
