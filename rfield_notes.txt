@@ -27,6 +27,75 @@ if downsampling, solving for I:
 (O-1)*S+1 + LW + RW = I + LP + RP
 I = (O-1)*S+1 + LW + RW - LP - RP
 
+            input_stride 
+C    ****      1
+B pp*-*-*-*    2 
+A  **********  1  
+
+
+In the above diagram, data A begins at one position to the left of data B, in
+terms of A's stride.  Then, things get more complicated.  B's stride is 2, because
+LayerAB is downsampling.
+
+data B begins 1/2 of a position to the left of data C, in terms of B's stride.
+
+But the intuition behind the formula was pretty simple.  Each new offset builds on
+the previous one additively.  At each new step, you are given an offset in terms of
+the input, which in general is both padded (self.left_pad) and dilated (self.stride_ratio)
+
+But, we don't want to confuse the stride of the output with the coordinate system that
+
+                        left_ind  stride  pad_stride  sr   pos  pos_formula
+C       *  *  *         1         3/2x                1/2       pos(B) + left_ind(C) * 
+B    *  -  *  -  *      1         3x                  3    2    pos(A) + left_ind(B) * pad_stride(A) 
+A  * * * * * * * * * *  0         x                   1    0    0 
+   |
+   0
+
+The initial input spacing should be such that the output stride is a whole number.
+So, this reduces to the problem of finding the multiple for the overall stride that
+brings the output to a whole number.  Actually, not only that, we need every intermediate
+number to be a whole number.
+
+So, how to do that?  store each stride as a reduced ratio.  For instance, your strides might be:
+
+1, 2/3, 1/2, 1/4
+
+And, so, you'd need to find the least common multiple of the denominators.  Actually,
+though, since the strides are all running products of either integers or reciprocal
+integers, then we have:
+
+We want to find the LCM of the denominators of all of the strides.  This implies we need to
+accumulate them as we return.  Could they be calculated in another way, on the way down?
+
+A simple rule might be, on the way down:
+
+Start assuming you are at unit stride.  On the way down, an upsampling layer is no problem,
+because it dilates the stride in the layer below.  However, a downsampling layer contracts
+the stride.  So, you need to increase the multiple.  Is there any reason why this wouldn't
+work?
+
+I think so.  Essentially, you want your low watermark to be 1.  This is the most dense
+layer, and it could be anywhere.  So, if you simply bump up the stride every time it
+goes below 1, you will by definition have the densist layer at 1.
+
+So, the print function will not print on the way down.  It will maintain a density
+
+
+There are several tasks needed.  But, mainly, we need to accumulate the following data for
+every layer:
+
+left_pad, right_pad, stride, size, left, right
+
+all of these are available in one form or another.  
+
+Another difficulty is, the recursion logic is intermixed with the 
+
+
+
+ 
+
+
 
 
 
