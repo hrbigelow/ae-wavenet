@@ -784,30 +784,34 @@ Or, is that true?
 
 
 
+How is the encoder functioning?  
 
 
+How really does this rfield offset mechanism work?
 
+The idea is that you have a stack of window-based computations.  These can be
+convolutions, transpose convolutions, FFT type functions.  In this case, there are
+all three.
 
+We are interested in computing the offsets from the bounding input elements and
+bounding output elements.  The output is computed by scanning a window across the input.
+For a single scan position, the output element is placed in the center of the input window.
+This means that the full output will have an offset at both the left and right.
 
+The rfield offsets for a single window-based module reports the left and right offsets
+between its input and output, as well as a field spacing.  
 
+Basically, what we need to know is, for a desired output window size, how much input
+do we need?
 
+The rfield.Fieldoffset member answers that question, for an output window size of 1,
+this is what you need.
 
+Should this be transitive?  Well, at least in the case of regular convolutions in which
+the stride increases, it should be okay.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+But, how are we counting the 'size' of the output?  The rfield structure has the notion
+of a 
 
 
 

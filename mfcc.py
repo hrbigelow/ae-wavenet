@@ -36,7 +36,7 @@ class ProcessWav(object):
         self.n_mels = n_mels
         self.n_mfcc = n_mfcc
         self.n_out = n_mfcc * 3
-        self.foff = rf.FieldOffset(filter_sz=self.window_sz)
+        self.foff = rf.FieldOffset(filter_sz=self.window_sz, parent_field=None)
 
     def func(self, wav):
         # See padding_notes.txt 

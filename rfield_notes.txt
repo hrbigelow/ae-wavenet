@@ -1,0 +1,32 @@
+Notes on rfield.py
+
+I = input size
+O = output size
+S = stride  (or inverse stride, if upsampling)
+LW = left wing size (the number of elements to the left of the filter central element)
+RW = right wing size ( the number of elements to the right of the filter central element)
+LP = left padding
+RP = right padding
+spaced(N, S) := (N-1)*S+1
+
+
+upsampling  : spaced(O, 1) + LW + RW = spaced(I, S) + LP + RP
+downsampling: spaced(O, S) + LW + RW = spaced(I, 1) + LP + RP
+
+
+Illustration:
+
+
+if upsampling, solving for I:
+(I-1)*S+1 + LP + RP = O + LW + RW
+IS - S + 1 + LP + RP = O + LW + RW
+IS = S - 1 -LP - RP + O + LW + RW
+I = (S - 1 - LP - RP + O + LW + RW) / S
+
+if downsampling, solving for I:
+(O-1)*S+1 + LW + RW = I + LP + RP
+I = (O-1)*S+1 + LW + RW - LP - RP
+
+
+
+

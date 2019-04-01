@@ -34,6 +34,8 @@ class AutoEncoder(nn.Module):
 
         # connecting bottleneck to decoder.
         decoder_params['n_lc_in'] = bn_params['n_out']
+        decoder_params['parent_field'] = self.encoder.foff
+
         self.speaker_id_map = dict((v,k) for k,v in enumerate(speaker_ids))
 
         self.decoder = dec.WaveNet(**decoder_params)
@@ -43,16 +45,17 @@ class AutoEncoder(nn.Module):
 
         # Offsets from encoder wav input and corresponding decoder wav input.
         # The decoder takes a much smaller wav input.
-        ae_loff = self.encoder.foff.left + self.decoder.lc_foff.left
-        ae_roff = self.encoder.foff.right + self.decoder.lc_foff.right
+        # ae_loff = self.encoder.foff.left + self.decoder.lc_foff.left
+        # ae_roff = self.encoder.foff.right + self.decoder.lc_foff.right
         self.ae_foff = rf.FieldOffset(offsets=(ae_loff, ae_roff))
 
         self.ckpt_path = util.CheckpointPath()
-
+        self.foff = rf.FieldOffset(offsets=(0, 0), parent_field=self.decoder.foff)
 
     def receptive_field_size(self):
         '''number of audio timesteps needed for a single output timestep prediction'''
-        return self.ae_foff.total() + self.decoder.stack_foff.total()
+        return self.foff.get_input_size(output_size=1)
+        # return self.ae_foff.total() + self.decoder.stack_foff.total()
 
     def print_offsets(self):
         '''Show the set of offsets for each section of the model'''
@@ -67,7 +70,6 @@ class AutoEncoder(nn.Module):
             self.decoder.lc_foff.total() +
             self.decoder.stack_foff.total()))
 
-
     def initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
@@ -81,9 +83,8 @@ class AutoEncoder(nn.Module):
             elif isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
                 nn.init.constant_(m.bias, 0)
-            #else:
+            # else:
                 # print('Warning: unknown module instance: {}'.format(str(type(m))))
-
 
     def forward(self, wav_raw, wav_onehot_trim, voice_ids):
         '''
@@ -101,7 +102,6 @@ class AutoEncoder(nn.Module):
         quant = self.decoder(wav_onehot_trim, encoding_bn, voice_ids)
         return quant 
 
-
     def loss_factory(self, batch_gen):
         _xent_loss = torch.nn.CrossEntropyLoss()
         # offset between input to the decoder and its prediction
@@ -113,7 +113,7 @@ class AutoEncoder(nn.Module):
             ids, wav_raw = next(batch_gen)
             wav_raw_dec = wav_raw[:,self.ae_foff.left:-self.ae_foff.right or None]
             wav_compand_dec = torch.tensor(util.mu_encode_np(wav_raw_dec, self.decoder.n_quant))
-            wav_compand_pred = wav_compand_dec[:,pred_off:]
+            wav_compand_pred = wav_compand_dec[:, pred_off:]
             wav_onehot_dec = self.decoder.one_hot(wav_compand_dec)
             speaker_inds_ten = torch.tensor(ids_to_inds(ids))
 

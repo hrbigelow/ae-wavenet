@@ -7,7 +7,8 @@ import util
 
 
 class GatedResidualCondConv(nn.Module):
-    def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, filter_sz=2, bias=True):
+    def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, filter_sz=2, bias=True,
+            parent_field=None):
         '''
         filter_sz: # elements in the dilated kernels
         n_cond: # channels of local condition vectors
@@ -28,7 +29,7 @@ class GatedResidualCondConv(nn.Module):
         # stack of these, the output corresponds to the position just after
         # this, but within the stack of convolutions, outputs right-aligned.
         recep_field = (filter_sz - 1) * dil + 1
-        self.foff = rf.FieldOffset(offsets=(recep_field - 1, 0))
+        self.foff = rf.FieldOffset(offsets=(recep_field - 1, 0), parent_field=parent_field)
 
         # kernel size is 1 for conditioning vectors, but filter_sz * dil + 1
         # for dilated convolutions.  So, the output of proj_* is longer than
@@ -152,12 +153,37 @@ class Conditioning(nn.Module):
 
 
 class Upsampling(nn.Module):
+    def __init__(self, n_chan, filter_sz, stride, parent_field):
+        super(Upsampling, self).__init__()
+        # See upsampling_notes.txt: padding = filter_sz - stride
+        # and: left_offset = left_wing_sz - end_padding
+        left_wing_sz = (filter_sz - 1) // 2
+        right_wing_sz = (filter_sz - 1) - left_wing_sz
+        end_padding = stride - 1
+        offsets = (left_wing_sz - end_padding, right_wing_sz - end_padding)
+        self.foff = rf.FieldOffset(offsets=offsets, stride=stride,
+                is_out_stride=False, parent_field=parent_field)
+
+        self.tconv = nn.ConvTranspose1d(n_chan, n_chan, filter_sz, stride,
+                padding=filter_sz - stride)
+
+    def forward(self, lc):
+        '''B, T, S, C: batch_sz, timestep, less-frequent timesteps, input channels
+        lc: (B, S, C)
+        returns: (B, T, C)
+        '''
+        lc = self.tconv(lc)
+        return lc
+
+
+class Upsampling(nn.Module):
     '''
     Computes a one-per-timestep conditioning vector from a less-frequent
     input.  Padding and offsets are computed as described in
     upsampling_notes.txt
     '''
-    def __init__(self, n_lc_chan, lc_upsample_filt_sizes, lc_upsample_strides):
+    def __init__(self, n_lc_chan, lc_upsample_filt_sizes, lc_upsample_strides,
+            parent_field=None):
         super(Upsampling, self).__init__()
         self.tconvs = nn.ModuleList() 
         self.offsets = []
@@ -185,7 +211,7 @@ class Upsampling(nn.Module):
             loff += self.offsets[i][0] * layer_stepsize[i]
             roff += self.offsets[i][1] * layer_stepsize[i]
 
-        self.foff = rf.FieldOffset(offsets=(loff, roff))
+        self.foff = rf.FieldOffset(offsets=(loff, roff), parent_field=parent_field)
 
     def forward(self, lc):
         '''B, T, S, C: batch_sz, timestep, less-frequent timesteps, input channels
@@ -219,7 +245,20 @@ class WaveNet(nn.Module):
 
         self.lc_conv = nn.Conv1d(n_lc_in, n_lc_out,
                 kernel_size=post_jitter_filt_sz, stride=1, bias=self.bias)
-        self.lc_upsample = Upsampling(n_lc_out, lc_upsample_filt_sizes, lc_upsample_strides)
+
+        self.lc_upsample = nn.Sequential()
+
+        # WaveNet is a stand-alone model, so parent_field is None
+        # The Autoencoder model in model.py will link parent_fields together.
+        parent_field = None
+        for i in range(len(lc_upsample_strides)):
+            mod = Upsampling(n_lc_out, lc_upsample_filt_sizes[i],
+                    lc_upsample_strides[i], parent_field)
+            self.lc_upsample.add_module(str(i), mod)
+            parent_field = mod.foff
+
+        #self.lc_upsample = Upsampling(n_lc_out, lc_upsample_filt_sizes,
+        #        lc_upsample_strides, parent_field)
         self.cond = Conditioning(n_speakers, n_global_embed)
 
         self.base_layer = nn.Conv1d(n_quant, n_res, kernel_size=1, stride=1,
@@ -227,11 +266,15 @@ class WaveNet(nn.Module):
 
         self.conv_layers = nn.ModuleList() 
         n_cond = n_lc_out + n_global_embed
+        # parent_field = self.lc_upsample.foff 
+
         for b in range(self.n_blocks):
             for bl in range(self.n_block_layers):
                 dil = 2**bl
-                self.conv_layers.append(
-                        GatedResidualCondConv(n_cond, n_res, n_dil, n_skp, 1, dil, filter_sz))
+                grc = GatedResidualCondConv(n_cond, n_res, n_dil, n_skp, 1, dil, filter_sz,
+                        bias, parent_field)
+                self.conv_layers.append(grc)
+                parent_field = grc.foff
 
         self.post1 = nn.Conv1d(n_skp, n_post, 1, 1, 1, bias)
         self.post2 = nn.Conv1d(n_post, n_quant, 1, 1, 1, bias)
@@ -243,10 +286,11 @@ class WaveNet(nn.Module):
         stack_roff = sum(m.foff.right for m in self.conv_layers.children())
         self.stack_foff = rf.FieldOffset(offsets=(stack_loff, stack_roff))
 
-        lc_loff = self.lc_upsample.foff.left
-        lc_roff = self.lc_upsample.foff.right
-        conv_foff = rf.FieldOffset(filter_sz=post_jitter_filt_sz, field_spacing=lc_input_stepsize)
-        self.lc_foff = rf.FieldOffset(offsets=(lc_loff + conv_foff.left, lc_roff + conv_foff.right))
+        #lc_loff = self.lc_upsample.foff.left
+        #lc_roff = self.lc_upsample.foff.right
+        #conv_foff = rf.FieldOffset(filter_sz=post_jitter_filt_sz, field_spacing=lc_input_stepsize)
+        #self.lc_foff = rf.FieldOffset(offsets=(lc_loff + conv_foff.left, lc_roff + conv_foff.right))
+        self.foff = rf.FieldOffset(offsets=(0, 0), parent_field=parent_field)
 
 
     def one_hot(self, wav_compand):
