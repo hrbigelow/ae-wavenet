@@ -136,3 +136,17 @@ As we recurse, collect
 Another issue is that of keeping track of strides.  Each operation imposes a stride ratio factor
 to the existing stride.  Some intermediate calculations involve fractional 
 
+Should the l_pos and r_pos fields be corrected somehow?  Right now, l_pos is in the
+opposite direction that it should be.  We can correct this by first reversing the sense
+of l_pos, and then by left-aligning it.
+
+
+The next two issues are:
+
+1. If a transformation specifies certain combinations of padding and upsampling, and then
+the user requests the input size for too small of an output size, the number of input elements
+can be zero or negative.  This shouldn't be allowed because it doesn't make any sense.
+
+So, where would it be detected that the number of input elements is non-positive?
+
+
