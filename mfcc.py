@@ -20,31 +20,26 @@
 # From librosa.feature.mfcc):
 # n_mfcc (# of MFCCs to return)
 
-
-
-
 import librosa
 import numpy as np
-import rfield as rf 
+import rfield
 
 class ProcessWav(object):
-    def __init__(self, samples_per_ms=16, window_sz_ms=25, hop_sz_ms=10,
-            n_mels=80, n_mfcc=13):
-        self.sample_rate = samples_per_ms * 1000
-        self.window_sz = window_sz_ms * samples_per_ms
-        self.hop_sz = hop_sz_ms * samples_per_ms
+    def __init__(self, sample_rate=16000, window_sz=400, hop_sz=160, n_mels=80,
+            n_mfcc=13, name=None):
+        self.window_sz = window_sz
+        self.hop_sz = hop_sz
         self.n_mels = n_mels
         self.n_mfcc = n_mfcc
         self.n_out = n_mfcc * 3
-        self.foff = rf.FieldOffset(filter_sz=self.window_sz, parent_field=None)
+        self.rf = rfield.Rfield(filter_info=self.window_sz, stride=self.hop_sz,
+                parent=None, name=name)
 
     def func(self, wav):
         # See padding_notes.txt 
-        left_wing_sz = self.foff.left
-        right_wing_sz = self.foff.right
-        left_pad = self.hop_sz - (left_wing_sz % self.hop_sz)
-        trim_left = left_wing_sz // self.hop_sz
-        trim_right = right_wing_sz // self.hop_sz
+        left_pad = self.hop_sz - (self.rf.l_wing_sz % self.hop_sz)
+        trim_left = self.rf.l_wing_sz // self.hop_sz
+        trim_right = self.rf.r_wing_sz // self.hop_sz
 
         wav_pad = np.concatenate((np.zeros(left_pad), wav), axis=0) 
         mfcc = librosa.feature.mfcc(y=wav_pad, sr=self.sample_rate,
@@ -55,9 +50,6 @@ class ProcessWav(object):
         mfcc_delta = librosa.feature.delta(mfcc_trim)
         mfcc_delta2 = librosa.feature.delta(mfcc_trim, order=2)
         mfcc_and_derivatives = np.concatenate((mfcc_trim, mfcc_delta, mfcc_delta2), axis=0)
-
-        rfield_actual = (mfcc_and_derivatives.shape[1] - 1) * self.hop_sz + self.foff.total()
-        assert rfield_actual == wav.shape[0]
 
         return mfcc_and_derivatives
 

@@ -1,14 +1,13 @@
 import torch
 from torch import nn
 import mfcc
-import rfield as rf
+import rfield
 import numpy as np
 
 
-
 class ConvReLURes(nn.Module):
-    def __init__(self, n_in_chan, n_out_chan, filter_sz, stride=1,
-            input_field_spacing=1, do_res=True, parent_field=None):
+    def __init__(self, n_in_chan, n_out_chan, filter_sz, stride=1, do_res=True,
+            parent_rf=None, name=None):
         super(ConvReLURes, self).__init__()
         self.do_res = do_res
         if self.do_res:
@@ -22,8 +21,8 @@ class ConvReLURes(nn.Module):
         self.conv = nn.Conv1d(n_in_chan, n_out_chan, filter_sz, stride, padding=0)
         self.relu = nn.ReLU(inplace=True)
 
-        self.foff = rf.FieldOffset(filter_sz=filter_sz,
-                field_spacing=input_field_spacing * stride, parent_field=parent_field)
+        self.rf = rfield.Rfield(filter_info=filter_sz, stride=stride,
+                parent=parent_rf, name=name)
 
     def forward(self, x):
         '''
@@ -35,50 +34,37 @@ class ConvReLURes(nn.Module):
         if (self.do_res):
             # Must suitably trim the residual based on how much the convolution
             # shrinks the input.
-            # assert self.n_in == self.n_out
-            out += x[:,:,self.foff.left_ind:-self.foff.right_ind or None]
+            __, l_off, r_off, __ = self.rf.geometry(10)
+            out += x[:,:,l_off:r_off or None]
         return out
 
 
 class Encoder(nn.Module):
-    def __init__(self, sample_rate_ms, win_length_ms, hop_length_ms,
-            n_mels, n_mfcc, n_out):
+    def __init__(self, sample_rate, win_sz, hop_sz, n_mels, n_mfcc, n_out):
         super(Encoder, self).__init__()
 
         # the "preprocessing"
-        self.pre = mfcc.ProcessWav(
-                sample_rate_ms, win_length_ms, hop_length_ms, n_mels, n_mfcc)
+        self.pre = mfcc.ProcessWav(sample_rate, win_sz, hop_sz, n_mels, n_mfcc, 'mfcc')
 
         # the "stack"
         stack_in_chan = [self.pre.n_out, n_out, n_out, n_out, n_out, n_out, n_out, n_out, n_out]
         stack_filter_sz = [3, 3, 4, 3, 3, 1, 1, 1, 1]
-        #stack_strides = [1, 1, 2, 1, 1, 1, 1, 1, 1]
-        stack_strides = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+        stack_strides = [1, 1, 2, 1, 1, 1, 1, 1, 1]
         stack_residual = [False, True, False, True, True, True, True, True, True]
+        stack_info = zip(stack_in_chan, stack_filter_sz, stack_strides, stack_residual)
 
         self.net = nn.Sequential()
-        field_spacing = self.pre.hop_sz 
+        parent_rf = self.pre.rf
 
-        parent_foff = self.pre.foff
-
-        for i in range(len(stack_in_chan)):
-            mod = ConvReLURes(stack_in_chan[i], n_out, stack_filter_sz[i], 
-                    stack_strides[i], field_spacing, stack_residual[i],
-                    parent_field=parent_foff)
+        for i, (in_chan, filt_sz, stride, do_res) in enumerate(stack_info):
+            name = 'CRR_{}(filter_sz={}, stride={}, do_res={})'.format(i,
+                    filt_sz, stride, do_res)
+            mod = ConvReLURes(in_chan, n_out, filt_sz, stride, do_res,
+                    parent_rf, name)
             self.net.add_module(str(i), mod)
-            field_spacing = mod.foff.field_spacing
-            parent_foff = mod.foff
+            parent_rf = mod.rf
 
-        # the offsets in stack element coordinates
-        #stack_loff = sum(m.foff.left for m in self.net.children())
-        #stack_roff = sum(m.foff.right for m in self.net.children())
-
-        # spacing of the input of the stack in timesteps 
-        #left_off = self.pre.foff.left + stack_loff
-        #right_off = self.pre.foff.right + stack_roff
-        self.foff = rf.FieldOffset(offsets=(0, 0), parent_field=parent_foff)
-        #self.foff = rf.FieldOffset(offsets=(left_off, right_off))
-
+        self.rf = parent_rf 
 
     def forward(self, wav):
         '''

@@ -1,14 +1,14 @@
 import torch
 from torch import nn
 from torch import distributions as dist
-import rfield as rf
+import rfield
 from numpy import prod as np_prod
 import util
 
 
 class GatedResidualCondConv(nn.Module):
     def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, filter_sz=2, bias=True,
-            parent_field=None):
+            parent_rf=None, name=None):
         '''
         filter_sz: # elements in the dilated kernels
         n_cond: # channels of local condition vectors
@@ -28,8 +28,9 @@ class GatedResidualCondConv(nn.Module):
         # right-most position of the receptive field.  (At the very end of a
         # stack of these, the output corresponds to the position just after
         # this, but within the stack of convolutions, outputs right-aligned.
-        recep_field = (filter_sz - 1) * dil + 1
-        self.foff = rf.FieldOffset(offsets=(recep_field - 1, 0), parent_field=parent_field)
+        recep_field_sz = (filter_sz - 1) * dil + 1
+        self.rf = rfield.Rfield(filter_info=(recep_field_sz - 1, 0),
+                parent=parent_rf, name=name)
 
         # kernel size is 1 for conditioning vectors, but filter_sz * dil + 1
         # for dilated convolutions.  So, the output of proj_* is longer than
@@ -153,16 +154,14 @@ class Conditioning(nn.Module):
 
 
 class Upsampling(nn.Module):
-    def __init__(self, n_chan, filter_sz, stride, parent_field):
+    def __init__(self, n_chan, filter_sz, stride, parent_rf, name=None):
         super(Upsampling, self).__init__()
         # See upsampling_notes.txt: padding = filter_sz - stride
         # and: left_offset = left_wing_sz - end_padding
-        left_wing_sz = (filter_sz - 1) // 2
-        right_wing_sz = (filter_sz - 1) - left_wing_sz
         end_padding = stride - 1
-        offsets = (left_wing_sz - end_padding, right_wing_sz - end_padding)
-        self.foff = rf.FieldOffset(offsets=offsets, stride=stride,
-                is_out_stride=False, parent_field=parent_field)
+        self.rf = rfield.Rfield(filter_info=filter_sz, stride=stride,
+                padding=(end_padding, end_padding), is_downsample=False,
+                parent=parent_rf, name=name)
 
         self.tconv = nn.ConvTranspose1d(n_chan, n_chan, filter_sz, stride,
                 padding=filter_sz - stride)
@@ -175,62 +174,11 @@ class Upsampling(nn.Module):
         lc = self.tconv(lc)
         return lc
 
-
-class Upsampling(nn.Module):
-    '''
-    Computes a one-per-timestep conditioning vector from a less-frequent
-    input.  Padding and offsets are computed as described in
-    upsampling_notes.txt
-    '''
-    def __init__(self, n_lc_chan, lc_upsample_filt_sizes, lc_upsample_strides,
-            parent_field=None):
-        super(Upsampling, self).__init__()
-        self.tconvs = nn.ModuleList() 
-        self.offsets = []
-        
-        for filt_sz, stride in zip(lc_upsample_filt_sizes, lc_upsample_strides):
-            left_wing_sz = (filt_sz - 1) // 2
-            right_wing_sz = (filt_sz - 1) - left_wing_sz
-            end_padding = stride - 1
-            # See upsampling_notes.txt: padding = filter_sz - stride
-            # and: left_offset = left_wing_sz - end_padding
-            tconv = nn.ConvTranspose1d(n_lc_chan, n_lc_chan, filt_sz, stride,
-                    padding=filt_sz - stride)
-            self.tconvs.append(tconv)
-            self.offsets.append((left_wing_sz - end_padding, right_wing_sz - end_padding))
-
-        n = len(lc_upsample_strides)
-        # layer_stepsize[i] is the number of timesteps between consecutive
-        # units in layer i
-        layer_stepsize = [1] * n
-        for i in reversed(range(n - 1)):
-            layer_stepsize[i] = layer_stepsize[i+1] * lc_upsample_strides[i+1]
-        
-        loff, roff = 0, 0
-        for i in range(n):
-            loff += self.offsets[i][0] * layer_stepsize[i]
-            roff += self.offsets[i][1] * layer_stepsize[i]
-
-        self.foff = rf.FieldOffset(offsets=(loff, roff), parent_field=parent_field)
-
-    def forward(self, lc):
-        '''B, T, S, C: batch_sz, timestep, less-frequent timesteps, input channels
-        lc: (B, S, C)
-        returns: (B, T, C)
-        '''
-        for tconv in self.tconvs:
-            lc = tconv(lc)
-
-        return lc
-
-
-
-
 class WaveNet(nn.Module):
     def __init__(self, filter_sz, n_lc_in, n_lc_out, lc_upsample_filt_sizes,
             lc_upsample_strides, n_res, n_dil, n_skp, n_post, n_quant,
             n_blocks, n_block_layers, jitter_prob, n_speakers, n_global_embed,
-            bias=True):
+            bias=True, parent_rf=None):
         super(WaveNet, self).__init__()
 
         self.n_blocks = n_blocks
@@ -248,50 +196,38 @@ class WaveNet(nn.Module):
 
         self.lc_upsample = nn.Sequential()
 
-        # WaveNet is a stand-alone model, so parent_field is None
-        # The Autoencoder model in model.py will link parent_fields together.
-        parent_field = None
-        for i in range(len(lc_upsample_strides)):
-            mod = Upsampling(n_lc_out, lc_upsample_filt_sizes[i],
-                    lc_upsample_strides[i], parent_field)
+        # WaveNet is a stand-alone model, so parent_rf is None
+        # The Autoencoder model in model.py will link parent_rfs together.
+        for i, (filt_sz, stride) in enumerate(zip(lc_upsample_filt_sizes,
+            lc_upsample_strides)):
+            name = 'Upsampling_{}(filter_sz={}, stride={})'.format(i, filt_sz, stride)   
+            mod = Upsampling(n_lc_out, filt_sz, stride, parent_rf, name)
             self.lc_upsample.add_module(str(i), mod)
-            parent_field = mod.foff
+            parent_rf = mod.rf
 
-        #self.lc_upsample = Upsampling(n_lc_out, lc_upsample_filt_sizes,
-        #        lc_upsample_strides, parent_field)
+        # This rf describes the bounds of the input wav corresponding to the
+        # local conditioning vectors
+        self.upsample_rf = parent_rf
         self.cond = Conditioning(n_speakers, n_global_embed)
-
         self.base_layer = nn.Conv1d(n_quant, n_res, kernel_size=1, stride=1,
                 dilation=1, bias=self.bias)
 
         self.conv_layers = nn.ModuleList() 
         n_cond = n_lc_out + n_global_embed
-        # parent_field = self.lc_upsample.foff 
 
         for b in range(self.n_blocks):
             for bl in range(self.n_block_layers):
                 dil = 2**bl
-                grc = GatedResidualCondConv(n_cond, n_res, n_dil, n_skp, 1, dil, filter_sz,
-                        bias, parent_field)
+                name = 'GRCC_{},{}(dil={})'.format(b, bl, dil)
+                grc = GatedResidualCondConv(n_cond, n_res, n_dil, n_skp, 1,
+                        dil, filter_sz, bias, parent_rf, name)
                 self.conv_layers.append(grc)
-                parent_field = grc.foff
+                parent_rf = grc.rf
 
         self.post1 = nn.Conv1d(n_skp, n_post, 1, 1, 1, bias)
         self.post2 = nn.Conv1d(n_post, n_quant, 1, 1, 1, bias)
         self.logsoftmax = nn.LogSoftmax(2) # (B, T, C)
-
-        # Calculate receptive field offsets, separately for the convolutional
-        # stack, and for the upsampling of local conditioning
-        stack_loff = sum(m.foff.left for m in self.conv_layers.children())
-        stack_roff = sum(m.foff.right for m in self.conv_layers.children())
-        self.stack_foff = rf.FieldOffset(offsets=(stack_loff, stack_roff))
-
-        #lc_loff = self.lc_upsample.foff.left
-        #lc_roff = self.lc_upsample.foff.right
-        #conv_foff = rf.FieldOffset(filter_sz=post_jitter_filt_sz, field_spacing=lc_input_stepsize)
-        #self.lc_foff = rf.FieldOffset(offsets=(lc_loff + conv_foff.left, lc_roff + conv_foff.right))
-        self.foff = rf.FieldOffset(offsets=(0, 0), parent_field=parent_field)
-
+        self.rf = parent_rf
 
     def one_hot(self, wav_compand):
         '''wav_compand: (B, T)
@@ -302,15 +238,13 @@ class WaveNet(nn.Module):
         '''
         return util.gather_md(self.quant_onehot, 0, wav_compand.long()).transpose(1, 2)
 
-
-
     def forward(self, wav_onehot, lc_sparse, speaker_inds):
         '''
         B: n_batch (# of separate wav streams being processed)
         N: n_win (# consecutive samples processed in one batch channel)
-        R: wav receptive field (stack_foff.total() + n_win)
-        T: local conditioning receptive field (R + lc_foff.total())
-        uf: upsampling_factor (
+        R: wav receptive field 
+        T: local conditioning receptive field 
+        uf: upsampling_factor
         I: n_in
         L: n_lc_in
         Q: n_quant
@@ -343,5 +277,4 @@ class WaveNet(nn.Module):
 
         # quant: (B, T, Q), Q = n_quant
         return quant 
-
 

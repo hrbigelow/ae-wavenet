@@ -16,12 +16,12 @@ def get_opts():
     # Parameters in arch file will be overridden by any given here.
 
     # Encoder architectural parameters
-    parser.add_argument('--enc-sample-rate-ms', '-sr', type=int, default=16,
-            help='# samples per millisecond in input wav files')
-    parser.add_argument('--enc-win-length-ms', '-wl', type=int, default=25,
-            help='size of the MFCC window length in milliseconds')
-    parser.add_argument('--enc-hop-length-ms', '-hl', type=int, default=10,
-            help='size of the hop length for MFCC preprocessing, in milliseconds')
+    parser.add_argument('--enc-sample-rate', '-sr', type=int, default=16000,
+            help='# samples per second in input wav files')
+    parser.add_argument('--enc-win-sz', '-wl', type=int, default=400,
+            help='size of the MFCC window length in timesteps')
+    parser.add_argument('--enc-hop-sz', '-hl', type=int, default=160,
+            help='size of the hop length for MFCC preprocessing, in timesteps')
     parser.add_argument('--enc-n-mels', '-nm', type=int, default=80,
             help='number of mel frequency values to calculate')
     parser.add_argument('--enc-n-mfcc', '-nf', type=int, default=13,
@@ -52,6 +52,13 @@ def get_opts():
             help='decoder number of post-processing channels')
     parser.add_argument('--dec-n-quant', '-dnq', type=int,
             help='decoder number of input channels')
+    parser.add_argument('--dec-n-blocks', '-dnb', type=int,
+            help='decoder number of dilation blocks')
+    parser.add_argument('--dec-n-block-layers', '-dnl', type=int, 
+            help='decoder number of power-of-two dilated '
+            'convolutions in each layer')
+    parser.add_argument('--dec-n-global-embed', '-dng', type=int,
+            help='decoder number of global embedding channels')
 
     # Training parameters
     parser.add_argument('--n-batch', '-nb', type=int, metavar='INT',
@@ -153,10 +160,8 @@ def main():
     decoder_params = get_prefixed_items(vars(opts), 'dec_')
 
     # Prepare data
-    data = D.WavSlices(opts.sam_file, opts.n_win, opts.n_batch,
-            encoder_params['sample_rate_ms'] * 1000, opts.frac_permutation_use,
-            opts.requested_wav_buf_sz)
-
+    data = D.WavSlices(opts.sam_file, encoder_params['sample_rate'],
+            opts.frac_permutation_use)
 
     data_ckpt_file_template = opts.checkpoint_template + '.data.ckpt'
     model_ckpt_file_template = opts.checkpoint_template + '.model.ckpt'
@@ -172,7 +177,10 @@ def main():
     # yields n_batch * n_win logical samples at a time.  since the logical
     # samples from one .wav file are overlapping, this amounts to a window of
     # n_win + receptive_field_sz - 1 from each of the n_batch wav files.
-    data.set_receptive_field(model.receptive_field_size())
+    slice_size, n_sam_per_slice, __, __ = model.input_geometry(opts.n_win)
+
+    data.set_geometry(opts.n_batch, slice_size, n_sam_per_slice,
+            opts.requested_wav_buf_sz)
 
     # Set CPU or GPU context
 

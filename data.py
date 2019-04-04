@@ -96,7 +96,7 @@ class WavSlices(object):
     order.  However, since the encoder and decoder work in convolutional
     windows, this approach would miss the opportunity to reuse overlapping
     convolutional output values between overlapping samples.  So, we instead
-    yield groups of n_win samples as one chunk.
+    yield groups of n_sample_win samples as one chunk.
 
     However, yielding these windows randomly across the data set would be
     somewhat inefficient, because it would mean re-reading an entire wav file
@@ -121,22 +121,15 @@ class WavSlices(object):
     should be set to 1 in order to minimize buffer reloads.
     '''
 
-    def __init__(self, sam_file, n_win, n_batch, sample_rate,
-            frac_permutation_use, requested_wav_buf_sz):
+    def __init__(self, sam_file, sample_rate, frac_permutation_use):
         '''
         '''
         self.sam_file = sam_file
-        self.n_batch = n_batch
-        self.n_win = n_win
-
-        # Call self.set_receptive_field() after building the model
-        self.recep_field_sz = None
         self.sample_rate = sample_rate
         if frac_permutation_use <= 0 or frac_permutation_use > 1.0:
             raise ValueError
 
         self.frac_perm_use = frac_permutation_use
-
         self.rand_state = np.random.mtrand.RandomState()
         self.wav_gen = None
         
@@ -150,11 +143,6 @@ class WavSlices(object):
         # Used in save/restore (initialized in enable_file_checkpointing)
         self.ckpt_path = util.CheckpointPath()
 
-        # estimated number of total slices we can process in a buffer
-        # of requested size (= number of time steps)
-        est_n_slices = int(requested_wav_buf_sz / self.n_win)
-
-        self.perm = VirtualPermutation(self.rand_state, est_n_slices)
         self.wav_buf = []
         self.wav_ids = []
         self.vstart = []
@@ -169,17 +157,15 @@ class WavSlices(object):
     def speaker_ids(self):
         return set(id for id,__ in self.sample_catalog)
 
-    def set_receptive_field(self, recep_field_sz):
-        self.recep_field_sz = recep_field_sz
-
-
-    def slice_size(self):
-        return self.n_win + self.recep_field_sz - 1
-
+    def set_geometry(self, n_batch, slice_size, n_sam_per_slice, wav_buf_sz_req):
+        self.n_batch = n_batch
+        self.n_sample_win = n_sam_per_slice
+        self.slice_size = slice_size 
+        est_n_slices = int(wav_buf_sz_req / self.n_sample_win)
+        self.perm = VirtualPermutation(self.rand_state, est_n_slices)
 
     # The following four functions implement the transitions:
     # [Checkpoint File] <=> [Checkpoint instance] <=> [WavSlices state]
-
 
     def state_to_ckpt(self):
         '''convert generator state to a Checkpoint instance'''
@@ -272,8 +258,8 @@ class WavSlices(object):
         self.lead_wavgen_rand_state = self.wavgen_rand_state
         self.lead_wavgen_pos = self.wavgen_pos
 
-        self.offset = self.rand_state.randint(0, self.n_win, 1, dtype='int32')[0] 
-        last_v_start = self.offset + (self.perm.n_items - 1) * self.n_win
+        self.offset = self.rand_state.randint(0, self.n_sample_win, 1, dtype='int32')[0] 
+        last_v_start = self.offset + (self.perm.n_items - 1) * self.n_sample_win
         while vpos < last_v_start:
             try:
                 iter_pos, vid, wav = next(self.wav_gen)
@@ -284,7 +270,7 @@ class WavSlices(object):
             self.wav_buf.append(wav)
             self.wav_ids.append(vid)
             self.vstart.append(vpos)
-            vpos += len(wav) - self.slice_size()
+            vpos += len(wav) - self.slice_size
 
 
     def _slice_gen_fn(self):
@@ -302,7 +288,7 @@ class WavSlices(object):
             perm_gen = self.perm.permutation_gen_fn(self.perm_gen_pos,
                     int(self.perm.n_items * self.frac_perm_use))
             for iter_pos, vind in perm_gen:
-                vpos = self.offset + vind * self.n_win
+                vpos = self.offset + vind * self.n_sample_win
                 wav_file_ind = _greatest_lower_bound(self.vstart, vpos)
                 wav_off = vpos - self.vstart[wav_file_ind]
 
@@ -310,7 +296,7 @@ class WavSlices(object):
                 self.perm_gen_pos = iter_pos + 1
                 yield wav_file_ind, wav_off, vind, \
                         self.wav_ids[wav_file_ind], \
-                        self.wav_buf[wav_file_ind][wav_off:wav_off + self.slice_size()]
+                        self.wav_buf[wav_file_ind][wav_off:wav_off + self.slice_size]
 
             # We've exhausted the iterator, next position should be zero
             self.perm_gen_pos = 0
@@ -319,12 +305,9 @@ class WavSlices(object):
 
     def batch_slice_gen_fn(self):
         '''infinite generator for batched slices of wav files'''
-        if self.recep_field_sz is None:
-            raise RuntimeError('Must call self.set_receptive_field() before calling this function')
-
         def gen_fn(sg):
             b = 0
-            wavs = np.empty((self.n_batch, self.slice_size()), dtype='float64')
+            wavs = np.empty((self.n_batch, self.slice_size), dtype='float64')
             ids = np.empty(self.n_batch, dtype='int32')
             while True:
                 while b < self.n_batch:

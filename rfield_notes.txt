@@ -1,31 +1,59 @@
 Notes on rfield.py
 
 I = input size
-O = output size
+Or = requested output size 
+Oa = actual output size (>= Or)
 S = stride  (or inverse stride, if upsampling)
 LW = left wing size (the number of elements to the left of the filter central element)
 RW = right wing size ( the number of elements to the right of the filter central element)
 LP = left padding
 RP = right padding
-spaced(N, S) := (N-1)*S+1
+
+spaced(N, S) := any value in the range [N*S-(S-1), N*S]
+This is the number of total elements in a strided arrangement,
+starting at a value element, and using exactly N value elements.
 
 
-upsampling  : spaced(O, 1) + LW + RW = spaced(I, S) + LP + RP
-downsampling: spaced(O, S) + LW + RW = spaced(I, 1) + LP + RP
-
+downsampling: LW + spaced(Or, S) + RW = LP + spaced(I, 1) + RP
+upsampling  : LW + spaced(Or, 1) + RW = LP + spaced(I, S) + RP
 
 Illustration:
 
 
 if upsampling, solving for I:
-(I-1)*S+1 + LP + RP = O + LW + RW
-IS - S + 1 + LP + RP = O + LW + RW
-IS = S - 1 -LP - RP + O + LW + RW
-I = (S - 1 - LP - RP + O + LW + RW) / S
+(I-1)*S+1 + LP + RP = Or + LW + RW
+IS - S + 1 + LP + RP = Or + LW + RW
+IS                   = Or + LW + RW + S - 1 -LP -RP
+I = ceil((S - 1 - LP - RP + Or + LW + RW) / S)
+Oa = spaced(I,S) + LP + RP - LW - RW
 
-if downsampling, solving for I:
-(O-1)*S+1 + LW + RW = I + LP + RP
-I = (O-1)*S+1 + LW + RW - LP - RP
+if downsampling: 
+
+solving for I:
+spaced(Or,S) + LW + RW = I + LP + RP
+I = spaced(Or,S) + LW + RW - LP - RP
+ 
+solving for Oa:
+(Oa-1)*S + 1 = I + LP + RP - LW - RW
+(Oa*S - S + 1 = I + LP + RP - LW - RW
+Oa*S = I + LP + RP - LW - RW + S - 1
+Oa = (I + LP + RP - LW - RW + S - 1) // S
+
+
+This last formula is integral, since:
+
+I-1 = spaced(Or,S) - 1
+    = (Or-1)*S + 1 - 1
+    = (Or-1)*S
+
+So,
+
+Or = (LP + RP - LW - RW + Or*S) / S
+and
+
+Oa = Or
+
+
 
             input_stride 
 C    ****      1
