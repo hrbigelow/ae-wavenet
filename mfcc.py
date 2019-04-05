@@ -27,6 +27,7 @@ import rfield
 class ProcessWav(object):
     def __init__(self, sample_rate=16000, window_sz=400, hop_sz=160, n_mels=80,
             n_mfcc=13, name=None):
+        self.sample_rate = sample_rate
         self.window_sz = window_sz
         self.hop_sz = hop_sz
         self.n_mels = n_mels

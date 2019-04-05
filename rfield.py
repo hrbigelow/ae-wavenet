@@ -38,29 +38,18 @@ class _Stats(object):
     def span(self):
         return (self.nv - 1) * self.vspc + self.l_pos - self.r_pos + 1
 
-def _normalize_stats_(stats):
-    '''Adjusts all spacing to be non-fractional, and aligns left and right
-    positions'''
-    lcm_denom = fractions.Fraction(np.lcm.reduce(tuple(s.spc.denominator for s
-        in stats)))
+    def gen(self):
+        '''Produce an iterator through the chain of stats'''
+        s = self
+        while s is not None:
+            yield s
+            s = None if s.dst is None else s.dst.dst
 
-    for s in stats:
-        s.spc = int(s.spc * lcm_denom)
-        s.vspc = int(s.vspc * lcm_denom)
-        s.l_pos = int(s.l_pos * lcm_denom)
-        s.r_pos = int(s.r_pos * lcm_denom)
 
-    min_l_pos = min(s.l_pos for s in stats)
-    max_r_pos = max(s.r_pos for s in stats)
-
-    for s in stats: 
-        s.l_pos = s.l_pos - min_l_pos
-        s.r_pos = s.r_pos - max_r_pos
-
-def print_stats(stats, xpad='x', ipad='o', data='*'):
+def print_stats(beg_stat, xpad='x', ipad='o', data='*'):
     '''pretty print a symbolic stack of 1D window-based tensor calculations
     represented by 'stats', showing strides, padding, and dilation.  Generate
-    stats using Rfield::get_stats()'''
+    stats using Rfield::gen_stats()'''
 
     def _dilate_string(string, space_sym, spacing):
         if len(string) == 0:
@@ -74,11 +63,13 @@ def print_stats(stats, xpad='x', ipad='o', data='*'):
     def r_pad_pos(st):
         return st.r_pos + st.r_pad * st.spc
 
+    stats = list(beg_stat.src.gen())
     min_pad_pos = min(l_pad_pos(st) for st in stats)
     max_pad_pos = max(r_pad_pos(st) for st in stats)
 
     print('\n')
-    for st in stats:
+    # We print output at the top, with the earlier steps going down.
+    for st in reversed(stats):
         l_spc = ' ' * (l_pad_pos(st) - min_pad_pos)
         r_spc = ' ' * (max_pad_pos - r_pad_pos(st))
         core = _dilate_string(data * st.nv, ipad, round(st.vspc / st.spc))
@@ -104,6 +95,8 @@ class Rfield(object):
         self.l_pad = padding[0]
         self.r_pad = padding[1]
         self.name = name
+        self.src = None
+        self.dst = None
 
         # stride_ratio is ratio of output spacing to input spacing
         if is_downsample:
@@ -148,7 +141,7 @@ class Rfield(object):
         # spacing is the distance between any two consecutive elements in this
         # tensor, including padding elements 
         l_off = self.l_wing_sz - self.l_pad
-        r_off = self.r_wing_sz - self.r_pad
+        r_off = self.r_pad - self.r_wing_sz
         return l_off, r_off
 
     def chain_length(self, other=None):
@@ -235,73 +228,91 @@ class Rfield(object):
             n_out_elem = _spaced(n_in_elem, stride) - const
         return n_out_elem
 
-    def get_stats(self, n_out_el, stop_at=None, out_spc=1, out_vspc=1, l_out_pos=0,
-            r_out_pos=0, accu=None, is_valid=True):
-        '''Return a tuple: (stats, is_valid).  stats is an array of items which
-        describe each tensor produced in the chain of transformations.
-        is_valid will be false if at any point in the chain, the number of
-        value elements is <= 0.  '''
+    def _expand_stats_(self):
+        '''After the initial backward sweep calculation of numbers of input
+        elements necessary for a requested number of output elements, do a forward
+        sweep, calculating the number of output elements that would be produced'''
+        rf = self 
+        while rf is not None and rf.dst is not None:
+            rf.dst.nv = rf._num_out_elem(rf.src.nv)
+            rf = rf.dst.dst
+
+    def _normalize_stats_(self):
+        '''Adjusts all spacing to be non-fractional, and aligns left and right
+        positions'''
+        stats = list(self.src.gen())
+        
+        lcm_denom = fractions.Fraction(np.lcm.reduce(tuple(s.spc.denominator for s
+            in stats)))
+
+        for s in stats:
+            s.spc = int(s.spc * lcm_denom)
+            s.vspc = int(s.vspc * lcm_denom)
+            s.l_pos = int(s.l_pos * lcm_denom)
+            s.r_pos = int(s.r_pos * lcm_denom)
+
+        min_l_pos = min(s.l_pos for s in stats)
+        max_r_pos = max(s.r_pos for s in stats)
+
+        for s in stats: 
+            s.l_pos = s.l_pos - min_l_pos
+            s.r_pos = s.r_pos - max_r_pos
+
+    def gen_stats(self, n_out_el, stop_at=None, out_spc=1, out_vspc=1, l_out_pos=0,
+            r_out_pos=0, prev_stat=None):
+        '''Return stats, an array of items which describe each tensor produced
+        in the chain of transformations.  If any transformation leads to a
+        zero-length or negative-length tensor, raise exception'''
         depth = self._resolve_stop(stop_at)
 
-        if accu is None:
-            first = _Stats(0, 0, n_out_el, out_spc, out_vspc, l_out_pos, r_out_pos,
+        if prev_stat is None:
+            prev_stat = _Stats(0, 0, n_out_el, out_spc, out_vspc, l_out_pos, r_out_pos,
                     src=self, dst=None)
-            accu = [first]
+        self.dst = prev_stat 
 
         l_off, r_off = self._local_bounds()
         n_in_el = self._num_in_elem(n_out_el)
-        is_valid &= n_out_el > 0
+        if n_in_el <= 0:
+            raise RuntimeError('gen_stats: invalid model architecture results in a'
+                    ' output with {} element(s)'.format(n_in_el))
+
         in_spc, in_vspc = self._in_spacing(out_spc, out_vspc)
         l_in_pos = l_out_pos - l_off * in_spc
-        r_in_pos = r_out_pos + r_off * in_spc
+        r_in_pos = r_out_pos - r_off * in_spc
 
-        stats = _Stats(self.l_pad, self.r_pad, n_in_el, in_spc, in_vspc,
+        stat = _Stats(self.l_pad, self.r_pad, n_in_el, in_spc, in_vspc,
                 l_in_pos, r_in_pos, src=self.parent, dst=self)
-        accu.append(stats)
+        self.src = stat
 
         if depth == 1:
-            # Expand number of value elements
-            for i in reversed(range(len(accu) - 1)):
-                cur, pre = accu[i], accu[i+1]
-                cur.nv = pre.dst._num_out_elem(pre.nv)
-            _normalize_stats_(accu)
-            return accu, is_valid
+            self._expand_stats_()
+            self._normalize_stats_()
+            return 
         else:
-            return self.parent.get_stats(n_in_el, depth - 1, in_spc, in_vspc,
-                    l_in_pos, r_in_pos, accu, is_valid)
+            return self.parent.gen_stats(n_in_el, depth - 1, in_spc, in_vspc,
+                    l_in_pos, r_in_pos, stat)
 
-    def geometry(self, n_out_elem_req, stop_at=None):
-        '''For this stack of transformations, calculate number of input
-        elements needed to generate at least n_out_elem_req (number of
-        requested output elements).  Also calculates begin index and end index,
-        which are the elements in the input that correspond to the first and
-        last elements in the output.
 
-        stop_at is: 
-        integer: the number of transformations to process
-        RField: stop here without processing.
-        None: process all transformations
+def offsets(beg_rf, end_rf):
+    '''Get relative left and right offsets between the inputs of the sub-model
+    at beg_rf and end_rf of transformations.  stats must be calculated for the
+    full model.'''
+    bstat = beg_rf.src
+    estat = end_rf.src
 
-        To process 1 transformation, pass: stop_at=1 or stop_at=self.parent
+    if bstat is None or estat is None:
+        raise RuntimeError("Must run gen_stats() first")
 
-        To chain together different models, i.e. modelA -> modelB -> modelC
-        modelb_n_out_elem, _ = modelC.rf.geometry(modelc_n_out_elem, stop_at=modelB.rf)
-        modela_n_out_elem, _ = modelB.rf.geometry(modelb_n_out_elem, stop_at=modelA.rf)
+    # It's not guaranteed that l_off and r_off will be round numbers.
+    l_off = (estat.l_pos - bstat.l_pos) / bstat.spc
+    r_off = (estat.r_pos - bstat.r_pos) / bstat.spc
+    if not (l_off == int(l_off) and r_off == int(r_off)):
+        raise RuntimeError('non-integer offsets found')
+    return bstat.nv, estat.nv, int(l_off), int(r_off)
 
-        This is useful for coordinating inputs for models. 
-        Returns num_input_el, num_output_el_actual, left_offset, right_offset, is_valid.
-
-        num_input_el: number of input elements needed for the requested n_out_elem.
-        left_offset: index in the input where the first element of the output aligns.
-        right_offset: index in the input where the last element of the output aligns.
-        is_valid: flag indicating whether the overall architecture of the model
-
-        Any architecture in which a layer produces no output is considered
-        invalid.  This will occur if there is too much padding specified, or
-        n_out_elem_req is too low.
-        '''
-        stats, is_valid = self.get_stats(n_out_elem_req, stop_at=stop_at)
-        inp = stats[-1]
-        out = stats[0]
-        return inp.nv, out.nv, out.l_pos - inp.l_pos, out.r_pos - inp.r_pos, is_valid
-
+def check_sizes_match(beg_rf, end_rf, in_sz, out_sz):
+    '''Check that the actual input and output sizes generated by
+    the network match those predicted by this transformation'''
+    pred_in_sz, pred_out_sz, __, __ = offsets(beg_rf, end_rf)
+    assert pred_in_sz == in_sz
+    assert pred_out_sz == out_sz

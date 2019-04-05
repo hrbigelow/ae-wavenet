@@ -63,8 +63,9 @@ def get_opts():
     # Training parameters
     parser.add_argument('--n-batch', '-nb', type=int, metavar='INT',
             help='Batch size')
-    parser.add_argument('--n-win', '-nw', type=int, metavar='INT',
-            help='# of consecutive window training samples in one batch channel' )
+    parser.add_argument('--n-sam-per-slice', '-nw', type=int, metavar='INT',
+            default=100,
+            help='# of consecutive window samples in one slice' )
     parser.add_argument('--frac-permutation-use', '-fpu', type=float,
             metavar='FLOAT', help='Fraction of each random data permutation to '
             'use.  Lower fraction causes more frequent reading of data from '
@@ -174,12 +175,13 @@ def main():
     model.ckpt_path.enable(opts.checkpoint_dir, model_ckpt_file_template)
 
     # the receptive_field is the length of one logical sample.  the data module
-    # yields n_batch * n_win logical samples at a time.  since the logical
-    # samples from one .wav file are overlapping, this amounts to a window of
-    # n_win + receptive_field_sz - 1 from each of the n_batch wav files.
-    slice_size, n_sam_per_slice, __, __ = model.input_geometry(opts.n_win)
+    # yields n_batch * n_sam_per_slice logical samples at a time.  since the
+    # logical samples from one .wav file are overlapping, this amounts to a
+    # window of n_win + receptive_field_sz - 1 from each of the n_batch wav
+    # files.
+    model.set_geometry(opts.n_sam_per_slice)
 
-    data.set_geometry(opts.n_batch, slice_size, n_sam_per_slice,
+    data.set_geometry(opts.n_batch, model.input_size, model.output_size,
             opts.requested_wav_buf_sz)
 
     # Set CPU or GPU context

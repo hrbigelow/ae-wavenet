@@ -7,8 +7,8 @@ import util
 
 
 class GatedResidualCondConv(nn.Module):
-    def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, filter_sz=2, bias=True,
-            parent_rf=None, name=None):
+    def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, filter_sz=2,
+            bias=True, parent_rf=None, name=None):
         '''
         filter_sz: # elements in the dilated kernels
         n_cond: # channels of local condition vectors
@@ -46,12 +46,18 @@ class GatedResidualCondConv(nn.Module):
         cond: (B, C, T) (necessary shape for Conv1d)
         returns: sig: (B, R, T), skp: (B, S, T) 
         '''
+        assert self.rf.src.nv == x.shape[2]
+        assert self.rf.src.nv == cond.shape[2]
+
         filt = self.conv_signal(x) + self.proj_signal(cond[:,:,self.lead:])
         gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.lead:])
         z = torch.tanh(filt) * torch.sigmoid(gate)
         sig = self.dil_res(z)
         skp = self.dil_skp(z)
         sig += x[:,:,self.lead:]
+
+        assert self.rf.dst.nv == sig.shape[2]
+        assert self.rf.dst.nv == skp.shape[2]
         return sig, skp 
 
 class Jitter(nn.Module):
@@ -168,11 +174,14 @@ class Upsampling(nn.Module):
 
     def forward(self, lc):
         '''B, T, S, C: batch_sz, timestep, less-frequent timesteps, input channels
-        lc: (B, S, C)
-        returns: (B, T, C)
+        lc: (B, C, S)
+        returns: (B, C, T)
         '''
-        lc = self.tconv(lc)
-        return lc
+        assert self.rf.src.nv == lc.shape[2]
+        lc_up = self.tconv(lc)
+        assert self.rf.dst.nv == lc_up.shape[2]
+
+        return lc_up
 
 class WaveNet(nn.Module):
     def __init__(self, filter_sz, n_lc_in, n_lc_out, lc_upsample_filt_sizes,
@@ -191,8 +200,12 @@ class WaveNet(nn.Module):
         post_jitter_filt_sz = 3
         lc_input_stepsize = np_prod(lc_upsample_strides) 
 
+        lc_conv_name = 'LC_Conv(filter_size={})'.format(post_jitter_filt_sz) 
         self.lc_conv = nn.Conv1d(n_lc_in, n_lc_out,
                 kernel_size=post_jitter_filt_sz, stride=1, bias=self.bias)
+
+        parent_rf = rfield.Rfield(filter_info=post_jitter_filt_sz,
+                stride=1, parent=parent_rf, name=lc_conv_name)
 
         self.lc_upsample = nn.Sequential()
 

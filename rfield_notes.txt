@@ -177,4 +177,32 @@ can be zero or negative.  This shouldn't be allowed because it doesn't make any 
 
 So, where would it be detected that the number of input elements is non-positive?
 
+Is there any reason NOT to instead accumulate the tensor shapes as properties of rfield?
+One drawback is that then, there can only be one version of the stats.  However, it seems
+to me that there isn't a very meaningful use case other than that.  Just have one
+instance of a model, and one calculation of dimensions needed.
+
+It does make the model "sticky" though.  Whereas, before, the model is basically a set of
+pipes that can expand and contract as necessary, with no extra structures that reflect
+any particular choice of dimensions, and the stats list is a separate entity that can be
+discarded.  Now, the stats are integrated into the model - the important distinction
+is that the stats are now in one-to-one existence with the model instance.
+
+For instance, now you can't have two separate stats lists for two different input
+dimensions for your model.  You have to choose one.
+
+But, again, this doesn't seem like it interferes with any reasonable use case.  The main
+use case is to calculate the input needed for a particular desired output, and, second,
+in the case where intermediate inputs are needed, their offsets relative to the main
+input are easily calculated as well.
+
+
+Rfield.dst -> Stats
+Rfield.src -> Stats
+Rfield.parent -> Rfield
+Stats.src -> Rfield
+Stats.dst -> Rfield
+
+
+Now, we need a simple way to check that the input and output sizes match
 

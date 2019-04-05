@@ -6,7 +6,7 @@ import util
 import torch
 from torch import nn
 from torch.nn.modules import loss
-import rfield as rf
+import rfield
 from numpy import vectorize as np_vectorize
 
 class AutoEncoder(nn.Module):
@@ -41,22 +41,27 @@ class AutoEncoder(nn.Module):
 
         # Does the complete model need the loss function defined as well?
         self.loss = loss.CrossEntropyLoss() 
-
-        # Offsets from encoder wav input and corresponding decoder wav input.
-        # The decoder takes a much smaller wav input.
-        # self.ae_rf = rf.Rfield(offsets=(ae_loff, ae_roff))
-
         self.ckpt_path = util.CheckpointPath()
         self.rf = self.decoder.rf
 
-    def input_geometry(self, n_out_elem_req):
-        n_in_elem, n_out_elem_act, l_out_off, r_out_off, is_valid = \
-                self.rf.geometry(n_out_elem_req)
-        if not is_valid:
-            raise RuntimeError('Geometry of model is not valid.  Please see rfield for '
-                    'details.')
-        return n_in_elem, n_out_elem_act, l_out_off, r_out_off
+    def set_geometry(self, n_sam_per_slice_req):
+        '''Compute the relationship between the encoder input, decoder input,
+        and input to the loss function'''
+        self.rf.gen_stats(n_sam_per_slice_req)
+        enc_in_sz, __, l_dec_off, r_dec_off = rfield.offsets(
+                self.encoder.pre.rf, self.decoder.upsample_rf)
 
+        self.input_size = enc_in_sz 
+        self.l_dec_off = l_dec_off
+        self.r_dec_off = r_dec_off
+
+        lc_sz, out_sz, l_pred_off, r_pred_off = rfield.offsets(
+                self.decoder.upsample_rf, self.rf)
+
+        self.output_size = out_sz
+        self.l_pred_off = l_pred_off
+        self.r_pred_off = r_pred_off
+        
     def print_offsets(self):
         '''Show the set of offsets for each section of the model'''
         self.rf.print_chain()
@@ -96,17 +101,14 @@ class AutoEncoder(nn.Module):
     def loss_factory(self, batch_gen):
         _xent_loss = torch.nn.CrossEntropyLoss()
         # offset between input to the decoder and its prediction
-        pred_off = self.decoder.stack_rf.left + 1 
         ids_to_inds = np_vectorize(self.speaker_id_map.__getitem__)
-        __, l_lc_off, r_lc_off, is_valid = \
-                self.decoder.upsample_rf.geometry() # !!!
 
         def loss():
             # numpy.ndarray
             ids, wav_raw = next(batch_gen)
-            wav_raw_dec = wav_raw[:,l_lc_off:r_lc_off or None]
+            wav_raw_dec = wav_raw[:,self.l_dec_off:self.r_dec_off or None]
             wav_compand_dec = torch.tensor(util.mu_encode_np(wav_raw_dec, self.decoder.n_quant))
-            wav_compand_pred = wav_compand_dec[:, pred_off:]
+            wav_compand_pred = wav_compand_dec[:, self.l_pred_off:self.r_pred_off or None]
             wav_onehot_dec = self.decoder.one_hot(wav_compand_dec)
             speaker_inds_ten = torch.tensor(ids_to_inds(ids))
 

@@ -32,10 +32,11 @@ class ConvReLURes(nn.Module):
         out = self.conv(x)
         out = self.relu(out)
         if (self.do_res):
-            # Must suitably trim the residual based on how much the convolution
-            # shrinks the input.
-            __, l_off, r_off, __ = self.rf.geometry(10)
+            __, __, l_off, r_off = rfield.offsets(self.rf, self.rf.dst.dst)
             out += x[:,:,l_off:r_off or None]
+
+        rfield.check_sizes_match(self.rf, self.rf.dst.dst,
+                in_sz=x.shape[2], out_sz=out.shape[2])
         return out
 
 
@@ -68,8 +69,9 @@ class Encoder(nn.Module):
 
     def forward(self, wav):
         '''
-        B, T = n_batch, n_win + rf_size - 1
+        B, T = n_batch, timesteps 
         wav: (B, T) (torch.tensor)
+        outputs: (B, T)
         '''
         # Note: for consistency, we would like all 'forward' calls to accept
         # and return a torch.tensor.  This one happens to require
@@ -78,5 +80,7 @@ class Encoder(nn.Module):
         mels = torch.tensor(np.apply_along_axis(self.pre.func, axis=1, arr=wav),
                 dtype=torch.float)
         out = self.net(mels)
+
+        rfield.check_sizes_match(self.pre.rf, self.rf, wav.shape[1], out.shape[1])
         return out
 
