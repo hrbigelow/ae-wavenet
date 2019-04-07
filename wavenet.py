@@ -28,15 +28,32 @@ class GatedResidualCondConv(nn.Module):
         # right-most position of the receptive field.  (At the very end of a
         # stack of these, the output corresponds to the position just after
         # this, but within the stack of convolutions, outputs right-aligned.
-        recep_field_sz = (filter_sz - 1) * dil + 1
-        self.rf = rfield.Rfield(filter_info=(recep_field_sz - 1, 0),
+        dil_filter_sz = (filter_sz - 1) * dil + 1
+        self.rf = rfield.Rfield(filter_info=(dil_filter_sz - 1, 0),
                 parent=parent_rf, name=name)
+        self.beg_rf = None
+        self.end_rf = None
 
-        # kernel size is 1 for conditioning vectors, but filter_sz * dil + 1
-        # for dilated convolutions.  So, the output of proj_* is longer than
-        # conv_* by self.lead.  This is accounted for during the summation
-        # steps in forward()
-        self.lead = (filter_sz - 1) * dil
+    def init_bound_rfs(self, beg_rf, end_rf):
+        '''last_rf is the last GRCC unit in the stack.  This initialization is
+        needed because the destination Rfield is not known at initialization
+        time'''
+        self.beg_rf = beg_rf
+        self.end_rf = end_rf
+        
+    def cond_lead(self):
+        '''distance from start of the overall stack input to
+        the start of this convolution'''
+        l_off, __ = rfield.offsets(self.beg_rf.src, self.rf.dst)
+        return l_off
+
+    def skip_lead(self):
+        '''distance from start of this input to start of the final
+        stack output'''
+        if self.end_rf is None:
+            raise RuntimeError('Must call init_end_rf() first')
+        l_off, __ = rfield.offsets(self.rf.dst, self.end_rf.dst)
+        return l_off
 
     def forward(self, x, cond):
         '''
@@ -46,18 +63,21 @@ class GatedResidualCondConv(nn.Module):
         cond: (B, C, T) (necessary shape for Conv1d)
         returns: sig: (B, R, T), skp: (B, S, T) 
         '''
-        assert self.rf.src.nv == x.shape[2]
-        assert self.rf.src.nv == cond.shape[2]
+        cond_lead = self.cond_lead()
+        skip_lead = self.skip_lead()
 
-        filt = self.conv_signal(x) + self.proj_signal(cond[:,:,self.lead:])
-        gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.lead:])
+        assert self.rf.src.nv == x.shape[2]
+        assert self.rf.dst.nv == cond.shape[2] - cond_lead
+
+        filt = self.conv_signal(x) + self.proj_signal(cond[:,:,cond_lead:])
+        gate = self.conv_gate(x) + self.proj_gate(cond[:,:,cond_lead:])
         z = torch.tanh(filt) * torch.sigmoid(gate)
         sig = self.dil_res(z)
-        skp = self.dil_skp(z)
-        sig += x[:,:,self.lead:]
+        skp = self.dil_skp(z[:,:,skip_lead:])
+        sig += x[:,:,self.rf.l_wing_sz:]
 
         assert self.rf.dst.nv == sig.shape[2]
-        assert self.rf.dst.nv == skp.shape[2]
+        assert self.end_rf.dst.nv == skp.shape[2]
         return sig, skp 
 
 class Jitter(nn.Module):
@@ -98,19 +118,21 @@ class Jitter(nn.Module):
         tmp = torch.Tensor([p, s, p]).repeat(3, 3, 1)
         tmp[2][1] = torch.Tensor([0, s/(p+s), p/(p+s)])
         self.cond2d = [ [ dist.Categorical(tmp[i][j]) for i in range(3)] for j in range(3) ]
+        self.mindex = None
+        self.adjust = None
 
-
-    def gen_mask(self, n_batch, n_win):
+    def gen_mask(self):
         '''populates a tensor mask to be used for jitter, and sends it to GPU for
         next window'''
-        self.mindex = torch.empty(n_batch, n_win + 1, dtype=torch.long)
+        n_batch = self.mindex.shape[0]
+        n_time = self.mindex.shape[1] - 1
         self.mindex[:,0:2] = 1
         for b in range(n_batch):
             # The Markov sampling process
-            for t in range(2, n_win):
+            for t in range(2, n_time):
                 self.mindex[b,t] = \
                         self.cond2d[self.mindex[b,t-2]][self.mindex[b,t-1]].sample()
-            self.mindex[b, n_win] = 1
+            self.mindex[b, n_time] = 1
 
         # adjusts so that temporary value of mindex[i] = {0, 1, 2} imply {i-1,
         # i, i+1} also, first and last elements of mindex mean 'do not replace
@@ -118,20 +140,24 @@ class Jitter(nn.Module):
         # This prevents attempting to replace the first element of the input
         # with a non-existent 'previous' element, and likewise with the last
         # element.
-        self.mindex = self.mindex[:,1:] 
-        self.mindex += torch.arange(n_win, dtype=torch.long).repeat(n_batch, 1) - 1
+        self.mindex += self.adjust 
 
 
     # Will this play well with back-prop?
     def forward(self, x):
         '''Input: (B, I, T)'''
-        n_batch, n_win = x.shape[0], x.shape[2]
-        self.gen_mask(n_batch, n_win)
+        if self.mindex is None:
+            n_batch, n_time = x.shape[0], x.shape[2]
+            self.mindex = x.new_empty(n_batch, n_time + 1, dtype=torch.long)
+            self.adjust = torch.arange(n_time + 1, dtype=torch.long,
+                    device=x.device).repeat(n_batch, 1) - 2
 
-        assert x.shape[2] == self.mindex.shape[1]
-        y = torch.empty(x.shape, dtype=x.dtype)
+        self.gen_mask()
+
+        assert x.shape[2] == self.mindex.shape[1] - 1
+        y = x.new_empty(x.shape)
         for b in range(n_batch):
-            y[b] = torch.index_select(x[b], 1, self.mindex[b])
+            y[b] = torch.index_select(x[b], 1, self.mindex[b,1:])
         return y 
 
 
@@ -143,7 +169,7 @@ class Conditioning(nn.Module):
     def __init__(self, n_speakers, n_embed, bias=True):
         super(Conditioning, self).__init__()
         self.speaker_embedding = nn.Linear(n_speakers, n_embed, bias)
-        self.eye = torch.eye(n_speakers)
+        self.register_buffer('eye', torch.eye(n_speakers))
 
     def forward(self, lc, speaker_inds):
         '''
@@ -152,6 +178,7 @@ class Conditioning(nn.Module):
         speaker_inds: (B, T)
         returns: (B, T, I+G)
         '''
+        assert speaker_inds.dtype == torch.long
         one_hot = util.gather_md(self.eye, 0, speaker_inds) # one_hot: (B, T, S)
         gc = self.speaker_embedding(one_hot) # gc: (B, T, G)
         gc_rep = gc.unsqueeze(2).expand(-1, -1, lc.shape[2])
@@ -193,7 +220,8 @@ class WaveNet(nn.Module):
         self.n_blocks = n_blocks
         self.n_block_layers = n_block_layers
         self.n_quant = n_quant
-        self.quant_onehot = torch.eye(self.n_quant)
+        self.quant_onehot = None 
+
         self.bias = bias
 
         self.jitter = Jitter(jitter_prob)
@@ -220,7 +248,7 @@ class WaveNet(nn.Module):
 
         # This rf describes the bounds of the input wav corresponding to the
         # local conditioning vectors
-        self.upsample_rf = parent_rf
+        self.last_upsample_rf = parent_rf
         self.cond = Conditioning(n_speakers, n_global_embed)
         self.base_layer = nn.Conv1d(n_quant, n_res, kernel_size=1, stride=1,
                 dilation=1, bias=self.bias)
@@ -237,8 +265,17 @@ class WaveNet(nn.Module):
                 self.conv_layers.append(grc)
                 parent_rf = grc.rf
 
-        self.post1 = nn.Conv1d(n_skp, n_post, 1, 1, 1, bias)
-        self.post2 = nn.Conv1d(n_post, n_quant, 1, 1, 1, bias)
+        # Each module in the stack needs to know the dimensions of
+        # the input and output of the overall stack, in order to trim
+        # residual connections
+        beg_grcc_rf = self.conv_layers[0].rf
+        end_grcc_rf = self.conv_layers[-1].rf 
+        for mod in self.conv_layers.children():
+            mod.init_bound_rfs(beg_grcc_rf, end_grcc_rf)
+
+        self.relu = nn.ReLU()
+        self.post1 = nn.Conv1d(n_skp, n_post, 1, bias=bias)
+        self.post2 = nn.Conv1d(n_post, n_quant, 1, bias=bias)
         self.logsoftmax = nn.LogSoftmax(2) # (B, T, C)
         self.rf = parent_rf
 
@@ -249,6 +286,9 @@ class WaveNet(nn.Module):
         Q: n_quant
         returns: (B, Q, T)
         '''
+        if self.quant_onehot is None:
+            self.quant_onehot = torch.eye(self.n_quant, device=wav_compand.device)
+
         return util.gather_md(self.quant_onehot, 0, wav_compand.long()).transpose(1, 2)
 
     def forward(self, wav_onehot, lc_sparse, speaker_inds):
@@ -280,11 +320,13 @@ class WaveNet(nn.Module):
         skp_sum = None
         for i, l in enumerate(self.conv_layers):
             sig, skp = l(sig, cond)
-            if skp_sum: skp_sum += skp
-            else: skp_sum = skp
+            if skp_sum is None:
+                skp_sum = skp
+            else:
+                skp_sum += skp
             
-        post1 = self.post1(nn.ReLU(skp_sum))
-        quant = self.post2(nn.ReLU(post1))
+        post1 = self.post1(self.relu(skp_sum))
+        quant = self.post2(self.relu(post1))
         # we only need this for inference time
         # logits = self.logsoftmax(quant) 
 

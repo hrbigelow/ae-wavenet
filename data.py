@@ -152,10 +152,14 @@ class WavSlices(object):
                 (vid, wav_path) = s.strip().split('\t')
                 self.sample_catalog.append([int(vid), wav_path])
 
+        self.speaker_id_map = dict((v,k) for k,v in enumerate(self.speaker_ids()))
         self.current_epoch = 1 
 
     def speaker_ids(self):
         return set(id for id,__ in self.sample_catalog)
+
+    def num_speakers(self):
+        return len(self.speaker_ids())
 
     def set_geometry(self, n_batch, slice_size, n_sam_per_slice, wav_buf_sz_req):
         self.n_batch = n_batch
@@ -307,8 +311,9 @@ class WavSlices(object):
         '''infinite generator for batched slices of wav files'''
         def gen_fn(sg):
             b = 0
-            wavs = np.empty((self.n_batch, self.slice_size), dtype='float64')
+            wavs = np.empty((self.n_batch, self.slice_size), dtype='float32')
             ids = np.empty(self.n_batch, dtype='int32')
+            inds = np.empty(self.n_batch, dtype='long')
             while True:
                 while b < self.n_batch:
                     try:
@@ -318,8 +323,9 @@ class WavSlices(object):
                         continue
                     wavs[b,:] = wav_slice
                     ids[b] = wav_id
+                    inds[b] = self.speaker_id_map[wav_id] 
                     b += 1
-                yield ids, wavs
+                yield ids, inds, wavs
                 b = 0
 
         return gen_fn(self._slice_gen_fn())

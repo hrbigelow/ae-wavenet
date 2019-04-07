@@ -16,16 +16,20 @@ The calculations are as follows:
 
 
 1. calculate left_wing_sz, relative to the left center element.  for odd-length
-filters, regard the center element as both left and right center.
+filters, regard the center element as both left and right center.  for even-length
+filters, 
 
-2. pad the left input by H - (L % H)
+1. L' = L if odd-length, L + 1 for even-length filters
+   R' = R for both odd-length and even-length filters
 
-3. trim left of output by L // H. 
+2. pad the left input by (L' % H)
+
+3. trim left of output by L' // H. 
 
 4. assume we have an input size such that one of the outputs aligns with the
    end of the input at the right side of the window
 
-4. trim right of output by R // H  # The number of additional invalid positions
+5. trim right of output by R' // H  # The number of additional invalid positions
    that librosa will use.
 
 

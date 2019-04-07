@@ -1,6 +1,5 @@
 import torch
 from torch import nn
-import mfcc
 import rfield
 import numpy as np
 
@@ -29,33 +28,28 @@ class ConvReLURes(nn.Module):
         B, C, T = n_batch, n_in_chan, n_win
         x: (B, C, T)
         '''
+        assert self.rf.src.nv == x.shape[2]
         out = self.conv(x)
         out = self.relu(out)
         if (self.do_res):
-            __, __, l_off, r_off = rfield.offsets(self.rf, self.rf.dst.dst)
+            l_off, r_off = rfield.offsets(self.rf.src, self.rf.dst)
             out += x[:,:,l_off:r_off or None]
-
-        rfield.check_sizes_match(self.rf, self.rf.dst.dst,
-                in_sz=x.shape[2], out_sz=out.shape[2])
+        assert self.rf.dst.nv == out.shape[2]
         return out
 
 
 class Encoder(nn.Module):
-    def __init__(self, sample_rate, win_sz, hop_sz, n_mels, n_mfcc, n_out):
+    def __init__(self, n_in, n_out, parent_rf):
         super(Encoder, self).__init__()
 
-        # the "preprocessing"
-        self.pre = mfcc.ProcessWav(sample_rate, win_sz, hop_sz, n_mels, n_mfcc, 'mfcc')
-
         # the "stack"
-        stack_in_chan = [self.pre.n_out, n_out, n_out, n_out, n_out, n_out, n_out, n_out, n_out]
+        stack_in_chan = [n_in, n_out, n_out, n_out, n_out, n_out, n_out, n_out, n_out]
         stack_filter_sz = [3, 3, 4, 3, 3, 1, 1, 1, 1]
         stack_strides = [1, 1, 2, 1, 1, 1, 1, 1, 1]
         stack_residual = [False, True, False, True, True, True, True, True, True]
         stack_info = zip(stack_in_chan, stack_filter_sz, stack_strides, stack_residual)
 
         self.net = nn.Sequential()
-        parent_rf = self.pre.rf
 
         for i, (in_chan, filt_sz, stride, do_res) in enumerate(stack_info):
             name = 'CRR_{}(filter_sz={}, stride={}, do_res={})'.format(i,
@@ -65,22 +59,17 @@ class Encoder(nn.Module):
             self.net.add_module(str(i), mod)
             parent_rf = mod.rf
 
+        self.beg_rf = self.net[0].rf
         self.rf = parent_rf 
 
-    def forward(self, wav):
+    def forward(self, mels):
         '''
         B, T = n_batch, timesteps 
         wav: (B, T) (torch.tensor)
         outputs: (B, T)
         '''
-        # Note: for consistency, we would like all 'forward' calls to accept
-        # and return a torch.tensor.  This one happens to require
-        # pre-processing functions that only work on numpy.ndarrays, so first
-        # convert to numpy, and then back.
-        mels = torch.tensor(np.apply_along_axis(self.pre.func, axis=1, arr=wav),
-                dtype=torch.float)
+        assert self.beg_rf.src.nv == mels.shape[2]
         out = self.net(mels)
-
-        rfield.check_sizes_match(self.pre.rf, self.rf, wav.shape[1], out.shape[1])
+        assert self.rf.dst.nv == out.shape[2]
         return out
 

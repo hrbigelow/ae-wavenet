@@ -15,17 +15,19 @@ def get_opts():
 
     # Parameters in arch file will be overridden by any given here.
 
-    # Encoder architectural parameters
-    parser.add_argument('--enc-sample-rate', '-sr', type=int, default=16000,
+    # Preprocessing parameters
+    parser.add_argument('--pre-sample-rate', '-sr', type=int, default=16000,
             help='# samples per second in input wav files')
-    parser.add_argument('--enc-win-sz', '-wl', type=int, default=400,
+    parser.add_argument('--pre-win-sz', '-wl', type=int, default=400,
             help='size of the MFCC window length in timesteps')
-    parser.add_argument('--enc-hop-sz', '-hl', type=int, default=160,
+    parser.add_argument('--pre-hop-sz', '-hl', type=int, default=160,
             help='size of the hop length for MFCC preprocessing, in timesteps')
-    parser.add_argument('--enc-n-mels', '-nm', type=int, default=80,
+    parser.add_argument('--pre-n-mels', '-nm', type=int, default=80,
             help='number of mel frequency values to calculate')
-    parser.add_argument('--enc-n-mfcc', '-nf', type=int, default=13,
+    parser.add_argument('--pre-n-mfcc', '-nf', type=int, default=13,
             help='number of mfcc values to calculate')
+
+    # Encoder architectural parameters
     parser.add_argument('--enc-n-out', '-no', type=int, default=768,
             help='number of output channels')
 
@@ -84,7 +86,7 @@ def get_opts():
             help='Save a checkpoint after this many steps each time')
     parser.add_argument('--progress-interval', '-pi', type=int, default=10, metavar='INT',
             help='Print a progress message at this interval')
-    parser.add_argument('--cpu-only', '-cpu', action='store_true', default=False,
+    parser.add_argument('--disable-cuda', '-dc', action='store_true', default=False,
             help='If present, do all computation on CPU')
     parser.add_argument('--learning-rate-steps', '-lrs', type=int, nargs='+',
             metavar='INT', help='Learning rate starting steps to apply --learning-rate-rates')
@@ -153,15 +155,22 @@ def get_prefixed_items(d, pfx):
 def main():
     opts = get_opts()
 
+    opts.device = None
+    if not opts.disable_cuda and torch.cuda.is_available():
+        opts.device = torch.device('cuda')
+    else:
+        opts.device = torch.device('cpu') 
+
     from sys import stderr
     
     # Construct model
+    preprocess_params = get_prefixed_items(vars(opts), 'pre_')
     encoder_params = get_prefixed_items(vars(opts), 'enc_')
     bn_params = get_prefixed_items(vars(opts), 'bn_')
     decoder_params = get_prefixed_items(vars(opts), 'dec_')
 
     # Prepare data
-    data = D.WavSlices(opts.sam_file, encoder_params['sample_rate'],
+    data = D.WavSlices(opts.sam_file, preprocess_params['sample_rate'],
             opts.frac_permutation_use)
 
     data_ckpt_file_template = opts.checkpoint_template + '.data.ckpt'
@@ -169,9 +178,9 @@ def main():
 
     data.ckpt_path.enable(opts.checkpoint_dir, data_ckpt_file_template)
 
-    speaker_ids = data.speaker_ids()
-    decoder_params['n_speakers'] = len(speaker_ids) 
-    model = ae.AutoEncoder(encoder_params, bn_params, decoder_params, speaker_ids)
+    decoder_params['n_speakers'] = data.num_speakers()
+    model = ae.AutoEncoder(preprocess_params, encoder_params, bn_params,
+            decoder_params, opts.device)
     model.ckpt_path.enable(opts.checkpoint_dir, model_ckpt_file_template)
 
     # the receptive_field is the length of one logical sample.  the data module
@@ -184,7 +193,14 @@ def main():
     data.set_geometry(opts.n_batch, model.input_size, model.output_size,
             opts.requested_wav_buf_sz)
 
-    # Set CPU or GPU context
+    model.to(device=model.device)
+
+    #total_bytes = 0
+    #for name, par in model.named_parameters():
+    #    n_bytes = par.data.nelement() * par.data.element_size()
+    #    total_bytes += n_bytes
+    #    print(name, type(par.data), par.size(), n_bytes)
+    #print('total_bytes: ', total_bytes)
 
     # Restore from checkpoint, or initialize model parameters
     step = opts.resume_step or 0

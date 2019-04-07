@@ -23,12 +23,13 @@
 import librosa
 import numpy as np
 import rfield
+import math
 
 class ProcessWav(object):
-    def __init__(self, sample_rate=16000, window_sz=400, hop_sz=160, n_mels=80,
+    def __init__(self, sample_rate=16000, win_sz=400, hop_sz=160, n_mels=80,
             n_mfcc=13, name=None):
         self.sample_rate = sample_rate
-        self.window_sz = window_sz
+        self.window_sz = win_sz
         self.hop_sz = hop_sz
         self.n_mels = n_mels
         self.n_mfcc = n_mfcc
@@ -38,19 +39,37 @@ class ProcessWav(object):
 
     def func(self, wav):
         # See padding_notes.txt 
-        left_pad = self.hop_sz - (self.rf.l_wing_sz % self.hop_sz)
-        trim_left = self.rf.l_wing_sz // self.hop_sz
+        # NOTE: This function can't be executed on GPU due to the use of
+        # librosa.feature.mfcc
+        assert self.rf.src.nv == wav.shape[0]
+        adj = 1 if self.window_sz % 2 == 0 else 0
+        adj_l_wing_sz = self.rf.l_wing_sz + adj 
+
+        left_pad = adj_l_wing_sz % self.hop_sz
+        trim_left = adj_l_wing_sz // self.hop_sz
         trim_right = self.rf.r_wing_sz // self.hop_sz
 
         wav_pad = np.concatenate((np.zeros(left_pad), wav), axis=0) 
         mfcc = librosa.feature.mfcc(y=wav_pad, sr=self.sample_rate,
                 n_fft=self.window_sz, hop_length=self.hop_sz,
                 n_mels=self.n_mels, n_mfcc=self.n_mfcc)
+
+        def mfcc_pred_output_size(in_sz, window_sz, hop_sz):
+            '''Reverse-engineered output size calculation derived by observing the
+            behavior of librosa.feature.mfcc'''
+            n_extra = 1 if window_sz % 2 == 0 else 0
+            n_pos = in_sz + n_extra
+            return n_pos // hop_sz + (1 if n_pos % hop_sz > 0 else 0)
+
+        assert mfcc.shape[1] == mfcc_pred_output_size(wav_pad.shape[0],
+            self.window_sz, self.hop_sz)
+
         mfcc_trim = mfcc[:,trim_left:-trim_right or None]
 
         mfcc_delta = librosa.feature.delta(mfcc_trim)
         mfcc_delta2 = librosa.feature.delta(mfcc_trim, order=2)
         mfcc_and_derivatives = np.concatenate((mfcc_trim, mfcc_delta, mfcc_delta2), axis=0)
 
-        return mfcc_and_derivatives
+        assert self.rf.dst.nv == mfcc_and_derivatives.shape[1]
+        return mfcc_and_derivatives.astype(wav.dtype)
 
