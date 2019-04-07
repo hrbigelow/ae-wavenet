@@ -223,7 +223,10 @@ def main():
     while step < opts.max_steps:
         if step in learning_rates:
             optim = torch.optim.Adam(params=model_params, lr=learning_rates[step])
-        optim.step(loss_fcn)
+        loss = optim.step(loss_fcn)
+
+        if step % opts.progress_interval == 0:
+            print('Step {}, Loss: {}'.format(step, loss))
 
         if step % opts.save_interval == 0 and step != opts.resume_step:
             torch.save(model.state_dict(), model.ckpt_path.path(step))

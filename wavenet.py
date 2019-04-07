@@ -146,8 +146,9 @@ class Jitter(nn.Module):
     # Will this play well with back-prop?
     def forward(self, x):
         '''Input: (B, I, T)'''
+        n_batch = x.shape[0]
         if self.mindex is None:
-            n_batch, n_time = x.shape[0], x.shape[2]
+            n_time = x.shape[2]
             self.mindex = x.new_empty(n_batch, n_time + 1, dtype=torch.long)
             self.adjust = torch.arange(n_time + 1, dtype=torch.long,
                     device=x.device).repeat(n_batch, 1) - 2
