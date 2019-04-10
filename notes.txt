@@ -817,4 +817,8 @@ of a
 
 
 
+Now, need to encapsulate the loading and saving of the whole thing.  This could
+be done in a class that brings together the model and data. 
+
+
 

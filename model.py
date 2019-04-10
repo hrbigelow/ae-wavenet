@@ -12,12 +12,13 @@ import numpy as np
 
 # from numpy import vectorize as np_vectorize
 
+
 class AutoEncoder(nn.Module):
     '''
     Full Autoencoder model
     '''
     def __init__(self, preprocess_params, encoder_params, bn_params,
-            decoder_params, device):
+            decoder_params):
         super(AutoEncoder, self).__init__() 
 
         # the "preprocessing"
@@ -25,6 +26,7 @@ class AutoEncoder(nn.Module):
 
         self.encoder = enc.Encoder(n_in=self.preprocess.n_out,
                 parent_rf=self.preprocess.rf, **encoder_params)
+
         bn_type = bn_params.pop('type')
 
         # connecting encoder to bottleneck
@@ -44,11 +46,7 @@ class AutoEncoder(nn.Module):
         decoder_params['parent_rf'] = self.encoder.rf
 
         self.decoder = dec.WaveNet(**decoder_params)
-        self.device = device
 
-        # Does the complete model need the loss function defined as well?
-        self.loss = loss.CrossEntropyLoss() 
-        self.ckpt_path = util.CheckpointPath()
         self.rf = self.decoder.rf
 
     def set_geometry(self, n_sam_per_slice_req):
@@ -102,7 +100,7 @@ class AutoEncoder(nn.Module):
         quant = self.decoder(wav_onehot_trim, encoding_bn, voice_ids)
         return quant 
 
-    def loss_factory(self, batch_gen):
+    def loss_factory(self, batch_gen, device):
         _xent_loss = torch.nn.CrossEntropyLoss()
         # ids_to_inds = np_vectorize(self.speaker_id_map.__getitem__)
 
@@ -114,9 +112,9 @@ class AutoEncoder(nn.Module):
                     arr=wav_raw)
 
             # Here is where we transfer to GPU if necessary
-            mels_ten = torch.tensor(mels, device=self.device)
-            wav_ten = torch.tensor(wav_raw, device=self.device)
-            inds_ten = torch.tensor(inds, device=self.device)
+            mels_ten = torch.tensor(mels, device=device)
+            wav_ten = torch.tensor(wav_raw, device=device)
+            inds_ten = torch.tensor(inds, device=device)
             wav_dec_ten = wav_ten[:,self.l_dec_off:self.r_dec_off or None]
             wav_compand_dec_ten = util.mu_encode_torch(wav_dec_ten,
                     self.decoder.n_quant)
@@ -128,7 +126,9 @@ class AutoEncoder(nn.Module):
             assert wav_ten.device == inds_ten.device
 
             quant = self.forward(mels_ten, wav_onehot_dec, inds_ten)
-            return _xent_loss(quant, wav_compand_pred)
+
+            # quant[:,:,0] is the prediction for wav_compand_pred[:,1]
+            return _xent_loss(quant[:,:,:-1], wav_compand_pred[:,1:])
         return loss
 
 

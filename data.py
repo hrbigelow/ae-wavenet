@@ -121,10 +121,9 @@ class WavSlices(object):
     should be set to 1 in order to minimize buffer reloads.
     '''
 
-    def __init__(self, sam_file, sample_rate, frac_permutation_use):
+    def __init__(self, sample_catalog, sample_rate, frac_permutation_use):
         '''
         '''
-        self.sam_file = sam_file
         self.sample_rate = sample_rate
         if frac_permutation_use <= 0 or frac_permutation_use > 1.0:
             raise ValueError
@@ -140,18 +139,10 @@ class WavSlices(object):
         self.lead_wavgen_pos = None 
         self.perm_gen_pos = None 
 
-        # Used in save/restore (initialized in enable_file_checkpointing)
-        self.ckpt_path = util.CheckpointPath()
-
         self.wav_buf = []
         self.wav_ids = []
         self.vstart = []
-        self.sample_catalog = []
-        with open(self.sam_file) as sam_fh:
-            for s in sam_fh.readlines():
-                (vid, wav_path) = s.strip().split('\t')
-                self.sample_catalog.append([int(vid), wav_path])
-
+        self.sample_catalog = sample_catalog
         self.speaker_id_map = dict((v,k) for k,v in enumerate(self.speaker_ids()))
         self.current_epoch = 1 
 
@@ -171,54 +162,29 @@ class WavSlices(object):
     # The following four functions implement the transitions:
     # [Checkpoint File] <=> [Checkpoint instance] <=> [WavSlices state]
 
-    def state_to_ckpt(self):
-        '''convert generator state to a Checkpoint instance'''
+    def state_dict(self):
+        '''Return the state  of this data generator.  Analogous to
+        torch.nn.Module.state_dict()'''
         if self.lead_wavgen_rand_state is None:
             raise RuntimeError('No generator created yet, so no checkpoint defined.')
-        return Checkpoint(self.lead_wavgen_rand_state,
+        state_dict = {}
+        state_dict['ckpt'] = Checkpoint(self.lead_wavgen_rand_state,
                 self.lead_wavgen_pos, self.perm_gen_pos)
+        state_dict['sample_catalog'] = self.sample_catalog
+        state_dict['sample_rate'] = self.sample_rate
+        state_dict['frac_permutation_use'] = self.frac_perm_use
 
+        return state_dict
 
-    def ckpt_to_state(self, ckpt):
-        '''update the generator state with that saved in ckpt'''
+    def load_state_dict(self, state_dict):
+        '''update the generator state with that saved.  Analogous to
+        torch.nn.Module.load_state_dict, for data generator state.'''
+        ckpt = state_dict['ckpt']
         self.rand_state.set_state(ckpt.lead_wavgen_rand_state)
         self.wav_gen = self._wav_gen_fn(ckpt.lead_wavgen_pos)
         self.lead_wavgen_pos = ckpt.lead_wavgen_pos
         self.perm_gen_pos = ckpt.perm_gen_pos
-
-
-    def file_to_ckpt(self, step):
-        '''Parse a checkpoint file, identified by step and the preset
-        checkpointing details, returning a Checkpoint object.
-        self.enable_file_checkpointing must be called first.'''
-        if not self.ckpt_path.enabled:
-            raise RuntimeError('Must call self.enable_file_checkpointing first')
-        from pickle import load 
-        path = self.ckpt_path.path(step)
-        try:
-            with open(path, 'rb') as fp:
-                ckpt = load(fp)
-        except IOError:
-            raise RuntimeError('Cannot find checkpoint file {}'.format(path))
-        except UnpicklingError:
-            raise RuntimeError('Checkpoint file {} is not a valid pickle file.'.format(path))
-        
-        return ckpt
-
-
-    def ckpt_to_file(self, ckpt, step):
-        '''Save ckpt to disk, using the preset checkpointing details and step
-        as a naming scheme.  self.enable_file_checkpointing must be called first.'''
-        if not self.ckpt_path.enabled:
-            raise RuntimeError('Must call self.enable_file_checkpointing first')
-        from pickle import dump
-        path = self.ckpt_path.path(step)
-        try:
-            with open(path, 'wb') as fp:
-                dump(ckpt, fp)
-        except IOError:
-            raise RuntimeError('Cannot write a file named {}'.format(path))
-
+        self.sample_catalog = state_dict['sample_catalog'] 
 
     def _wav_gen_fn(self, pos):
         '''random order generation of one epoch of whole wav files.'''
@@ -330,4 +296,39 @@ class WavSlices(object):
 
         return gen_fn(self._slice_gen_fn())
 
+def parse_sample_catalog(sam_file):
+    try:
+        sample_catalog = []
+        with open(sam_file) as sam_fh:
+            for s in sam_fh.readlines():
+                (vid, wav_path) = s.strip().split('\t')
+                sample_catalog.append([int(vid), wav_path])
+    except (FileNotFoundError, IOError):
+        raise RuntimeError("Couldn't open or read samples file {}".format(sam_file))
+    return sample_catalog
+
+
+def load(path):
+    '''Parse a checkpoint file, identified by step and the preset
+    checkpointing details, returning a Checkpoint object.'''
+    from pickle import load 
+    try:
+        with open(path, 'rb') as fp:
+            state = load(fp)
+    except IOError:
+        raise RuntimeError('Cannot find checkpoint file {}'.format(path))
+    except UnpicklingError:
+        raise RuntimeError('Checkpoint file {} is not a valid pickle file.'.format(path))
+    
+    return state 
+
+def save(state, path):
+    '''Save ckpt to disk, using the preset checkpointing details and step
+    as a naming scheme.'''
+    from pickle import dump
+    try:
+        with open(path, 'wb') as fp:
+            dump(state, fp)
+    except IOError:
+        raise RuntimeError('Cannot write a file named {}'.format(path))
 

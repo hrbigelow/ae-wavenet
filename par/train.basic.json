@@ -1,5 +1,5 @@
 {
-    "n_batch": 64,
+    "n_batch": 16,
     "n_sam_per_slice": 100,
     "frac_permutation_use": 0.1,
     "requested_wav_buf_sz": 1e7,

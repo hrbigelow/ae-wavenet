@@ -10,13 +10,13 @@ def _validate_checkpoint_info(ckpt_dir, ckpt_file_template):
         raise ValueError('Cannot read and write checkpoint directory {}'.format(ckpt_dir))
     # test if ckpt_file_template is valid  
     try:
-        test_file = ckpt_file_template.format(1000)
+        test_file = ckpt_file_template.replace('%', '1000')
     except IndexError:
         test_file = ''
-    # '1000' is 2 longer than '{}'
-    if len(test_file) != len(ckpt_file_template) + 2:
+    # '1000' is 3 longer than '%'
+    if len(test_file) != len(ckpt_file_template) + 3:
         raise ValueError('Checkpoint template "{}" ill-formed. ' 
-                '(should have exactly one "{{}}")'.format(ckpt_file_template))
+                '(should have exactly one "%")'.format(ckpt_file_template))
     try:
         test_path = '{}/{}'.format(ckpt_dir, test_file)
         if not os.access(test_path, os.R_OK):
@@ -28,21 +28,19 @@ def _validate_checkpoint_info(ckpt_dir, ckpt_file_template):
 
 
 class CheckpointPath(object):
-    def __init__(self):
-        self.dir = None
-        self.file_template = None
-        self.enabled = False
-
-    def enable(self, _dir, file_template):
-        _validate_checkpoint_info(_dir, file_template)
-        self.dir = _dir
-        self.file_template = file_template
-        self.enabled = True
+    def __init__(self, path_template):
+        import os.path
+        _dir = os.path.dirname(path_template) 
+        _base = os.path.basename(path_template)
+        if _dir == '' or _base == '':
+            raise ValueError('path_template "{}" does not contain both '
+                    'directory and file'.format(path_template))
+        self.dir = _dir.rstrip('/')
+        self.file_template = _base 
+        _validate_checkpoint_info(self.dir, self.file_template)
 
     def path(self, step):
-        if not self.enabled:
-            raise RuntimeError('Must call enable first.')
-        return '{}/{}'.format(self.dir, self.file_template.format(step))
+        return '{}/{}'.format(self.dir, self.file_template.replace('%', str(step)))
 
 
 def mu_encode_np(x, n_quanta):
