@@ -79,8 +79,9 @@ cold.add_argument('--bn-n-out', '-bo', type=int, metavar='INT', default=64,
 # Decoder architectural parameters
 cold.add_argument('--dec-filter-sz', '-dfs', type=int, metavar='INT', default=2,
         help='decoder number of dilation kernel elements')
-cold.add_argument('--dec-n-lc-in', '-dli', type=int, metavar='INT', default=-1,
-        help='decoder number of local conditioning input channels')
+# !!! This is set equal to --bn-n-out
+#cold.add_argument('--dec-n-lc-in', '-dli', type=int, metavar='INT', default=-1,
+#        help='decoder number of local conditioning input channels')
 cold.add_argument('--dec-n-lc-out', '-dlo', type=int, metavar='INT', default=-1,
         help='decoder number of local conditioning output channels')
 cold.add_argument('--dec-n-res', '-dnr', type=int, metavar='INT', default=-1,

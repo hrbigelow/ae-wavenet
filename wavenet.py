@@ -280,18 +280,6 @@ class WaveNet(nn.Module):
         self.logsoftmax = nn.LogSoftmax(2) # (B, T, C)
         self.rf = parent_rf
 
-    def one_hot(self, wav_compand):
-        '''wav_compand: (B, T)
-        B: n_batch
-        T: n_timesteps
-        Q: n_quant
-        returns: (B, Q, T)
-        '''
-        if self.quant_onehot is None:
-            self.quant_onehot = torch.eye(self.n_quant, device=wav_compand.device)
-
-        return util.gather_md(self.quant_onehot, 0, wav_compand.long()).transpose(1, 2)
-
     def forward(self, wav_onehot, lc_sparse, speaker_inds):
         '''
         B: n_batch (# of separate wav streams being processed)

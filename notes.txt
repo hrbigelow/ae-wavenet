@@ -821,4 +821,19 @@ Now, need to encapsulate the loading and saving of the whole thing.  This could
 be done in a class that brings together the model and data. 
 
 
+The basic problem is that I would like a one-stage initialization of modules,
+and for shape inference and device inference to happen.  The problem is that
+this breaks if
 
+What do we need?
+
+1. member variables quant_pred_snip and wav_compand_out_snip
+2. method to update them
+3. method to return the loss
+4. method to return some other "loss" or metric
+
+Snippet from lb-wavenet:
+diffs = tf.argmax(shift_input, 2, output_type=tf.int32) \
+        - tf.argmax(logits_out_clip, 2, output_type=tf.int32)
+avg_diff = tf.reduce_mean(tf.abs(diffs * use_mask))
+ 

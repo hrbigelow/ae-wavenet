@@ -3,18 +3,6 @@ from functools import total_ordering
 from sys import stderr
 import util
 
-def _greatest_lower_bound(a, q): 
-    '''return largest i such that a[i] <= q.  assume a is sorted.
-    if q < a[0], return -1'''
-    l, u = 0, len(a) - 1 
-    while (l < u): 
-        m = u - (u - l) // 2 
-        if a[m] <= q: 
-            l = m 
-        else: 
-            u = m - 1 
-    return l or -1 + (a[l] <= q) 
-
 
 class VirtualPermutation(object):
     # closest primes to 2^1, ..., 2^40, generated with:
@@ -29,24 +17,21 @@ class VirtualPermutation(object):
             8589934609, 17179869209, 34359738421, 68719476767, 137438953481,
             274877906951, 549755813911, 1099511627791]
 
-
     @classmethod
-    def n_items(cls, requested_n_items):
-        ind = _greatest_lower_bound(cls.primes, requested_n_items)
+    def compute_n_items(cls, requested_n_items):
+        ind = util.greatest_lower_bound(cls.primes, requested_n_items)
         if ind == -1:
             raise InvalidArgument
         return cls.primes[ind]
 
-
     def __init__(self, rand_state, requested_n_items):
         self.rand_state = rand_state
-        self.n_items = self.n_items(requested_n_items)
+        self.n_items = self.compute_n_items(requested_n_items)
 
     def permutation_gen_fn(self, beg, cnt):
         '''
         # Generate cnt elements of a random permutation of [0, self.n_items) 
         # beg is the logical position *within* the virtual permutation.
-        # beg can be None, which means there is no previous checkpoint.
         # cnt is the number of positions to return
         From accepted answer:
         https://math.stackexchange.com/questions/2522177/ \
@@ -55,7 +40,16 @@ class VirtualPermutation(object):
         for n in reversed(self.primes):
             if n <= self.n_items:
                 break
-        assert beg <= n and cnt >= 0 and beg + cnt <= n
+        if beg > n:
+            raise RuntimeError('permutation_gen_fn: starting position {} '
+                    'greater than total capacity {}'.format(beg, n))
+        if cnt < 0:
+            raise RuntimeError('permutation_gen_fn: cnt must be >= 0.  got '
+                    '{}'.format(cnt))
+        if beg + cnt > n:
+            raise RuntimeError('permutation_gen_fn: last element {} would '
+                    'exceed capacity {}'.format(beg + cnt, n))
+
         a = self.rand_state.randint(0, n, 1, dtype='int64')[0]
         # We choose a range not too close to 0 or n, so that we get a
         # moderately fast moving circle.
@@ -107,7 +101,7 @@ class WavSlices(object):
     a user-specified amount of memory.
 
     2.  Yield slices from that buffer in a random permutation ordering.  Only a
-    fraction of all possible slices, set by frac_permutation_use, is yielded.
+    fraction of all possible slices, set by frac_perm_use, is yielded.
 
     3.  Once this fraction is yielded, the wav buffer is reloaded with the next
     available wav files, and the process is repeated.
@@ -117,18 +111,19 @@ class WavSlices(object):
     resemble a globally random order across the whole data set.
 
     Also, if the user memory (requested_wav_buf_sz) is as large as the full
-    data set, then the order will be globally random, and frac_permutation_use
+    data set, then the order will be globally random, and frac_perm_use
     should be set to 1 in order to minimize buffer reloads.
     '''
 
-    def __init__(self, sample_catalog, sample_rate, frac_permutation_use):
+    def __init__(self, sample_catalog, sample_rate, frac_perm_use, req_wav_buf_sz):
         '''
         '''
         self.sample_rate = sample_rate
-        if frac_permutation_use <= 0 or frac_permutation_use > 1.0:
+        if frac_perm_use <= 0 or frac_perm_use > 1.0:
             raise ValueError
 
-        self.frac_perm_use = frac_permutation_use
+        self.frac_perm_use = frac_perm_use
+        self.req_wav_buf_sz = req_wav_buf_sz
         self.rand_state = np.random.mtrand.RandomState()
         self.wav_gen = None
         
@@ -152,11 +147,11 @@ class WavSlices(object):
     def num_speakers(self):
         return len(self.speaker_ids())
 
-    def set_geometry(self, n_batch, slice_size, n_sam_per_slice, wav_buf_sz_req):
+    def set_geometry(self, n_batch, slice_size, n_sam_per_slice):
         self.n_batch = n_batch
         self.n_sample_win = n_sam_per_slice
         self.slice_size = slice_size 
-        est_n_slices = int(wav_buf_sz_req / self.n_sample_win)
+        est_n_slices = int(self.req_wav_buf_sz / self.n_sample_win)
         self.perm = VirtualPermutation(self.rand_state, est_n_slices)
 
     # The following four functions implement the transitions:
@@ -172,7 +167,8 @@ class WavSlices(object):
                 self.lead_wavgen_pos, self.perm_gen_pos)
         state_dict['sample_catalog'] = self.sample_catalog
         state_dict['sample_rate'] = self.sample_rate
-        state_dict['frac_permutation_use'] = self.frac_perm_use
+        state_dict['frac_perm_use'] = self.frac_perm_use
+        state_dict['req_wav_buf_sz'] = self.req_wav_buf_sz
 
         return state_dict
 
@@ -193,7 +189,6 @@ class WavSlices(object):
         self.wavgen_pos = pos
 
         def gen_fn():
-
             shuffle_index = self.rand_state.permutation(len(self.sample_catalog))
             shuffle_catalog = [self.sample_catalog[i] for i in shuffle_index] 
             for iter_pos, s in enumerate(shuffle_catalog[pos:], pos):
@@ -204,6 +199,7 @@ class WavSlices(object):
                 yield iter_pos, vid, wav
 
             # Completed a full epoch
+            print('Data: finished epoch {}'.format(self.current_epoch), file=stderr)
             self.current_epoch += 1
 
         return gen_fn()
@@ -241,14 +237,13 @@ class WavSlices(object):
             self.wav_ids.append(vid)
             self.vstart.append(vpos)
             vpos += len(wav) - self.slice_size
+        print('Data: loaded wav buffer', file=stderr)
 
 
     def _slice_gen_fn(self):
         '''Extracts slices from the wav buffer (see self._load_wav_buffer) in 
         a random permutation ordering.  Only extracts a fraction of the total
         available slices (set by self.frac_perm_use) before exhausting.
-        of the 
-
         '''
         self._load_wav_buffer()
         if self.perm_gen_pos is None:
@@ -259,7 +254,7 @@ class WavSlices(object):
                     int(self.perm.n_items * self.frac_perm_use))
             for iter_pos, vind in perm_gen:
                 vpos = self.offset + vind * self.n_sample_win
-                wav_file_ind = _greatest_lower_bound(self.vstart, vpos)
+                wav_file_ind = util.greatest_lower_bound(self.vstart, vpos)
                 wav_off = vpos - self.vstart[wav_file_ind]
 
                 # self.perm_gen_pos gives the position that will be yielded next

@@ -38,7 +38,7 @@ def main():
 
         state = checkpoint.State(0, pre_params, enc_params, bn_params,
                 dec_params, sample_catalog, pre_params['sample_rate'],
-                opts.frac_permutation_use)
+                opts.frac_permutation_use, opts.requested_wav_buf_sz)
         state.build()
 
         print('Initializing model parameters', file=stderr)
@@ -52,7 +52,7 @@ def main():
     state.model.set_geometry(opts.n_sam_per_slice)
 
     state.data.set_geometry(opts.n_batch, state.model.input_size,
-            state.model.output_size, opts.requested_wav_buf_sz)
+            state.model.output_size)
 
     state.model.to(device=opts.device)
 
@@ -65,22 +65,42 @@ def main():
 
     # Initialize optimizer
     model_params = state.model.parameters()
-    loss_fcn = state.model.loss_factory(state.data.batch_slice_gen_fn(), opts.device)
+    metrics = ae.Metrics(state.model)
+    batch_gen = state.data.batch_slice_gen_fn()
+
+    #loss_fcn = state.model.loss_factory(state.data.batch_slice_gen_fn())
 
     # Start training
     print('Starting training...', file=stderr)
+    print("Step\tLoss\tAvgProbTarget\tPeakDist\tAvgMax", file=stderr)
 
     learning_rates = dict(zip(opts.learning_rate_steps, opts.learning_rate_rates))
     start_step = state.step
+    if start_step not in learning_rates:
+        ref_step = util.greatest_lower_bound(opts.learning_rate_steps, start_step)
+        optim = torch.optim.Adam(params=model_params,
+                lr=learning_rates[ref_step])
+
     while state.step < opts.max_steps:
         if state.step in learning_rates:
             optim = torch.optim.Adam(params=model_params,
                     lr=learning_rates[state.step])
-        loss = optim.step(loss_fcn)
+        # If you get:
+        # If FutureWarning: Using a non-tuple sequence for multidimensional...
+        # do pip install --upgrade scipy
+        # to upgrade to scipy 1.2
+        metrics.update(batch_gen)
+        loss = optim.step(metrics.loss)
+        avg_peak_dist = metrics.peak_dist()
+        avg_max = metrics.avg_max()
+        avg_prob_target = metrics.avg_prob_target()
 
+        # Progress reporting
         if state.step % opts.progress_interval == 0:
-            print('Step {}, Loss: {}'.format(state.step, loss))
+            fmt = "{}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
+            print(fmt.format(state.step, loss, avg_prob_target, avg_peak_dist, avg_max))
 
+        # Checkpointing
         if state.step % opts.save_interval == 0 and state.step != start_step:
             ckpt_file = ckpt_path.path(state.step)
             state.save(ckpt_file)

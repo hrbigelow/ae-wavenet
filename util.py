@@ -94,3 +94,15 @@ def gather_md(input, dim, index):
     output_shape = index_shape + [input_shape[i] for i in range(len(input_shape)) if i != dim]
     return x.reshape(output_shape) 
 
+def greatest_lower_bound(a, q): 
+    '''return largest i such that a[i] <= q.  assume a is sorted.
+    if q < a[0], return -1'''
+    l, u = 0, len(a) - 1 
+    while (l < u): 
+        m = u - (u - l) // 2 
+        if a[m] <= q: 
+            l = m 
+        else: 
+            u = m - 1 
+    return l or -1 + (a[l] <= q) 
+

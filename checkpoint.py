@@ -6,7 +6,7 @@ class State(object):
     '''Encapsulates full state of training'''
     def __init__(self, step=0, pre_params=None, enc_params=None,
             bn_params=None, dec_params=None, sample_catalog=None,
-            sample_rate=None, frac_perm_use=None):
+            sample_rate=None, frac_perm_use=None, req_wav_buf_sz=None):
         self.model = None
         self.data = None
         self.step = step
@@ -17,14 +17,16 @@ class State(object):
         self.sample_catalog = sample_catalog
         self.sample_rate = sample_rate
         self.frac_perm_use = frac_perm_use
+        self.req_wav_buf_sz = req_wav_buf_sz
 
     def build(self):
         if (self.sample_catalog is None
                 or self.sample_rate is None
-                or self.frac_perm_use is None):
+                or self.frac_perm_use is None
+                or self.req_wav_buf_sz is None):
             raise RuntimeError('Cannot build without fully initialized State')
         self.data = data.WavSlices(self.sample_catalog, self.sample_rate,
-                self.frac_perm_use)
+                self.frac_perm_use, self.req_wav_buf_sz)
 
         if (self.pre_params is None
                 or self.enc_params is None
@@ -32,8 +34,8 @@ class State(object):
                 or self.dec_params is None):
             raise RuntimeError('Cannot build without fully initialized State')
         self.dec_params['n_speakers'] = self.data.num_speakers()
-        self.model = model.AutoEncoder(self.pre_params, self.enc_params, self.bn_params,
-                self.dec_params)
+        self.model = model.AutoEncoder(self.pre_params, self.enc_params,
+                self.bn_params, self.dec_params)
 
     def load(self, ckpt_file):
         sinfo = torch.load(ckpt_file)
@@ -48,6 +50,7 @@ class State(object):
         self.sample_catalog = dstate['sample_catalog']
         self.sample_rate = dstate['sample_rate']
         self.frac_perm_use = dstate['frac_perm_use']
+        self.req_wav_buf_sz = dstate['req_wav_buf_sz']
 
         self.build()
 

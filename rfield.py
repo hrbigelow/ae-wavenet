@@ -260,9 +260,9 @@ class Rfield(object):
 
     def gen_stats(self, n_out_el, stop_at=None, out_spc=1, out_vspc=1, l_out_pos=0,
             r_out_pos=0, prev_stat=None):
-        '''Return stats, an array of items which describe each tensor produced
-        in the chain of transformations.  If any transformation leads to a
-        zero-length or negative-length tensor, raise exception'''
+        '''Populate stats members of this chain of transformations.  If any
+        transformation leads to a zero-length or negative-length tensor, raise
+        exception'''
         depth = self._resolve_stop(stop_at)
 
         if prev_stat is None:

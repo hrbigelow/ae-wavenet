@@ -39,4 +39,3 @@ class AE(nn.Module):
         out = self.linear(x)
         return out
 
-
