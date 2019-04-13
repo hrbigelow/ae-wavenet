@@ -15,17 +15,6 @@ train.add_argument('--n-batch', '-nb', type=int, metavar='INT',
         default=16, help='Batch size')
 train.add_argument('--n-sam-per-slice', '-nw', type=int, metavar='INT',
         default=100, help='# of consecutive window samples in one slice' )
-train.add_argument('--frac-permutation-use', '-fpu', type=float,
-        metavar='FLOAT', default=0.1,
-        help='Fraction of each random data permutation to '
-        'use.  Lower fraction causes more frequent reading of data from '
-        'disk, but more globally random order of data samples presented '
-        'to the model')
-train.add_argument('--requested-wav-buf-sz', '-rws', type=int,
-        metavar='INT', default=1e7,
-        help='Size in bytes of the total memory available '
-        'to buffer training data.  A higher value will minimize re-reading '
-        'of data and allow more globally random sample order')
 train.add_argument('--max-steps', '-ms', type=int, metavar='INT', default=1e20,
         help='Maximum number of training steps')
 train.add_argument('--save-interval', '-si', type=int, default=1000, metavar='INT',
@@ -52,6 +41,19 @@ cold.add_argument('--arch-file', '-af', type=str, metavar='ARCH_FILE',
         help='INI file specifying architectural parameters')
 cold.add_argument('--train-file', '-tf', type=str, metavar='TRAIN_FILE',
         help='INI file specifying training and other hyperparameters')
+
+# Data generation options
+cold.add_argument('--frac-permutation-use', '-fpu', type=float,
+        metavar='FLOAT', default=0.1,
+        help='Fraction of each random data permutation to '
+        'use.  Lower fraction causes more frequent reading of data from '
+        'disk, but more globally random order of data samples presented '
+        'to the model')
+cold.add_argument('--requested-wav-buf-sz', '-rws', type=int,
+        metavar='INT', default=1e7,
+        help='Size in bytes of the total memory available '
+        'to buffer training data.  A higher value will minimize re-reading '
+        'of data and allow more globally random sample order')
 
 # Preprocessing parameters
 cold.add_argument('--pre-sample-rate', '-sr', type=int, metavar='INT', default=16000,

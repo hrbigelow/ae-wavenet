@@ -67,7 +67,12 @@ class AutoEncoder(nn.Module):
     Full Autoencoder model
     '''
     def __init__(self, pre_params, enc_params, bn_params, dec_params):
+        self.args = [pre_params, enc_params, bn_params, dec_params]
+        self._initialize()
+
+    def _initialize(self):
         super(AutoEncoder, self).__init__() 
+        pre_params, enc_params, bn_params, dec_params = self.args
 
         # the "preprocessing"
         self.preprocess = PreProcess(pre_params, n_quant=dec_params['n_quant'])
@@ -92,6 +97,15 @@ class AutoEncoder(nn.Module):
                 n_lc_in=bn_params['n_out'])
 
         self.rf = self.decoder.rf
+
+    def __getstate__(self):
+        state = { 'args': self.args, 'state_dict': self.state_dict() }
+        return state 
+
+    def __setstate__(self, state):
+        self.args = state['args']
+        self._initialize()
+        self.load_state_dict(state['state_dict'])
 
     def set_geometry(self, n_sam_per_slice_req):
         '''Compute the relationship between the encoder input, decoder input,

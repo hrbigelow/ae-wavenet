@@ -1,5 +1,4 @@
 import torch
-import wave_encoder as we
 import model as ae
 import data as D 
 import util
@@ -30,19 +29,24 @@ def main():
 
     # Construct model
     if mode == 'new':
+        # Initialize model
         pre_params = parse_tools.get_prefixed_items(vars(opts), 'pre_')
         enc_params = parse_tools.get_prefixed_items(vars(opts), 'enc_')
         bn_params = parse_tools.get_prefixed_items(vars(opts), 'bn_')
         dec_params = parse_tools.get_prefixed_items(vars(opts), 'dec_')
+
+        # Initialize data
         sample_catalog = D.parse_sample_catalog(opts.sam_file)
-
-        state = checkpoint.State(0, pre_params, enc_params, bn_params,
-                dec_params, sample_catalog, pre_params['sample_rate'],
+        data = D.WavSlices(sample_catalog, pre_params['sample_rate'],
                 opts.frac_permutation_use, opts.requested_wav_buf_sz)
-        state.build()
+        dec_params['n_speakers'] = data.num_speakers()
 
+        model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params)
         print('Initializing model parameters', file=stderr)
-        state.model.initialize_weights()
+        model.initialize_weights()
+
+        # Construct overall state
+        state = checkpoint.State(0, model, data)
 
     else:
         state = checkpoint.State()
@@ -85,10 +89,7 @@ def main():
         if state.step in learning_rates:
             optim = torch.optim.Adam(params=model_params,
                     lr=learning_rates[state.step])
-        # If you get:
-        # If FutureWarning: Using a non-tuple sequence for multidimensional...
-        # do pip install --upgrade scipy
-        # to upgrade to scipy 1.2
+        # do 'pip install --upgrade scipy' if you get 'FutureWarning: ...'
         metrics.update(batch_gen)
         loss = optim.step(metrics.loss)
         avg_peak_dist = metrics.peak_dist()

@@ -837,3 +837,42 @@ diffs = tf.argmax(shift_input, 2, output_type=tf.int32) \
         - tf.argmax(logits_out_clip, 2, output_type=tf.int32)
 avg_diff = tf.reduce_mean(tf.abs(diffs * use_mask))
  
+
+
+Do we need multiple random states for the different generators?
+
+
+The purpose of the _initialize() function is to consolidate all redundant
+code that should be executed both in __init__ and __setstate__.
+
+_initialize() doesn't really need to be a zero-argument function.
+
+
+First thing we need to sort out is, what information is needed to store the state
+of the data module?
+
+what uses a random state?
+VirtualPermutation
+_wav_gen_fn
+_load_wav_buffer
+
+
+_wav_gen 
+
+_wav_gen is a single-pass random permutation of all wav files.  a new wav_gen
+is created during _load_wav_buffer when it runs out.
+
+_slice_gen_fn first calls _load_wav_buffer, and then yields a set fraction of
+slices from it.
+
+When we pickle a WavSlices instance, we will redo the last call of _load_wav_buffer,
+so, the random seed used when it is called is remembered in the variable 
+
+
+What happens in __init__?
+
+the four member variables are set from the arguments (or derived information),
+while another 11 are set to particular values.
+
+In __setstate__, we have a different set of values that need to be set.  However,
+we first want to execute the same code as init.
