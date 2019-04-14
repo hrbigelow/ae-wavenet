@@ -18,7 +18,8 @@ class ConvReLURes(nn.Module):
         self.n_in = n_in_chan
         self.n_out = n_out_chan
         self.conv = nn.Conv1d(n_in_chan, n_out_chan, filter_sz, stride, padding=0)
-        self.relu = nn.ReLU(inplace=True)
+        #self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU()
 
         self.rf = rfield.Rfield(filter_info=filter_sz, stride=stride,
                 parent=parent_rf, name=name)
@@ -64,9 +65,9 @@ class Encoder(nn.Module):
 
     def forward(self, mels):
         '''
-        B, T = n_batch, timesteps 
-        wav: (B, T) (torch.tensor)
-        outputs: (B, T)
+        B, M, C, T = n_batch, n_mels, n_channels, n_timesteps 
+        mels: (B, M, T) (torch.tensor)
+        outputs: (B, C, T)
         '''
         assert self.beg_rf.src.nv == mels.shape[2]
         out = self.net(mels)

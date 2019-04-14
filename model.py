@@ -172,8 +172,9 @@ class AutoEncoder(nn.Module):
 
 class Metrics(object):
     '''Manage running the model and saving output and target state'''
-    def __init__(self, model):
+    def __init__(self, model, optim):
         self.model = model
+        self.optim = optim
         self.pred = None
         self.target = None
         self.loss_fn = torch.nn.CrossEntropyLoss()
@@ -190,7 +191,10 @@ class Metrics(object):
         '''This is the closure needed for the optimizer'''
         if self.pred is None or self.target is None:
             raise RuntimeError('Must call update() first')
-        return self.loss_fn(self.pred, self.target)
+        self.optim.zero_grad()
+        loss = self.loss_fn(self.pred, self.target)
+        loss.backward()
+        return loss
     
     def peak_dist(self):
         '''Average distance between the indices of the peaks in pred and

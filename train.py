@@ -41,6 +41,7 @@ def main():
                 opts.frac_permutation_use, opts.requested_wav_buf_sz)
         dec_params['n_speakers'] = data.num_speakers()
 
+        #with torch.autograd.set_detect_anomaly(True):
         model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params)
         print('Initializing model parameters', file=stderr)
         model.initialize_weights()
@@ -69,7 +70,7 @@ def main():
 
     # Initialize optimizer
     model_params = state.model.parameters()
-    metrics = ae.Metrics(state.model)
+    metrics = ae.Metrics(state.model, None)
     batch_gen = state.data.batch_slice_gen_fn()
 
     #loss_fcn = state.model.loss_factory(state.data.batch_slice_gen_fn())
@@ -77,21 +78,22 @@ def main():
     # Start training
     print('Starting training...', file=stderr)
     print("Step\tLoss\tAvgProbTarget\tPeakDist\tAvgMax", file=stderr)
+    stderr.flush()
 
     learning_rates = dict(zip(opts.learning_rate_steps, opts.learning_rate_rates))
     start_step = state.step
     if start_step not in learning_rates:
         ref_step = util.greatest_lower_bound(opts.learning_rate_steps, start_step)
-        optim = torch.optim.Adam(params=model_params,
+        metrics.optim = torch.optim.Adam(params=model_params,
                 lr=learning_rates[ref_step])
 
     while state.step < opts.max_steps:
         if state.step in learning_rates:
-            optim = torch.optim.Adam(params=model_params,
+            metrics.optim = torch.optim.Adam(params=model_params,
                     lr=learning_rates[state.step])
         # do 'pip install --upgrade scipy' if you get 'FutureWarning: ...'
         metrics.update(batch_gen)
-        loss = optim.step(metrics.loss)
+        loss = metrics.optim.step(metrics.loss)
         avg_peak_dist = metrics.peak_dist()
         avg_max = metrics.avg_max()
         avg_prob_target = metrics.avg_prob_target()
@@ -99,7 +101,9 @@ def main():
         # Progress reporting
         if state.step % opts.progress_interval == 0:
             fmt = "{}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
-            print(fmt.format(state.step, loss, avg_prob_target, avg_peak_dist, avg_max))
+            print(fmt.format(state.step, loss, avg_prob_target, avg_peak_dist,
+                avg_max), file=stderr)
+            stderr.flush()
 
         # Checkpointing
         if state.step % opts.save_interval == 0 and state.step != start_step:

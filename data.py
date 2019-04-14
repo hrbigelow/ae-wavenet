@@ -2,6 +2,8 @@ import numpy as np
 from sys import stderr
 import util
 import librosa
+# If you get 'NoBackendError' exception, try
+# sudo apt-get install libav-tools
 
 class VirtualPermutation(object):
     # closest primes to 2^1, ..., 2^40, generated with:
