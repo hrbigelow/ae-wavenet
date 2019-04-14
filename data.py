@@ -221,7 +221,7 @@ class WavSlices(object):
             self.wav_ids.append(vid)
             self.vstart.append(vpos)
             vpos += len(wav) - self.slice_size
-        print('Data: loaded wav buffer', file=stderr)
+        # print('Data: loaded wav buffer', file=stderr)
 
     def _slice_gen_fn(self):
         '''Extracts slices from the wav buffer (see self._load_wav_buffer) in 
