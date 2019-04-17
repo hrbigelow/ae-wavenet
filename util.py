@@ -79,20 +79,78 @@ def mu_decode_torch(quant, n_quanta):
     x = torch.sign(a) * ((1 + mu)**torch.abs(a) - 1) * inv_mu
     return x
 
-def gather_md(input, dim, index):
-    '''
-    Creats a new tensor by replacing each scalar value s in index[...]
-    with a subtensor input[:,:,...,s,...], where s is the dim'th dimension.
+"""
+torch.index_select(input, d, query), expressed as SQL:
 
-    The resulting gathered tensor has dimensions:
+d: integer in (1..k)
+input: i_(1..k), ival
+query: q_1, qval
 
-    **index.shape + **input_shape_without_dim
+SELECT (i_1..i_k q_1/i_d), ival
+from input, query
+where i_d = qval
+
+notation: (1..k q/d) means "values 1 through k, replacing d with q"
+"""
+
+def gather_md(input, dim, query):
     '''
-    x = torch.index_select(input, dim, index.flatten())
-    input_shape = list(input.shape)
-    index_shape = list(index.shape)
-    output_shape = index_shape + [input_shape[i] for i in range(len(input_shape)) if i != dim]
-    return x.reshape(output_shape) 
+    You can view a K-dimensional tensor entry: input[i1,i2,...,ik] = cell_value
+    as a SQL table record with fields        : i1, i2, ..., ik, cell_value
+    
+    Then, this function logically executes the following query:
+
+    d: integer in (1..k)
+    input: i_1, i_2, ..., i_k, ival
+    query: q_1, q_2, ..., q_m, qval
+
+    SELECT i_(1..k / d), q_(1..m), ival
+    from input, query
+    where i_d = qval
+
+    (1..k / d) means "values 1 through k, excluding d"
+
+    It is the same as torch.index_select, except that 'query' may have more
+    than one dimension, and its dimension(s) are placed at the end of the
+    result tensor rather than replacing input dimension 'dim'
+    '''
+    if not 0 <= dim < len(input.size()):
+        raise ValueError('dim {} must be in [0, {})'.format(dim, len(input.size())))
+
+    # Q = prod(q_(1..m))
+    # x: (i_1..i_k Q/i_d)
+    k = len(input.size())
+    x = torch.index_select(input, dim, query.flatten())
+
+    # x_perm: (i_1..i_k / q) + Q.  In other words, move dimension Q to the end
+    x_perm = x.permute(tuple(range(dim)) + tuple(range(dim+1, k)) + (dim,))
+
+    # for example, expand (i_1, i_2, i_3, Q) to (i_1, i_2, i_3, q_1, q_2, q_3)
+    out_size = input.size()[:dim] + input.size()[dim+1:] + query.size()
+    return x_perm.reshape(out_size) 
+
+
+def take_md(input, dim, query):
+    '''
+    Using the same conventions as gather_md execute the SQL query:
+
+    d: integer in (1..k)
+    Input: i_(1..k), ival
+    Query: q_(1..k / d), qval
+    NOTE: max(q_l) == max(i_l) for all l in (1..k / d)
+
+    SELECT i_(1..k / d), ival
+    from input, query
+    where i_d = qval 
+    and i_l = q_l for l in (1..k / d)
+
+    Note that 'query' has one fewer dimension as input, and its dimension sizes
+    must correspond one-for-one with input's dimensions after dim is removed.
+
+    The result will have the same dimension as input, but with dim removed.
+    '''
+
+
 
 def greatest_lower_bound(a, q): 
     '''return largest i such that a[i] <= q.  assume a is sorted.

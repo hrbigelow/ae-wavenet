@@ -9,6 +9,10 @@ This is a PyTorch implementation of https://arxiv.org/abs/1901.08810.
 Began training on Librispeech dev (http://www.openslr.org/resources/12/dev-clean.tar.gz),
 see dat/example\_train.log
 
+# TODO
+1. VAE and VQVAE versions of the bottleneck / training objectives
+2. Inference mode
+ 
 # Example training setup
 
 ```sh

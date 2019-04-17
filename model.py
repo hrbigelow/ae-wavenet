@@ -86,10 +86,13 @@ class AutoEncoder(nn.Module):
     
         if bn_type == 'vqvae':
             self.bottleneck = bn.VQVAE(**bn_extra, n_in=enc_params['n_out'])
+            self.objective = None
         elif bn_type == 'vae':
             self.bottleneck = bn.VAE(**bn_extra, n_in=enc_params['n_out'])
+            self.objective = bn.SGVB(self.bottleneck)
         elif bn_type == 'ae':
             self.bottleneck = bn.AE(**bn_extra, n_in=enc_params['n_out'])
+            self.objective = torch.CrossEntropyLoss()
         else:
             raise InvalidArgument 
 
@@ -177,7 +180,6 @@ class Metrics(object):
         self.optim = optim
         self.pred = None
         self.target = None
-        self.loss_fn = torch.nn.CrossEntropyLoss()
         self.softmax = torch.nn.Softmax(1)
 
     def update(self, batch_gen):

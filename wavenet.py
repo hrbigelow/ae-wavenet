@@ -283,16 +283,14 @@ class WaveNet(nn.Module):
     def forward(self, wav_onehot, lc_sparse, speaker_inds):
         '''
         B: n_batch (# of separate wav streams being processed)
-        N: n_win (# consecutive samples processed in one batch channel)
-        R: wav receptive field 
-        T: local conditioning receptive field 
-        uf: upsampling_factor
+        T1: n_wav_timesteps
+        T2: n_conditioning_timesteps
         I: n_in
         L: n_lc_in
         Q: n_quant
 
-        wav: (B, I, R)
-        lc: (B, L, T//uf)
+        wav: (B, Q, T1)
+        lc: (B, L, T2)
         speaker_inds: (B, T)
         outputs: (B, N, Q)
         '''

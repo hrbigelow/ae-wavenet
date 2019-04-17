@@ -876,3 +876,180 @@ while another 11 are set to particular values.
 
 In __setstate__, we have a different set of values that need to be set.  However,
 we first want to execute the same code as init.
+
+
+The AE bottleneck simply does an affine transformation of the encoder input
+down from 768 to 64 dimensions.  On the other hand, the VAE first does an
+affine transform down from 768 dimensions to 128 dimensions.  These are then
+split into two groups of 64 - the (mu, sigma) parameters for a 64-dimensional
+multivariate gaussian.
+
+We now need a generator for the epsilon variable from the VAE Kingma paper.
+These are the samples from the standard multivariate normal.  kj
+
+What is the difference between:
+
+event_shape:  "Shape of a single sample" (from torch.distributions.distribution.py)
+batch_shape:  "Shape over which parameters are batched"
+sample_shape:  "Used as an argument in sample() and rsample().  The docs say:
+
+"Generates a sample_shape shaped sample"
+
+So, it seems to me that what is happening is the following:
+
+At the simplest level, a multivariate distribution has some number (N) of
+dimensions, and a single "sample" from this distribution will thus have this
+number of dimensions.  A "sample" could also be called an "event".  Now, although
+mathematicians don't really think of the N dimensions as having a "shape", torch
+allows you to specify this for some reason.  I'm not sure what that really means though.
+
+
+The output of the encoder is of shape (N, T, 2*C), with N x T "samples" in a batch, and
+each sample has 2*C channels, which we can think of as a (mu, sigma) pair.
+
+Now, with the reparametrization trick, we generate a sample epsilon of shape (C), which
+is a sample from a C-dimensional standard multivariate normal N(0, I).
+
+Then, we do an affine transform on epsilon.  The odd thing about this is, I'm
+used to thinking of a linear transformation as a layer in which the
+*parameters* of the model provide the transformation matrix and the bias
+vector.  And, in this case, the activations (I), which are batched (N, T) are
+transformed all by the same transformation matrix and bias vector.
+
+But, in this case, it is the activations which are providing the transformation
+matrix and bias vector.  And, in a batch (N, T), each of these is different.
+So, the gradients will flow through this in "quite a different way".
+
+So, normally, we would have a gradient with respect to the activations, and as
+it traveled backwards through the affine transformation, there would be a
+gradient w.r.t. the transformation matrix and bias vector.  Additionally, the gradient
+also flows past the previous activation, and the process is repeated.
+
+act -> 
+        -> act ->
+par ->
+
+In this case, we have a gradient w.r.t. the samples from the bottleneck.  These
+flow back, producing a gradient w.r.t. the mu, sigma of the samples, which are
+the activations.  But, this is exactly what we need.  They won't *update* the
+parameters, because these are *not* parameters (they are activations);
+nonetheless, the parameters affecting these activations will use this gradient,
+so there is no difficulty here.
+
+What is also a bit confusing though, is that, ordinarily, the idiom in PyTorch
+is to construct the module during the construction phase, and call its
+'forward' and 'backward' methods during the inference and/or training phase.
+In this case, the module in question is torch.distributions.normal.  It *does*
+have a facility for doing 'reparameterized sampling' in its rsample() method.
+Unfortunately, though, this method only accepts the location and scale values as
+parameters during module construction time.
+
+The code (from torch.distributions.normal.py):
+ 
+def rsample(self, sample_shape=torch.Size()):
+    shape = self._extended_shape(sample_shape)
+    eps = _standard_normal(shape, dtype=self.loc.dtype, device=self.loc.device)
+    return self.loc + eps * self.scale
+ 
+What we really want is a forward() method that accepts the 
+
+
+Implementation of VAE
+
+First off, we need to distinguish between the bottleneck module and the training objective.
+The bottleneck module simply tacks on to the encoder output, and makes it stochastic.
+It adds:
+
+affine transformation that reduces dimensions from 768 to 128
+random sampling from the implied gaussian
+
+Since it is implemented as a module, and the reparameterization trick is used,
+the gradient should propagate through it just fine.
+
+
+Separately, the objective function we use is the SGVB estimator.  It is a loss
+function, and we may have to implement it as a subclass of module and write a
+custom 'backward' method.
+
+How do we deal with the case where L > 1? (L is the number of encoder samples
+per datapoint, mentioned just after equation 8 in the Kingma Welling paper)
+
+For training, the full autoencoder needs to keep track of which dimension corresponds
+with L.  The easiest thing would be to augment B.
+
+The way it would work is as follows:
+
+In the following, here are the dimension abbreviations:
+B: n_batch
+T1: n_timesteps
+C: n_input_channels
+T2: n_encoding_timesteps
+E: n_encoder_channels
+K: n_bottleneck_channels
+L: n_vae_samples_per_datapoint
+
+
+
+A batch of overlapping input waveform windows of shape (B, T1, C) would be fed
+in to the encoder, which outputs vectors of shape (B, T2, E).  These are fed
+into the bottleneck.  The VAE bottleneck could output (B * L, T2, K) or (B, L,
+T2, K).  However, the decoder is designed to accept conditioning shapes of
+wav_onehot: (B, I, T1) and lc_sparse: (B, L, T2)
+
+Should we engineer WaveNet to accept another channel?  Well, in inference mode,
+the individual Waveforms would all diverge, even if the conditioning vectors
+came from the same inputs.
+
+In teacher-forcing (training) mode, it is mildly wasteful, since we are
+duplicating the teacher L times.  However, there really isn't a choice.  Those
+values need to be broadcast at some point anyway, whether internally by the
+WaveNet module, or externally, and then fed into WaveNet.
+
+It seems like, in order to avoid a code change to WaveNet itself, which would
+be irrelevant for inference mode, the best choice is to duplicate the
+wav_onehot input L times, along the B dimension.
+
+Now, having difficulties with util.gather_md.  At first, I had thought that there was
+only one sensible design of such a "multidimensional gather", but there are a couple:
+
+Both designs interpret the element values in 'index' as index values of the 'dim' dimension
+in 'input'.  Since the 'dim' dimension of 'input' may have some size S, this implies that
+each 'select' operation retrieves a single cell among the S possible cells.
+
+However, the different design choices involve how one interprets the way the choices of
+all of the other indices (in the input and the query) are combined together.
+
+This basically boils down to a SQL query with a join condition.  I use the
+shorthand notation: (1..k / d) meaning "all values from 1 to k excluding d":
+
+
+d: integer in (1..k)
+input: i_(1..k), ival
+query: q_(1..m), qval
+
+SELECT i_(1..k / d), q_(1..m), ival
+from input, query
+where i_d = qval
+
+
+d: integer in (1..k)
+Input: i_(1..k), ival
+Query: q_(1..k / d), qval
+NOTE: max(q_l) == max(i_l) for all l in (1..k / d)
+
+SELECT i_(1..k / d), ival
+from input, query
+where i_d = qval 
+and i_l = q_l for l in (1..k / d)
+
+
+What torch.index_select does, expressed as SQL:
+
+d: integer in (1..k)
+input: i_(1..k), ival
+query: q_1, qval
+
+SELECT i_1, i_2, ..., i_(d-1), q_1, i_(d_1), ..., i_k, ival
+from input, query
+where i_d = qval
+

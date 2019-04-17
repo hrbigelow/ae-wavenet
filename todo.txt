@@ -1,3 +1,4 @@
 Write Documentation and usage examples for rfield.py
 Implement VAE and VQVAE bottlenecks
 Implement inference mode
+
