@@ -10,6 +10,7 @@ from torch.nn.modules import loss
 import rfield
 import numpy as np
 
+
 # from numpy import vectorize as np_vectorize
 class PreProcess(nn.Module):
     '''Shape tensors by appropriate offsets to feed to Loss function'''
@@ -87,12 +88,16 @@ class AutoEncoder(nn.Module):
         if bn_type == 'vqvae':
             self.bottleneck = bn.VQVAE(**bn_extra, n_in=enc_params['n_out'])
             self.objective = None
+
         elif bn_type == 'vae':
+            # mu and sigma members  
             self.bottleneck = bn.VAE(**bn_extra, n_in=enc_params['n_out'])
             self.objective = bn.SGVB(self.bottleneck)
+
         elif bn_type == 'ae':
             self.bottleneck = bn.AE(**bn_extra, n_in=enc_params['n_out'])
             self.objective = torch.CrossEntropyLoss()
+
         else:
             raise InvalidArgument 
 
@@ -194,7 +199,7 @@ class Metrics(object):
         if self.pred is None or self.target is None:
             raise RuntimeError('Must call update() first')
         self.optim.zero_grad()
-        loss = self.loss_fn(self.pred, self.target)
+        loss = self.model.objective(self.pred, self.target)
         loss.backward()
         return loss
     

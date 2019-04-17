@@ -22,6 +22,10 @@ class VAE(nn.Module):
         self.linear = nn.Conv1d(n_in, n_out * 2, 1, bias=bias)
         self.n_sam_per_datapoint = n_sam_per_datapoint
 
+        # Cache these values for later access by the objective function
+        self.mu = None
+        self.sigma = None
+
     def forward(self, x):
         # B, T, I, C: n_batch, n_timesteps, n_in_chan, n_out_chan
         # L: n_sam_per_datapoint
@@ -29,29 +33,29 @@ class VAE(nn.Module):
         # Output: (B * L, C, T)
         mu_sigma = self.linear(x)
         n_out_chan = mu_sigma.size(1) // 2
-        mu = mu_sigma[:,:n_out_chan,:]  # first half of the channels
-        sigma = mu_sigma[:,n_out_chan:,:] # second half of the channels
+        self.mu = mu_sigma[:,:n_out_chan,:]  # first half of the channels
+        self.sigma = mu_sigma[:,n_out_chan:,:] # second half of the channels
 
         # Randomness is injected here
         L = self.n_sam_per_datapoint
         sz = mu.size()
         if L == 1:
             epsilon = mu.new_empty().normal_()
-            samples = sigma * epsilon + mu 
+            samples = self.sigma * epsilon + self.mu 
         else:
             sz[0] *= L
             epsilon = mu.new_empty(sz).normal_()
-            sigma = sigma.repeat(L, 1, 1)
-            mu = mu.repeat(L, 1, 1)
-            samples = sigma * epsilon + mu
-        return samples, sigma, mu 
+            self.sigma = sigma.repeat(L, 1, 1)
+            self.mu = mu.repeat(L, 1, 1)
+            samples = self.sigma * epsilon + self.mu
+        return samples
 
 class SGVB(nn.Module):
     def __init__(self, bottleneck):
         super(SGVB, self).__init__()
         self.bottleneck = bottleneck
 
-    def forward(self, log_pred, mu, sigma, target_wav):
+    def forward(self, log_pred, target_wav):
         '''
         Compute SGVB estimator from equation 8 in
         https://arxiv.org/pdf/1312.6114.pdf
@@ -64,6 +68,8 @@ class SGVB(nn.Module):
         # mu, sigma: (B, T, K), the vectors output by the bottleneck
         # target_wav: (B, T)
         # Output: scalar
+        sigma = self.bottleneck.sigma
+        mu = self.bottleneck.mu
         sigma_sq = sigma * sigma
         mu_sq = mu * mu
 
@@ -75,6 +81,8 @@ class SGVB(nn.Module):
         BL = log_pred.size(0)
         assert BL % L == 0 
 
+        # !!! Check this.  Also, does CrossEntropyLoss only use target_probs?
+        # (target_probs = those softmax outputs that correspond to target indices)
         tsz = target_wav.size()
         target_wav_aug = target_wav.repeat(L, 1)
         target_probs = torch.gather(log_pred, target_wav_aug, dim=2)

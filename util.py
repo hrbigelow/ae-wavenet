@@ -129,29 +129,6 @@ def gather_md(input, dim, query):
     out_size = input.size()[:dim] + input.size()[dim+1:] + query.size()
     return x_perm.reshape(out_size) 
 
-
-def take_md(input, dim, query):
-    '''
-    Using the same conventions as gather_md execute the SQL query:
-
-    d: integer in (1..k)
-    Input: i_(1..k), ival
-    Query: q_(1..k / d), qval
-    NOTE: max(q_l) == max(i_l) for all l in (1..k / d)
-
-    SELECT i_(1..k / d), ival
-    from input, query
-    where i_d = qval 
-    and i_l = q_l for l in (1..k / d)
-
-    Note that 'query' has one fewer dimension as input, and its dimension sizes
-    must correspond one-for-one with input's dimensions after dim is removed.
-
-    The result will have the same dimension as input, but with dim removed.
-    '''
-
-
-
 def greatest_lower_bound(a, q): 
     '''return largest i such that a[i] <= q.  assume a is sorted.
     if q < a[0], return -1'''
