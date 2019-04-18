@@ -176,12 +176,13 @@ class Conditioning(nn.Module):
         '''
         I, G, S: n_in_chan, n_embed_chan, n_speakers
         lc : (B, T, I)
-        speaker_inds: (B, T)
+        speaker_inds: (B)
         returns: (B, T, I+G)
         '''
         assert speaker_inds.dtype == torch.long
-        one_hot = util.gather_md(self.eye, 0, speaker_inds) # one_hot: (B, T, S)
-        gc = self.speaker_embedding(one_hot) # gc: (B, T, G)
+        # one_hot: (B, S)
+        one_hot = util.gather_md(self.eye, 0, speaker_inds).permute(1, 0) 
+        gc = self.speaker_embedding(one_hot) # gc: (B, G)
         gc_rep = gc.unsqueeze(2).expand(-1, -1, lc.shape[2])
         all_cond = torch.cat((lc, gc_rep), dim=1) 
         return all_cond

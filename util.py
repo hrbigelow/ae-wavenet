@@ -82,15 +82,31 @@ def mu_decode_torch(quant, n_quanta):
 """
 torch.index_select(input, d, query), expressed as SQL:
 
-d: integer in (1..k)
-input: i_(1..k), ival
-query: q_1, qval
+    d: integer in (1..k)
+    input: i_(1..k), ival
+    query: q_1, qval
 
-SELECT (i_1..i_k q_1/i_d), ival
-from input, query
-where i_d = qval
+    SELECT (i_1..i_k q_1/i_d), ival
+    from input, query
+    where i_d = qval
 
-notation: (1..k q/d) means "values 1 through k, replacing d with q"
+    notation: (1..k q/d) means "values 1 through k, replacing d with q"
+"""
+
+"""
+torch.gather(input, d, query), expressed as SQL:
+    d: integer in (1..k)
+    input: i_(1..k), ival
+    query: q_(1..k), qval
+    NOTE: max(q_j) = max(i_j) for all j != d
+
+    SELECT (i_1 .. i_k qval/i_d), ival
+    from index, query
+    where i_d = qval
+
+    The output has the same shape as query.
+    All values of the output are values from input.
+    It's like a multi-dimensional version of torch.take.
 """
 
 def gather_md(input, dim, query):

@@ -35,7 +35,9 @@ class PreProcess(nn.Module):
         B, Q, T: n_batch, n_quant, n_timesteps
         returns: (B, Q, T)
         '''
-        return util.gather_md(self.quant_onehot, 0, wav_compand.long()).transpose(1, 2)
+        wav_one_hot = util.gather_md(self.quant_onehot, 0, wav_compand.long()).permute(1,0,2)
+        return wav_one_hot
+
 
     def forward(self, inds_np, wav_np):
         '''Inputs:
@@ -96,7 +98,7 @@ class AutoEncoder(nn.Module):
 
         elif bn_type == 'ae':
             self.bottleneck = bn.AE(**bn_extra, n_in=enc_params['n_out'])
-            self.objective = torch.CrossEntropyLoss()
+            self.objective = torch.nn.CrossEntropyLoss()
 
         else:
             raise InvalidArgument 
@@ -169,7 +171,11 @@ class AutoEncoder(nn.Module):
 
     def run(self, batch_gen):
         '''Run the model on one batch, returning the predicted and
-        actual output'''
+        actual output
+        Outputs:
+        quant_pred: (B, Q, T)
+        wav_compand_out: (B, T)
+        '''
         __, voice_inds_np, wav_np = next(batch_gen)
         voice_inds, mels, wav_onehot_dec, wav_compand_out = \
                 self.preprocess(voice_inds_np, wav_np)
@@ -219,7 +225,7 @@ class Metrics(object):
         
     def avg_prob_target(self):
         '''Average probability given to target'''
-        target_probs = util.gather_md(self.probs, 1, self.target)
+        target_probs = torch.gather(self.probs, 1, self.target.unsqueeze(1)) 
         mean = torch.mean(target_probs)
         return mean
 

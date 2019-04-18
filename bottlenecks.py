@@ -1,3 +1,4 @@
+import torch
 from torch import nn
 from torch import distributions as dist
 
@@ -33,21 +34,21 @@ class VAE(nn.Module):
         # Output: (B * L, C, T)
         mu_sigma = self.linear(x)
         n_out_chan = mu_sigma.size(1) // 2
-        self.mu = mu_sigma[:,:n_out_chan,:]  # first half of the channels
-        self.sigma = mu_sigma[:,n_out_chan:,:] # second half of the channels
+        mu = mu_sigma[:,:n_out_chan,:]  # first half of the channels
+        sigma = mu_sigma[:,n_out_chan:,:] # second half of the channels
 
-        # Randomness is injected here
         L = self.n_sam_per_datapoint
-        sz = mu.size()
-        if L == 1:
-            epsilon = mu.new_empty().normal_()
-            samples = self.sigma * epsilon + self.mu 
-        else:
-            sz[0] *= L
-            epsilon = mu.new_empty(sz).normal_()
-            self.sigma = sigma.repeat(L, 1, 1)
-            self.mu = mu.repeat(L, 1, 1)
-            samples = self.sigma * epsilon + self.mu
+        sample_sz = (mu.size()[0] * L,) + mu.size()[1:]
+        if L > 1:
+            sigma = sigma.repeat(L, 1, 1)
+            mu = mu.repeat(L, 1, 1)
+
+        # epsilon is the randomness injected here
+        epsilon = mu.new_empty(sample_sz).normal_()
+        samples = sigma * epsilon + mu 
+        # Cache mu and sigma for objective function later 
+        self.mu, self.sigma = mu, sigma
+
         return samples
 
 class SGVB(nn.Module):
@@ -73,21 +74,35 @@ class SGVB(nn.Module):
         sigma_sq = sigma * sigma
         mu_sq = mu * mu
 
-        # neg_kl_div_gaussian: (B, T)
-        neg_kl_div_gaussian = 0.5 * torch.sum(1.0 + torch.log(sigma_sq) - mu_sq -
-                sigma_sq, dim=2)
+        # neg_kl_div_gaussian: (B, K)
+        channel_dim = 1
+        channel_terms = 1.0 + torch.log(sigma_sq) - mu_sq - sigma_sq
+        neg_kl_div_gaussian = 0.5 * torch.sum(channel_terms, dim=channel_dim)
 
         L = self.bottleneck.n_sam_per_datapoint
         BL = log_pred.size(0)
         assert BL % L == 0 
 
-        # !!! Check this.  Also, does CrossEntropyLoss only use target_probs?
-        # (target_probs = those softmax outputs that correspond to target indices)
+        # Note that, unlike torch.nn.CrossEntropy loss, the second term in
+        # equation 7 is a function only of the probabilities assigned to the
+        # target quantum, if I'm interpreting the formula correctly.  For
+        # example, if the output probabilities are out_prob = [0.1, 0.5, 0.1,
+        # 0.3] and the target = 1, then only the out_prob[target] value affects
+        # the SGVB second term, not out_prob[i != target].
+        
+        # A second question is, since the following:  In this particular design,
+        # the encoder produces only one encoding vector every 320 time steps, while
+        # the decoder produces one output prediction every time step, in auto-regressive
+        # fashion.  So, for a VAE SGVB training objective, it is not clear how to
+        # treat the sum-over-i in equation 8.
+
+        # Here, I've decided to duplicate the gaussian by the upsampling factor. 
         tsz = target_wav.size()
         target_wav_aug = target_wav.repeat(L, 1)
-        target_probs = torch.gather(log_pred, target_wav_aug, dim=2)
-        target_probs_avg = torch.mean(target_probs, dim=1)
-        return torch.mean(neg_kl_div_gaussian + target_probs)
+        log_pred_target = torch.gather(log_pred, 1, target_wav_aug.unsqueeze(1))
+        log_pred_target_avg = torch.mean(log_pred_target, dim=1)
+        minibatch_sgvb = torch.mean(neg_kl_div_gaussian + log_pred_target_avg)
+        return minibatch_sgvb
 
 
 class AE(nn.Module):
