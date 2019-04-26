@@ -1,0 +1,58 @@
+The original formulation of the autoencoder is:
+
+Q(z|x)
+P(x|z)
+
+However, since WaveNet is autoregressive, this formulation doesn't fit.
+Rather, WaveNet models:
+
+P(x_t|x_1..x_(t-1),c_1..c_(t-1))
+
+where c_t means "the local conditioning vector at time t".
+
+I'm not sure how to reconcile the VAE formula with the Autoregressive structure
+of WaveNet.  It's not clear what the paper does, nor are there many details
+that I could find in several references. Here is my best guess.
+
+Let's make the following shorthand:
+
+x: x_t
+a: x_1..x_(t-1) 
+z: c_1..c_(t-1)
+
+Then, we can write the encoder and decoder as:
+
+Q(z|x,a)
+P(x|z,a)
+
+I think that introducing a common condition 'a' for both the encoder and
+decoder doesn't change the essential theory.  I don't understand VAE theory
+well enough to know this for sure though.  Assuming this is okay, if we let x
+be just one timestep, then, in this particular architecture, z is {c_(t-2000),
+c_(t-1680), ..., c_(t-80)}, because 1) the encoder produces one conditioning
+vector every 320 timesteps, and 2) WaveNet's receptive field is the window
+[t-2000, t-1] roughly.  In this formulation, then, for the ELBO, we model P(z)
+with a diagonal multivariate Gaussian N(0, I), which will have ~ 64 * 6
+dimensions (64 channels for each local conditioning vector).
+
+But, there is still the issue of how to combine multiple consecutive timesteps.
+Note that this training style is NOT equivalent to letting x = {x_t, ...,
+x_(t+b)} for b a batch size.  If we did that, then P(x|z,a) would be a product
+of individual regressive steps.  Instead, we want to average each of
+P(x_t|z,a), P(x_(t+1)|z,a), ...  P(x_(t+b)|z,a) together for the SGD gradient
+calculation.
+
+Logically, it seems consistent to define z as the exact set of local
+conditioning vectors that fall within WaveNet's receptive field.  Because of
+the one-every-320 steps frequency, there will be 320 distinct training examples
+that all use the same set of local conditioning vectors.  Then, the next sample
+will drop the oldest one and pick up a new one, and use these for the next 319.
+
+When averaging gradients through the model for each of these timesteps, the
+appropriate set of embedding vectors will automatically be discovered due to
+the connectivity.  But, for the KL-divergence term, the number of times each
+local vector is used will follow a truncated triangle pattern.  The full
+divergence penalty should be the per-sample average, where each 320 samples use
+a different set of vectors.
+
+
