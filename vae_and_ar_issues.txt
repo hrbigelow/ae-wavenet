@@ -1,0 +1,35 @@
+How to apply VAE training to an auto-regressive model?
+
+The VAE training objective involves two pieces of information from the
+autoencoder.  The first is the mu and sigma vectors from the encoder - these
+are used to analytically compute the KL divergence from the standard normal
+prior p(z).  The second is p(x|z), the posterior from the decoder (At least, I
+think this is the proper terminology).
+
+This training objective implies that there is a one-to-one relationship between
+hidden state z and input to the model.  At least, for a *single* sample, the
+objective requires exactly one z and one x (and the single (mu, sigma) pair of
+vectors that gave rise to the z.  It also seems to imply that there the
+individual samples are independent; there is no shared information, in the form
+of activations or inputs, between one (z, x, mu, sigma) tuple and another,
+because the decoder can assign a probability p(x|z), with no other information
+except z and x.
+
+However, in the WaveNet autoencoder setting, a few questions arise.  First, the
+autoencoder consumes a window of W timesteps in order to produce one hidden
+vector z, which, it is only sensible, it would be assigned to a particular
+timestep in the middle of the window of wav data.  In principle, the
+autoencoder could be used to produce encoding vectors at every timestep, by
+moving the input window over one timestep at a time.  That isn't what the study
+does, but let's come back to that.
+
+Then, the decoder also cannot assign a probability to any output whatsoever
+with just one z vector.  Its receptive field is ~2048 timesteps, which need ~6
+z vectors.
+
+So, in formula 8 of "Auto-encoding Variational Bayes", what would be the
+appropriate choice of z or x?
+
+In principle, we could view x as some window of wav data, and z as a collection
+of vectors.  The probability of the reconstructed x would then just be the
+autoregressive probability assigned by WaveNet. 

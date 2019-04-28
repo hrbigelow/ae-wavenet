@@ -1,0 +1,43 @@
+Commitment Loss and batching in the Autoregressive dimension
+
+The Commitment loss in the model is:
+
+|| z_{e}(x) - e_{q(x)} || ^2
+
+(which comes in two forms due to technical reasons for gradient calculation:
+
+CL1 = || sg(z_{e}(x) - e_{q(x)} ||^2
+CL2 = || z_{e}(x) - sg(e_{q(x)} ||^2
+
+In these formulas, z will consist of a range of timesteps at stride of 320.  A
+single "sample" in this context is a window of wav data the length of one
+receptive field of wavenet, with its 256-way softmax output being the
+prediction for the sample.  But, we want to batch multiple samples in the time
+dimension, in order to take advantage of their shared activations.
+
+But, due to the structure, there will exist 320 consecutive samples that all
+use the same collection of z vectors, and the next set of 320 will drop the
+first and add one at the end.  If the batch size is greater than 320, then this
+pattern needs to be taken into account in order to preserve what I would call
+the "stochastic batch-size invariance" property:
+
+Stochastic Batch-size invariance
+
+In SGD, the average gradient calculated for a batch size of N should be the
+same as the average gradient that would be calculated if you averaged the
+gradients from N individual samples.  This is trivial for the main batch
+dimension across different source data, because in this case, all calculations
+throughout the network are independent from each other.  The only thing they
+have in common in the dependency graph are network weights as source nodes. 
+
+But, in the timestep batch dimension, consecutive samples share activations.
+Thus, each different sample may use a particular activation a different number
+of times.  This isn't a problem, because the gradients are all calculated
+automatically.  However, if the model structure doesn't have a mechanism for
+routing activations such as the z conditioning vectors, we need to manually
+account for their use or non-use in the model across different samples.
+
+Is there a simple way to integrate the commitment loss into the autograd in
+such a way that it can be accounted for correctly?
+
+

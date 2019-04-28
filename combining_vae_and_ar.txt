@@ -14,7 +14,7 @@ I'm not sure how to reconcile the VAE formula with the Autoregressive structure
 of WaveNet.  It's not clear what the paper does, nor are there many details
 that I could find in several references. Here is my best guess.
 
-Let's make the following shorthand:
+Let's make the following shorthand, separating notation:
 
 x: x_t
 a: x_1..x_(t-1) 
@@ -48,11 +48,184 @@ the one-every-320 steps frequency, there will be 320 distinct training examples
 that all use the same set of local conditioning vectors.  Then, the next sample
 will drop the oldest one and pick up a new one, and use these for the next 319.
 
-When averaging gradients through the model for each of these timesteps, the
-appropriate set of embedding vectors will automatically be discovered due to
-the connectivity.  But, for the KL-divergence term, the number of times each
-local vector is used will follow a truncated triangle pattern.  The full
-divergence penalty should be the per-sample average, where each 320 samples use
-a different set of vectors.
+The VAE training objective as given in the paper (equation 3) is:
+
+L = - log p(x | z_q(x))
+  + ||sg(z_e(x)) - e_(q(x))||^2
+  + gamma * || z_e(x) - sg(e_q(x))||^2
+
+Here, the notation is a bit confusing:
+
+q(x) = argmin_i|| z_e(x) - e_i||^2
+z_e(x) means Q(z|x,a) in the above.
+
+I simply rewrite in their terms, but separating out the x into the current
+timestep x and the autoregressive context a.
+
+So:
+
+We now write z_e(x,a) instead of z_e(x), and:
+q(x,a) = argmin_i|| z_e(x,a) - e_i||^2
+
+L = -log p(x|z_q(x,a))
+  + ||sg(z_e(x,a)) - e_(q(x,a))||^2
+  + gamma * ||z_e(x,a) - sg(e_q(x,a))||^2
+
+(NOTE: I've added a minus sign to the first term.  They say the first term is
+the "negative log-likelihood of the reconstruction", so I believe there should
+be a minus sign.  It is given as log p(x | z_q(x)) in the paper and in the
+VQ-VAE paper.  I think this is a mistake)
+
+Back up a bit, and consider how WaveNet is trained alone.  A single logical sample
+from WaveNet is sampling a 256-way softmax representing the amplitude at a single
+timestep.  This is supervised by providing the one-hot encoded target amplitude,
+and minimizing the cross-entropy H(t,p), where t is the one-hot target and p is the
+256-way softmax.  The next timestep overlaps almost completely in the activations
+across the stacks.  So, instead of re-calculating all of that, timesteps are batched
+together, and the cross-entropies are individually taken at each timestep, H(t_i,p_i)
+of the batch i=(1..b).
+
+This technique seems to be nothing more than a caching mechanism combined with
+a batching mechanism, in which just another dimension of every calculation is
+used to batch all calculations of activations and gradients, just like the
+typical batching.  The only tricky thing is that the second batch dimension
+(the time dimension) happens also to overlap with the caching.
+
+Would this form of timestep batching also work for the full VQ-VAE?  What are the
+requirements of a loss function in order for such a thing to work?  
+
+I believe it will work naturally as long as all of the loss terms are properly
+propagated forward.  So, how does the decoder receive its conditioning inputs?
+
+1. The Cross Entropy Loss is averaged across all timesteps.
+2. Each individual CE loss term draws its input down through WaveNet's
+   dilated stack, which reaches further back in time at each level.
+3. Each level receives the upsampled conditioning vectors
+4. The upsampling module draws on lower-frequency conditioning vectors
+
+So, propagating the derivatives of each CE loss term automatically accumulates
+the accumulated gradients to each of these vectors.
+
+The question is
+
+Rewriting this in the separating notation
+
+L = - log p(x | z_q(x,a))
+
+Note that in this expression, we can batch together overlapping contexts.
+
+If we let:
+
+x_1, a_1 = x_t, x_1..x_(t-1)
+x_2, a_2 = x_(t+1), x_2..x_t
+...
+x_b, a_b = x_(t+b-1), x_b..x_(t+b-2)
+
+for some batch size b
+
+For the SGD calculation, we need to compute the gradient of:
+
+grad J_VAE(theta, phi, x_1, a_1) +
+grad J_VAE(theta, phi, x_2, a_2) + 
+...
+grad J_VAE(theta, phi, x_b, a_b)
+
+Note that we can calculatej
+But, note that the first term, E_q(z|x,a;phi)[log p(x|z,a; theta)], consists
+only of 
+
+When averaging gradients through the model for each of these timesteps, note
+that the first term (the expectation) the appropriate set of embedding vectors
+will automatically be discovered due to the connectivity.  But, for the
+KL-divergence term, the number of times each local vector is used will follow a
+truncated triangle pattern.  The full divergence penalty should be the
+per-sample average, where each 320 samples use a different set of vectors.
+
+The solution seems to be to let PyTorch's autograd do the work.  Propagate the
+two norms through WaveNet in such a way that each one is multiplied by the
+number of times it is actually used within WaveNet's stacks.  I need to clarify
+the notion of "number of times used".
+
+First, let's outline how the local conditioning vectors make their way through
+WaveNet.  All filters have size 2, and a dilation that increases in powers of 2
+as the layer goes up.  So, for instance, layer 10 (in either block) uses h[t]
+and h[t-512] to produce output at h[t].  The filter just below uses h[t],
+h[t-256], h[t-512], h[t-768].  For i = t - s, we show s for the top three
+layers:
+
+
+0      0    0    0
+                64
+          128  128
+               192
+     256  256  256
+               320
+          384  384
+               448
+512  512  512  512
+               576
+          640  640
+               704
+     768  768  768
+               832
+          896  896
+
+So, each local conditioning vector gets used a different number of times by a
+particular timestep of WaveNet.  On average, each one is used the same number
+of times as the prediction position moves forward.  But, within a small batch,
+the particular ones that get used depend on the exact positions.
+
+These local conditioning vectors are the output of an upsampling procedure.
+So, each up-sampled vector represents the result of four transpose
+convolutions.  But, what grounds do you define the notion of the number of
+times each quantized vector is used in a particular upsampled vector?  For one
+thing, the upsampling (like any convolution) does a transformation on each
+input vector, and then does element-wise sum of the result of the transform.
+If we regard the determinant of the transformation as the "amount" of the
+vector used, then, we could also multiply the two l2-norm components by this value.
+
+But, this is a bit odd, because, whether WaveNet uses "more" of one vector or another
+in a particular upsampled conditioning vector, may not be the right interpretation.
+If the conditioning elements were simple scalars, then it might be sensible to
+use the scalar filter elememts as the "times".  Since they are transformations,
+we need a determinant.
+
+What would happen if we instead did the upsampling with the original vectors, and with the
+quantized vectors, and recorded the l2 norm between those two quantities?  Would this
+be the same as taking an L2 Norm of the representative vectors and then taking some
+combination of them?
+
+Let:
+
+{l0, l5, l10, l15, l20} be the computed local condition vectors
+{q0, q5, q10, q15, q20} be the nearest neighbor quantized vectors
+{F0, F1, ..., F25} be the filter matrices
+
+The transpose convolution will be:
+
+Uq = F0 q0 + F5 q5 + F10 q10 + F15 q15 + F20 q20
+Ul = F0 l0 + F5 l5 + F10 l10 + F15 l15 + F20 l20
+
+Uq - Ul = Conv(F, (q - l))
+
+We want to know the overall L2 norm of the difference between the q and l
+vectors.  Note that:
+
+Uq = Conv(F, q)
+Ul = Conv(F, l)
+Uq - Ul = Conv(F, (q - l))
+||Uq - Ul|| = ||Conv(F, (q - l))||
+
+
+||Fg||^2 = |F| ||g||^2
+
+||sum_i(F_i g_i)||^2 =
+
+
+
+
+
+
+
 
 
