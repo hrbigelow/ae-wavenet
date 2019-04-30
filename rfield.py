@@ -39,14 +39,21 @@ class _Stats(object):
         return (self.nv - 1) * self.vspc + self.l_pos - self.r_pos + 1
 
     def gen(self):
-        '''Produce an iterator through the chain of stats'''
+        '''Produce an iterator forward through the chain of stats'''
         s = self
         while s is not None:
             yield s
             s = None if s.dst is None else s.dst.dst
 
+    def rgen(self):
+        '''Produce an iterator backward through the chain of stats'''
+        s = self
+        while s is not None:
+            yield s
+            s = None if s.src is None else s.src.src
 
-def print_stats(beg_stat, xpad='x', ipad='o', data='*'):
+
+def print_stats(beg, xpad='x', ipad='o', data='*'):
     '''pretty print a symbolic stack of 1D window-based tensor calculations
     represented by 'stats', showing strides, padding, and dilation.  Generate
     stats using Rfield::gen_stats()'''
@@ -63,7 +70,7 @@ def print_stats(beg_stat, xpad='x', ipad='o', data='*'):
     def r_pad_pos(st):
         return st.r_pos + st.r_pad * st.spc
 
-    stats = list(beg_stat.src.gen())
+    stats = list(beg.src.gen())
     min_pad_pos = min(l_pad_pos(st) for st in stats)
     max_pad_pos = max(r_pad_pos(st) for st in stats)
 
@@ -119,6 +126,13 @@ class Rfield(object):
         return 'name: {}, wing_sizes: {}, stride_ratio: {}, padding: {}\n'.format(
                 self.name, (self.l_wing_sz, self.r_wing_sz),
                 self.stride_ratio, (self.l_pad, self.r_pad))
+    def next(self):
+        if self.dst is None:
+            raise RuntimeError('Must run gen_stats() first')
+        return self.dst.dst
+
+    def prev(self):
+        return self.parent
 
     def _in_stride(self, output_stride_r):
         return output_stride_r / self.stride_ratio
@@ -167,19 +181,6 @@ class Rfield(object):
     def get_chain(self):
         '''Get all transformations in child->parent order'''
         return self._get_chain()
-
-    def _resolve_stop(self, stop_at):
-        if isinstance(stop_at, Rfield) or stop_at is None:
-            try:
-                depth = self.chain_length(stop_at)
-            except RuntimeError:
-                raise RuntimeError('Did not find "stop_at" node in the chain of parents')
-        elif isinstance(stop_at, int):
-            depth = stop_at
-        else:
-            raise RuntimeError('"stop_at" must be int (number of levels) or Rfield '
-                    '(node to stop at)')
-        return depth
 
     def _num_in_elem(self, n_out_elem_req):
         '''calculate the number of input value elements (not counting padding
@@ -258,13 +259,11 @@ class Rfield(object):
             s.l_pos = s.l_pos - min_l_pos
             s.r_pos = s.r_pos - max_r_pos
 
-    def gen_stats(self, n_out_el, stop_at=None, out_spc=1, out_vspc=1, l_out_pos=0,
+    def gen_stats(self, n_out_el, source, out_spc=1, out_vspc=1, l_out_pos=0,
             r_out_pos=0, prev_stat=None):
-        '''Populate stats members of this chain of transformations.  If any
+        '''Populate stats members backwards of this chain of transformations.  If any
         transformation leads to a zero-length or negative-length tensor, raise
         exception'''
-        depth = self._resolve_stop(stop_at)
-
         if prev_stat is None:
             prev_stat = _Stats(0, 0, n_out_el, out_spc, out_vspc, l_out_pos, r_out_pos,
                     src=self, dst=None)
@@ -284,24 +283,43 @@ class Rfield(object):
                 l_in_pos, r_in_pos, src=self.parent, dst=self)
         self.src = stat
 
-        if depth == 1:
+        if self == source: 
             self._expand_stats_()
             self._normalize_stats_()
             return 
         else:
-            return self.parent.gen_stats(n_in_el, depth - 1, in_spc, in_vspc,
+            return self.parent.gen_stats(n_in_el, source, in_spc, in_vspc,
                     l_in_pos, r_in_pos, stat)
 
 
-def offsets(beg_stat, end_stat):
-    '''Get relative left and right offsets between beg_stat and end_stat.'''
-
+def offsets(beg_rf, end_rf):
+    '''Get relative left and right offsets between the input/output of
+    the net which consists of the range [beg, end], inclusive'''
+    beg_stat = beg_rf.src
+    end_stat = end_rf.dst
     l_off = (end_stat.l_pos - beg_stat.l_pos) / beg_stat.spc
     r_off = (end_stat.r_pos - beg_stat.r_pos) / beg_stat.spc
     if not (l_off == int(l_off) and r_off == int(r_off)):
-        raise RuntimeError('non-integer offsets found.  For this model '
-                'architecture, there is not a one-to-one vector element '
-                'relationship between input and output.  See rfield for an '
-                'explanation.')
+        raise RuntimeError(('non-integer offsets found ({}, {}).  For this model '
+                + 'architecture, there is not a one-to-one vector element '
+                + 'relationship between input and output.  See rfield for an '
+                + 'explanation.').format(l_off, r_off))
     return int(l_off), int(r_off)
 
+def condensed(beg_rf, end_rf, name=None):
+    '''Produce a single Rfield with the same geometry between input and output
+    elements as the chain source->self'''
+    end_rf.gen_stats(1, beg_rf)
+    beg = beg_rf.src
+    end = end_rf.dst
+    l_pad = beg.spc * beg.l_pad
+    r_pad = beg.spc * beg.r_pad
+    filt = (end.l_pos + l_pad, -end.r_pos + r_pad)
+    downsample = beg.vspc < end.vspc
+    if downsample: 
+        stride = end.vspc / beg.vspc
+    else:
+        stride = beg.vspc / end.vspc
+    if stride != int(stride):
+        raise RuntimeError('Cannot condense for non-integer stride ratio {}'.format(stride))
+    return Rfield(filt, (l_pad, r_pad), int(stride), downsample, None, name)

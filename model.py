@@ -120,14 +120,14 @@ class AutoEncoder(nn.Module):
     def set_geometry(self, n_sam_per_slice_req):
         '''Compute the relationship between the encoder input, decoder input,
         and input to the loss function'''
-        self.rf.gen_stats(n_sam_per_slice_req)
+        self.rf.gen_stats(n_sam_per_slice_req, self.preprocess.rf)
+        self.decoder.commitment_loss.set_geometry()
 
-        enc_input = self.preprocess.rf.src
-        dec_input = self.decoder.last_upsample_rf.dst
-        loss_input = self.rf.dst
+        enc_beg = self.preprocess.rf
+        dec_beg = self.decoder.last_upsample_rf
 
-        dec_off = rfield.offsets(enc_input, dec_input)
-        pred_off = rfield.offsets(dec_input, loss_input)
+        dec_off = rfield.offsets(enc_beg, dec_beg)
+        pred_off = rfield.offsets(dec_beg.prev(), self.rf)
         self.preprocess.set_geometry(dec_off, pred_off)
 
         self.input_size = enc_input.nv 

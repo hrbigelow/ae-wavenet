@@ -33,7 +33,7 @@ class ConvReLURes(nn.Module):
         out = self.conv(x)
         out = self.relu(out)
         if (self.do_res):
-            l_off, r_off = rfield.offsets(self.rf.src, self.rf.dst)
+            l_off, r_off = rfield.offsets(self.rf, self.rf)
             out += x[:,:,l_off:r_off or None]
         assert self.rf.dst.nv == out.shape[2]
         return out

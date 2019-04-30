@@ -44,7 +44,7 @@ class GatedResidualCondConv(nn.Module):
     def cond_lead(self):
         '''distance from start of the overall stack input to
         the start of this convolution'''
-        l_off, __ = rfield.offsets(self.beg_rf.src, self.rf.dst)
+        l_off, __ = rfield.offsets(self.beg_rf, self.rf)
         return l_off
 
     def skip_lead(self):
@@ -52,7 +52,7 @@ class GatedResidualCondConv(nn.Module):
         stack output'''
         if self.end_rf is None:
             raise RuntimeError('Must call init_end_rf() first')
-        l_off, __ = rfield.offsets(self.rf.dst, self.end_rf.dst)
+        l_off, __ = rfield.offsets(self.rf.next(), self.end_rf)
         return l_off
 
     def forward(self, x, cond):
@@ -187,9 +187,8 @@ class Conditioning(nn.Module):
         all_cond = torch.cat((lc, gc_rep), dim=1) 
         return all_cond
 
-
 class Upsampling(nn.Module):
-    def __init__(self, n_chan, filter_sz, stride, parent_rf, name=None):
+    def __init__(self, n_chan, filter_sz, stride, parent_rf, bias=True, name=None):
         super(Upsampling, self).__init__()
         # See upsampling_notes.txt: padding = filter_sz - stride
         # and: left_offset = left_wing_sz - end_padding
@@ -199,7 +198,7 @@ class Upsampling(nn.Module):
                 parent=parent_rf, name=name)
 
         self.tconv = nn.ConvTranspose1d(n_chan, n_chan, filter_sz, stride,
-                padding=filter_sz - stride)
+                padding=filter_sz - stride, bias=bias)
 
     def forward(self, lc):
         '''B, T, S, C: batch_sz, timestep, less-frequent timesteps, input channels
@@ -211,6 +210,48 @@ class Upsampling(nn.Module):
         assert self.rf.dst.nv == lc_up.shape[2]
 
         return lc_up
+
+class CommitmentLoss(nn.Module):
+    '''Each commitment loss term derives from a single local conditioning vector.
+    This class combines commitment loss terms into output in the same pattern as
+    WaveNet's outputs use windows of local conditioning vectors.  This enables
+    the proper accounting of commitment loss terms when batching training samples
+    across the time dimension.
+    '''
+    def __init__(self, beg_rf, end_rf, name=None):
+        super(CommitmentLoss, self).__init__()
+        self.name = name
+        self.beg_rf = beg_rf
+        self.end_rf = end_rf
+
+    def set_geometry(self):
+        self.rf = rfield.condensed(self.beg_rf, self.end_rf, self.name) 
+        stride = self.rf.stride_ratio.denominator
+        l_off, r_off = rfield.offsets(self.rf, self.rf)
+        filter_sz = l_off - r_off + 1
+        # pad_add = kernel_size - 1 - pad_arg (see torch.nn.ConvTranspose1d)
+        # => pad_arg = kernel_size - 1 - pad_add 
+        pad_add = max(self.rf.l_pad, self.rf.r_pad)
+        self.l_trim = pad_add - self.rf.l_pad
+        self.r_trim = pad_add - self.rf.r_pad
+        pad_arg = filter_sz - 1 - pad_add
+        self.tconv = nn.ConvTranspose1d(2, 2, filter_sz, stride, pad_arg, bias=False)
+
+    def forward(self, vq_norms):
+        '''
+        B, T, S: batch_sz, timesteps, less-frequent timesteps 
+        vq_norms: B, S, 2
+        vq_norms[:,:,0] = ||sg(z_{e}(x)) - e_{q(x)}||^2
+        vq_norms[:,:,1] = ||z_{e}(x) - sg(e_{q(x)})||^2
+        output: B, T, 2
+        output[b,t,0] is the sum of the first vq_norm corresponding to the
+        conditioning vectors used by WaveNet's output timestep t.  It is used
+        as the total commitment loss for sample t
+        '''
+        out = self.tconv(vq_norms)
+        out_trim = out[:,self.l_trim:-self.r_trim or None,:]
+        return out_trim
+
 
 class WaveNet(nn.Module):
     def __init__(self, filter_sz, n_lc_in, n_lc_out, lc_upsample_filt_sizes,
@@ -234,9 +275,12 @@ class WaveNet(nn.Module):
         self.lc_conv = nn.Conv1d(n_lc_in, n_lc_out,
                 kernel_size=post_jitter_filt_sz, stride=1, bias=self.bias)
 
-        parent_rf = rfield.Rfield(filter_info=post_jitter_filt_sz,
+        cur_rf = rfield.Rfield(filter_info=post_jitter_filt_sz,
                 stride=1, parent=parent_rf, name=lc_conv_name)
-
+        
+        # This RF is the first processing of the local conditioning after the
+        # Jitter. It is the starting point for the commitment loss aggregation
+        pre_upsample_rf = cur_rf
         self.lc_upsample = nn.Sequential()
 
         # WaveNet is a stand-alone model, so parent_rf is None
@@ -244,13 +288,13 @@ class WaveNet(nn.Module):
         for i, (filt_sz, stride) in enumerate(zip(lc_upsample_filt_sizes,
             lc_upsample_strides)):
             name = 'Upsampling_{}(filter_sz={}, stride={})'.format(i, filt_sz, stride)   
-            mod = Upsampling(n_lc_out, filt_sz, stride, parent_rf, name)
+            mod = Upsampling(n_lc_out, filt_sz, stride, cur_rf, name)
             self.lc_upsample.add_module(str(i), mod)
-            parent_rf = mod.rf
+            cur_rf = mod.rf
 
         # This rf describes the bounds of the input wav corresponding to the
         # local conditioning vectors
-        self.last_upsample_rf = parent_rf
+        self.last_upsample_rf = cur_rf
         self.cond = Conditioning(n_speakers, n_global_embed)
         self.base_layer = nn.Conv1d(n_quant, n_res, kernel_size=1, stride=1,
                 dilation=1, bias=self.bias)
@@ -263,9 +307,11 @@ class WaveNet(nn.Module):
                 dil = 2**bl
                 name = 'GRCC_{},{}(dil={})'.format(b, bl, dil)
                 grc = GatedResidualCondConv(n_cond, n_res, n_dil, n_skp, 1,
-                        dil, filter_sz, bias, parent_rf, name)
+                        dil, filter_sz, bias, cur_rf, name)
                 self.conv_layers.append(grc)
-                parent_rf = grc.rf
+                cur_rf = grc.rf
+
+        self.commitment_loss = CommitmentLoss(pre_upsample_rf, cur_rf)
 
         # Each module in the stack needs to know the dimensions of
         # the input and output of the overall stack, in order to trim
@@ -279,9 +325,9 @@ class WaveNet(nn.Module):
         self.post1 = nn.Conv1d(n_skp, n_post, 1, bias=bias)
         self.post2 = nn.Conv1d(n_post, n_quant, 1, bias=bias)
         self.logsoftmax = nn.LogSoftmax(2) # (B, T, C)
-        self.rf = parent_rf
+        self.rf = cur_rf
 
-    def forward(self, wav_onehot, lc_sparse, speaker_inds):
+    def forward(self, wav_onehot, lc_sparse, speaker_inds, lc_norms=None):
         '''
         B: n_batch (# of separate wav streams being processed)
         T1: n_wav_timesteps
@@ -304,6 +350,11 @@ class WaveNet(nn.Module):
         # But, this means wavenet's parameters would have N_s baked in, and wouldn't
         # be able to operate with a new speaker ID.
 
+        if lc_norms is not None:
+            lc_norms_agg = self.commitment_loss(lc_norms)
+        else:
+            lc_norms_agg = None
+
         sig = self.base_layer(wav_onehot) 
         skp_sum = None
         for i, l in enumerate(self.conv_layers):
@@ -319,5 +370,5 @@ class WaveNet(nn.Module):
         # logits = self.logsoftmax(quant) 
 
         # quant: (B, T, Q), Q = n_quant
-        return quant 
+        return quant, lc_norms_agg 
 
