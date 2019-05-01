@@ -261,9 +261,11 @@ class Rfield(object):
 
     def gen_stats(self, n_out_el, source, out_spc=1, out_vspc=1, l_out_pos=0,
             r_out_pos=0, prev_stat=None):
-        '''Populate stats members backwards of this chain of transformations.  If any
-        transformation leads to a zero-length or negative-length tensor, raise
-        exception'''
+        '''Populate stats members backwards of this chain of transformations.
+        Each Rfield in the chain [source, self] (inclusive) will have is src
+        and dst fields initialized with a Stats object.  If any transformation
+        leads to a zero-length or negative-length tensor, raise exception.
+        '''
         if prev_stat is None:
             prev_stat = _Stats(0, 0, n_out_el, out_spc, out_vspc, l_out_pos, r_out_pos,
                     src=self, dst=None)
@@ -309,9 +311,11 @@ def offsets(beg_rf, end_rf):
 def condensed(beg_rf, end_rf, name=None):
     '''Produce a single Rfield with the same geometry between input and output
     elements as the chain source->self'''
-    end_rf.gen_stats(1, beg_rf)
     beg = beg_rf.src
     end = end_rf.dst
+    if beg is None or end is None:
+        raise RuntimeError('Must call gen_stats() first')
+
     l_pad = beg.spc * beg.l_pad
     r_pad = beg.spc * beg.r_pad
     filt = (end.l_pos + l_pad, -end.r_pos + r_pad)

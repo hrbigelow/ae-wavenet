@@ -24,9 +24,11 @@ class PreProcess(nn.Module):
         # A dummy buffer that simply allows querying the current model device 
         self.register_buffer('dummy_buf', torch.empty(0))
 
-    def set_geometry(self, dec_off, pred_off):
-        self.l_dec_off, self.r_dec_off = dec_off
-        self.l_pred_off, self.r_pred_off = pred_off
+    def set_geometry(self, enc_off, dec_off):
+        '''
+        '''
+        self.l_enc_off, self.r_enc_off = enc_off
+        self.l_dec_off, self.r_dec_off = dec_off 
 
 
     def one_hot(self, wav_compand):
@@ -41,15 +43,16 @@ class PreProcess(nn.Module):
 
     def forward(self, inds_np, wav_np):
         '''Inputs:
-        B, T, M, Q: n_batch, n_timesteps, n_mels, n_quant
+        B, M, Q: n_batch, n_mels, n_quant
+        T: n_timesteps, receptive field of decoder 
+        T': n_timesteps, output size of decoder
         inds_np: (B) (numpy)
         wav_np: (B, T)
         Outputs:
         inds: (B) (torch.tensor on current device)
         mels: (B,  
-        wav_onehot_dec: (B, Q, T)
-        wav_compand_out: (B, T)
-
+        wav_onehot_dec: (B, Q, T) (input to decoder)
+        wav_compand_out: (B, T') (input matching the timestep range of decoder output)
         '''
         mels_np = np.apply_along_axis(self.mfcc.func, axis=1, arr=wav_np)
 
@@ -58,9 +61,9 @@ class PreProcess(nn.Module):
         wav = torch.tensor(wav_np, device=self.dummy_buf.device)
         inds = torch.tensor(inds_np, device=self.dummy_buf.device)
 
-        wav_dec = wav[:,self.l_dec_off:self.r_dec_off or None]
+        wav_dec = wav[:,self.l_enc_off:self.r_enc_off or None]
         wav_compand_dec = util.mu_encode_torch(wav_dec, self.n_quant)
-        wav_compand_out = wav_compand_dec[:, self.l_pred_off:self.r_pred_off or None]
+        wav_compand_out = wav_compand_dec[:, self.l_dec_off:self.r_dec_off or None]
         wav_onehot_dec = self.one_hot(wav_compand_dec)
         return inds, mels, wav_onehot_dec, wav_compand_out
 
@@ -101,7 +104,7 @@ class AutoEncoder(nn.Module):
             self.objective = torch.nn.CrossEntropyLoss()
 
         else:
-            raise InvalidArgument 
+            raise InvalidArgument('bn_type must be one of "ae", "vae", or "vqvae"')
 
         self.decoder = dec.WaveNet(**dec_params, parent_rf=self.encoder.rf,
                 n_lc_in=bn_params['n_out'])
@@ -118,20 +121,24 @@ class AutoEncoder(nn.Module):
         self.load_state_dict(state['state_dict'])
 
     def set_geometry(self, n_sam_per_slice_req):
-        '''Compute the relationship between the encoder input, decoder input,
-        and input to the loss function'''
+        '''Compute the timestep offsets between the window boundaries of the
+        encoder input wav, decoder input wav, and supervising wav input to the
+        loss function'''
         self.rf.gen_stats(n_sam_per_slice_req, self.preprocess.rf)
         self.decoder.commitment_loss.set_geometry()
 
-        enc_beg = self.preprocess.rf
-        dec_beg = self.decoder.last_upsample_rf
+        # timestep offsets between input and output of the encoder
+        enc_off = rfield.offsets(self.preprocess.rf, self.decoder.last_upsample_rf)
 
-        dec_off = rfield.offsets(enc_beg, dec_beg)
-        pred_off = rfield.offsets(dec_beg.prev(), self.rf)
-        self.preprocess.set_geometry(dec_off, pred_off)
+        # timestep offsets between wav input and output of decoder 
+        # NOTE: this starts from after the upsampling, because it is concerned
+        # with the wav input, not conditioning vectors
+        dec_off = rfield.offsets(self.decoder.last_upsample_rf.next(), self.decoder.rf)
 
-        self.input_size = enc_input.nv 
-        self.output_size = loss_input.nv 
+        self.preprocess.set_geometry(enc_off, dec_off)
+
+        self.input_size = self.preprocess.rf.src.nv 
+        self.output_size = self.decoder.rf.dst.nv 
         
     def print_offsets(self):
         '''Show the set of offsets for each section of the model'''
@@ -153,20 +160,21 @@ class AutoEncoder(nn.Module):
             # else:
                 # print('Warning: unknown module instance: {}'.format(str(type(m))))
 
-    def forward(self, mels, wav_onehot_trim, voice_inds):
+    def forward(self, mels, wav_onehot_dec, voice_inds):
         '''
         B: n_batch
-        T: total receptive field size of complete autoencoder model
+        T: receptive field of autoencoder
+        T': receptive field of decoder 
         R: size of local conditioning output of encoder (T - encoder.rf.total())
         N: n_win (# consecutive samples processed in one batch channel)
         Q: n_quant
         wav_compand: (B, T)
-        wav_onehot_trim: (B, T') 
+        wav_onehot_dec: (B, T')  
         Outputs: (B, Q, N)  
         '''
         encoding = self.encoder(mels)
         encoding_bn = self.bottleneck(encoding)
-        quant_pred = self.decoder(wav_onehot_trim, encoding_bn, voice_inds)
+        quant_pred = self.decoder(wav_onehot_dec, encoding_bn, voice_inds)
         return quant_pred
 
     def run(self, batch_gen):

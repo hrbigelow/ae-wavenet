@@ -52,7 +52,7 @@ class GatedResidualCondConv(nn.Module):
         stack output'''
         if self.end_rf is None:
             raise RuntimeError('Must call init_end_rf() first')
-        l_off, __ = rfield.offsets(self.rf.next(), self.end_rf)
+        l_off, __ = rfield.offsets(self.rf, self.end_rf)
         return l_off
 
     def forward(self, x, cond):
@@ -77,7 +77,7 @@ class GatedResidualCondConv(nn.Module):
         sig += x[:,:,self.rf.l_wing_sz:]
 
         assert self.rf.dst.nv == sig.shape[2]
-        assert self.end_rf.dst.nv == skp.shape[2]
+        assert self.end_rf.dst.nv == skp.shape[2] # !!!
         return sig, skp 
 
 class Jitter(nn.Module):
@@ -226,6 +226,7 @@ class CommitmentLoss(nn.Module):
 
     def set_geometry(self):
         self.rf = rfield.condensed(self.beg_rf, self.end_rf, self.name) 
+        self.rf.gen_stats(1, self.rf)
         stride = self.rf.stride_ratio.denominator
         l_off, r_off = rfield.offsets(self.rf, self.rf)
         filter_sz = l_off - r_off + 1
@@ -277,6 +278,7 @@ class WaveNet(nn.Module):
 
         cur_rf = rfield.Rfield(filter_info=post_jitter_filt_sz,
                 stride=1, parent=parent_rf, name=lc_conv_name)
+        self.beg_rf = cur_rf
         
         # This RF is the first processing of the local conditioning after the
         # Jitter. It is the starting point for the commitment loss aggregation
@@ -288,7 +290,7 @@ class WaveNet(nn.Module):
         for i, (filt_sz, stride) in enumerate(zip(lc_upsample_filt_sizes,
             lc_upsample_strides)):
             name = 'Upsampling_{}(filter_sz={}, stride={})'.format(i, filt_sz, stride)   
-            mod = Upsampling(n_lc_out, filt_sz, stride, cur_rf, name)
+            mod = Upsampling(n_lc_out, filt_sz, stride, cur_rf, name=name)
             self.lc_upsample.add_module(str(i), mod)
             cur_rf = mod.rf
 
@@ -370,5 +372,6 @@ class WaveNet(nn.Module):
         # logits = self.logsoftmax(quant) 
 
         # quant: (B, T, Q), Q = n_quant
+        # lc_norms_agg: (B, T, 2)
         return quant, lc_norms_agg 
 
