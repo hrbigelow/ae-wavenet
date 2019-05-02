@@ -327,3 +327,4 @@ def condensed(beg_rf, end_rf, name=None):
     if stride != int(stride):
         raise RuntimeError('Cannot condense for non-integer stride ratio {}'.format(stride))
     return Rfield(filt, (l_pad, r_pad), int(stride), downsample, None, name)
+

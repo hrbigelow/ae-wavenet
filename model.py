@@ -90,6 +90,8 @@ class AutoEncoder(nn.Module):
 
         bn_extra = dict((k, v) for k, v in bn_params.items() if k != 'type')
     
+        # In each case, the objective function's 'forward' method takes the
+        # same arguments.
         if bn_type == 'vqvae':
             self.bottleneck = bn.VQVAE(**bn_extra, n_in=enc_params['n_out'])
             self.objective = None
@@ -106,6 +108,7 @@ class AutoEncoder(nn.Module):
         else:
             raise InvalidArgument('bn_type must be one of "ae", "vae", or "vqvae"')
 
+        self.bn_type = bn_type
         self.decoder = dec.WaveNet(**dec_params, parent_rf=self.encoder.rf,
                 n_lc_in=bn_params['n_out'])
 
@@ -125,7 +128,9 @@ class AutoEncoder(nn.Module):
         encoder input wav, decoder input wav, and supervising wav input to the
         loss function'''
         self.rf.gen_stats(n_sam_per_slice_req, self.preprocess.rf)
-        self.decoder.commitment_loss.set_geometry()
+        if self.bn_type in ('vae', 'vqvae'):
+            self.objective.set_geometry(self.decoder.pre_upsample_rf,
+                    self.decoder.last_grcc_rf)
 
         # timestep offsets between input and output of the encoder
         enc_off = rfield.offsets(self.preprocess.rf, self.decoder.last_upsample_rf)
@@ -170,7 +175,8 @@ class AutoEncoder(nn.Module):
         Q: n_quant
         wav_compand: (B, T)
         wav_onehot_dec: (B, T')  
-        Outputs: (B, Q, N)  
+        Outputs: 
+        quant_pred (B, Q, N) # predicted wav amplitudes
         '''
         encoding = self.encoder(mels)
         encoding_bn = self.bottleneck(encoding)
@@ -180,9 +186,10 @@ class AutoEncoder(nn.Module):
     def run(self, batch_gen):
         '''Run the model on one batch, returning the predicted and
         actual output
+        B, T, Q: n_batch, n_timesteps, n_quant
         Outputs:
-        quant_pred: (B, Q, T)
-        wav_compand_out: (B, T)
+        quant_pred: (B, Q, T) (the prediction from the model)
+        wav_compand_out: (B, T) (the actual data from the same timesteps)
         '''
         __, voice_inds_np, wav_np = next(batch_gen)
         voice_inds, mels, wav_onehot_dec, wav_compand_out = \
