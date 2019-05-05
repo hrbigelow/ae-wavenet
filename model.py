@@ -72,13 +72,13 @@ class AutoEncoder(nn.Module):
     '''
     Full Autoencoder model
     '''
-    def __init__(self, pre_params, enc_params, bn_params, dec_params):
-        self.args = [pre_params, enc_params, bn_params, dec_params]
+    def __init__(self, pre_params, enc_params, bn_params, dec_params, sam_per_slice):
+        self.args = [pre_params, enc_params, bn_params, dec_params, sam_per_slice]
         self._initialize()
 
     def _initialize(self):
         super(AutoEncoder, self).__init__() 
-        pre_params, enc_params, bn_params, dec_params = self.args
+        pre_params, enc_params, bn_params, dec_params, sam_per_slice = self.args
 
         # the "preprocessing"
         self.preprocess = PreProcess(pre_params, n_quant=dec_params['n_quant'])
@@ -87,7 +87,6 @@ class AutoEncoder(nn.Module):
                 parent_rf=self.preprocess.rf, **enc_params)
 
         bn_type = bn_params['type']
-
         bn_extra = dict((k, v) for k, v in bn_params.items() if k != 'type')
     
         # In each case, the objective function's 'forward' method takes the
@@ -99,7 +98,7 @@ class AutoEncoder(nn.Module):
         elif bn_type == 'vae':
             # mu and sigma members  
             self.bottleneck = bn.VAE(**bn_extra, n_in=enc_params['n_out'])
-            self.objective = bn.SGVB(self.bottleneck)
+            self.objective = bn.SGVBLoss(self.bottleneck)
 
         elif bn_type == 'ae':
             self.bottleneck = bn.AE(**bn_extra, n_in=enc_params['n_out'])
@@ -111,8 +110,8 @@ class AutoEncoder(nn.Module):
         self.bn_type = bn_type
         self.decoder = dec.WaveNet(**dec_params, parent_rf=self.encoder.rf,
                 n_lc_in=bn_params['n_out'])
-
         self.rf = self.decoder.rf
+        self.set_geometry(sam_per_slice)
 
     def __getstate__(self):
         state = { 'args': self.args, 'state_dict': self.state_dict() }
@@ -141,7 +140,6 @@ class AutoEncoder(nn.Module):
         dec_off = rfield.offsets(self.decoder.last_upsample_rf.next(), self.decoder.rf)
 
         self.preprocess.set_geometry(enc_off, dec_off)
-
         self.input_size = self.preprocess.rf.src.nv 
         self.output_size = self.decoder.rf.dst.nv 
         
@@ -153,17 +151,21 @@ class AutoEncoder(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
                 nn.init.xavier_uniform_(m.weight)
+                #nn.init.normal_(m.weight)
                 if m.bias is not None:
-                    nn.init.constant_(m.bias, 0.2)
+                    nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.ConvTranspose1d):
                 nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
-                    nn.init.constant_(m.bias, 0.2)
+                    nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
                 nn.init.constant_(m.bias, 0)
-            # else:
-                # print('Warning: unknown module instance: {}'.format(str(type(m))))
+
+        # Special initialization for bottleneck
+        if self.bn_type in ('vae', 'vqvae'):
+            m = self.objective.combine.tconv
+            nn.init.constant_(m.weight, 1.0)
 
     def forward(self, mels, wav_onehot_dec, voice_inds):
         '''
@@ -180,8 +182,8 @@ class AutoEncoder(nn.Module):
         '''
         encoding = self.encoder(mels)
         encoding_bn = self.bottleneck(encoding)
-        quant_pred = self.decoder(wav_onehot_dec, encoding_bn, voice_inds)
-        return quant_pred
+        quant = self.decoder(wav_onehot_dec, encoding_bn, voice_inds)
+        return quant
 
     def run(self, batch_gen):
         '''Run the model on one batch, returning the predicted and
@@ -195,39 +197,39 @@ class AutoEncoder(nn.Module):
         voice_inds, mels, wav_onehot_dec, wav_compand_out = \
                 self.preprocess(voice_inds_np, wav_np)
 
-        quant_pred = self.forward(mels, wav_onehot_dec, voice_inds)
+        quant = self.forward(mels, wav_onehot_dec, voice_inds)
         # quant_pred[:,:,0] is a prediction for wav_compand_out[:,1] 
-        return quant_pred[:,:,:-1], wav_compand_out[:,1:]
+        return quant[...,:-1], wav_compand_out[:,1:]
 
 class Metrics(object):
     '''Manage running the model and saving output and target state'''
     def __init__(self, model, optim):
         self.model = model
         self.optim = optim
-        self.pred = None
+        self.quant = None
         self.target = None
-        self.softmax = torch.nn.Softmax(1)
+        self.softmax = torch.nn.Softmax(1) # input to this is (B, Q, N)
 
     def update(self, batch_gen):
         __, voice_inds_np, wav_np = next(batch_gen)
         quant_pred_snip, wav_compand_out_snip = self.model.run(batch_gen) 
-        self.pred = quant_pred_snip
+        self.quant = quant_pred_snip
         self.target = wav_compand_out_snip
-        self.probs = self.softmax(self.pred)
+        self.probs = self.softmax(self.quant)
 
     def loss(self):
         '''This is the closure needed for the optimizer'''
-        if self.pred is None or self.target is None:
+        if self.quant is None or self.target is None:
             raise RuntimeError('Must call update() first')
         self.optim.zero_grad()
-        loss = self.model.objective(self.pred, self.target)
+        loss = self.model.objective(self.quant, self.target)
         loss.backward()
         return loss
     
     def peak_dist(self):
         '''Average distance between the indices of the peaks in pred and
         target'''
-        diffs = torch.argmax(self.pred, dim=1) - self.target 
+        diffs = torch.argmax(self.quant, dim=1) - self.target 
         mean = torch.mean(torch.abs(diffs).float())
         return mean
 

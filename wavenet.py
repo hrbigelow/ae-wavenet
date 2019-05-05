@@ -288,7 +288,7 @@ class WaveNet(nn.Module):
         self.relu = nn.ReLU()
         self.post1 = nn.Conv1d(n_skp, n_post, 1, bias=bias)
         self.post2 = nn.Conv1d(n_post, n_quant, 1, bias=bias)
-        self.logsoftmax = nn.LogSoftmax(2) # (B, T, C)
+        self.logsoftmax = nn.LogSoftmax(1) # (B, Q, N)
         self.rf = cur_rf
 
     def forward(self, wav_onehot, lc_sparse, speaker_inds):
@@ -303,7 +303,7 @@ class WaveNet(nn.Module):
         wav: (B, Q, T1)
         lc: (B, L, T2)
         speaker_inds: (B, T)
-        outputs: (B, N, Q)
+        outputs: (B, Q, N)
         '''
         lc_sparse = self.jitter(lc_sparse)
         lc_sparse = self.lc_conv(lc_sparse) 
@@ -327,7 +327,5 @@ class WaveNet(nn.Module):
         quant = self.post2(self.relu(post1))
         # we only need this for inference time
         # logits = self.logsoftmax(quant) 
-
-        # quant: (B, T, Q), Q = n_quant
         return quant
 

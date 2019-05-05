@@ -296,7 +296,9 @@ class Rfield(object):
 
 def offsets(beg_rf, end_rf):
     '''Get relative left and right offsets between the input/output of
-    the net which consists of the range [beg, end], inclusive'''
+    the net which consists of the range [beg, end], inclusive.  gen_stats()
+    must be called before this, but the offsets don't depend on the n_out_el
+    argument'''
     beg_stat = beg_rf.src
     end_stat = end_rf.dst
     l_off = (end_stat.l_pos - beg_stat.l_pos) / beg_stat.spc
@@ -310,7 +312,7 @@ def offsets(beg_rf, end_rf):
 
 def condensed(beg_rf, end_rf, name=None):
     '''Produce a single Rfield with the same geometry between input and output
-    elements as the chain source->self'''
+    elements as the chain source->self. '''
     beg = beg_rf.src
     end = end_rf.dst
     if beg is None or end is None:
@@ -318,7 +320,7 @@ def condensed(beg_rf, end_rf, name=None):
 
     l_pad = beg.spc * beg.l_pad
     r_pad = beg.spc * beg.r_pad
-    filt = (end.l_pos + l_pad, -end.r_pos + r_pad)
+    filt = (end.l_pos - beg.l_pos + l_pad, -end.r_pos + beg.r_pos + r_pad)
     downsample = beg.vspc < end.vspc
     if downsample: 
         stride = end.vspc / beg.vspc

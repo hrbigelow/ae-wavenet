@@ -15,9 +15,11 @@ def main():
     mode = sys.argv[1]
     del sys.argv[1]
     if mode == 'new':
-        opts = parse_tools.two_stage_parse(parse_tools.cold)
+        cold_parser = parse_tools.cold_parser()
+        opts = parse_tools.two_stage_parse(cold_parser)
     elif mode == 'resume':
-        opts = parse_tools.resume.parse_args()  
+        resume_parser = parse_tools.resume_parser()
+        opts = resume_parser.parse_args()  
 
     opts.device = None
     if not opts.disable_cuda and torch.cuda.is_available():
@@ -42,7 +44,8 @@ def main():
         dec_params['n_speakers'] = data.num_speakers()
 
         #with torch.autograd.set_detect_anomaly(True):
-        model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params)
+        model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params,
+                opts.n_sam_per_slice)
         print('Initializing model parameters', file=stderr)
         model.initialize_weights()
 
@@ -52,9 +55,9 @@ def main():
     else:
         state = checkpoint.State()
         state.load(opts.ckpt_file)
+        state.model.set_geometry(opts.n_sam_per_slice)
         print('Restored model and data from {}'.format(opts.ckpt_file), file=stderr)
 
-    state.model.set_geometry(opts.n_sam_per_slice)
 
     state.data.set_geometry(opts.n_batch, state.model.input_size,
             state.model.output_size)
@@ -77,7 +80,7 @@ def main():
 
     # Start training
     print('Starting training...', file=stderr)
-    print("Step\tLoss\tAvgProbTarget\tPeakDist\tAvgMax", file=stderr)
+    print("Step\tLoss\tAvProbTrg\tPeakDist\tAvgMax", file=stderr)
     stderr.flush()
 
     learning_rates = dict(zip(opts.learning_rate_steps, opts.learning_rate_rates))
