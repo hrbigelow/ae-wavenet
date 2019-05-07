@@ -111,22 +111,29 @@ class AutoEncoder(nn.Module):
         self.decoder = dec.WaveNet(**dec_params, parent_rf=self.encoder.rf,
                 n_lc_in=bn_params['n_out'])
         self.rf = self.decoder.rf
-        self.set_geometry(sam_per_slice)
+        self.set_geometry()
+        self.set_slice_size(sam_per_slice)
 
     def __getstate__(self):
-        state = { 'args': self.args, 'state_dict': self.state_dict() }
+        state = { 
+                'args': self.args,
+                'state_dict': self.state_dict(),
+                'rand_state': torch.default_generator.get_state()
+                }
         return state 
 
     def __setstate__(self, state):
         self.args = state['args']
         self._initialize()
         self.load_state_dict(state['state_dict'])
+        if 'rand_state' in state:
+            torch.default_generator.set_state(state['rand_state'])
 
-    def set_geometry(self, n_sam_per_slice_req):
+    def set_geometry(self):
         '''Compute the timestep offsets between the window boundaries of the
         encoder input wav, decoder input wav, and supervising wav input to the
         loss function'''
-        self.rf.gen_stats(n_sam_per_slice_req, self.preprocess.rf)
+        self.rf.gen_stats(self.preprocess.rf)
         if self.bn_type in ('vae', 'vqvae'):
             self.objective.set_geometry(self.decoder.pre_upsample_rf,
                     self.decoder.last_grcc_rf)
@@ -138,34 +145,17 @@ class AutoEncoder(nn.Module):
         # NOTE: this starts from after the upsampling, because it is concerned
         # with the wav input, not conditioning vectors
         dec_off = rfield.offsets(self.decoder.last_upsample_rf.next(), self.decoder.rf)
-
         self.preprocess.set_geometry(enc_off, dec_off)
+
+    def set_slice_size(self, n_sam_per_slice_req):
+        self.rf.init_nv(n_sam_per_slice_req)
         self.input_size = self.preprocess.rf.src.nv 
         self.output_size = self.decoder.rf.dst.nv 
+
         
     def print_offsets(self):
         '''Show the set of offsets for each section of the model'''
         self.rf.print_chain()
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv1d):
-                nn.init.xavier_uniform_(m.weight)
-                #nn.init.normal_(m.weight)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.ConvTranspose1d):
-                nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                nn.init.constant_(m.bias, 0)
-
-        # Special initialization for bottleneck
-        if self.bn_type in ('vae', 'vqvae'):
-            m = self.objective.combine.tconv
-            nn.init.constant_(m.weight, 1.0)
 
     def forward(self, mels, wav_onehot_dec, voice_inds):
         '''

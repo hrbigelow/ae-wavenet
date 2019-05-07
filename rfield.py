@@ -6,17 +6,17 @@ import math
 
 class _Stats(object):
     '''Describes a 1D tensor of positioned elements''' 
-    def __init__(self, l_pad, r_pad, n_val_elem, spc, vspc, l_pos, r_pos,
-            src=None, dst=None):
+    def __init__(self, l_pad, r_pad, spc, vspc, l_pos, r_pos, src=None,
+            dst=None):
         self.l_pad = l_pad
         self.r_pad = r_pad
-        self.nv = n_val_elem 
         self.spc = spc
         self.vspc = vspc
         self.l_pos = l_pos
         self.r_pos = r_pos
         self.src = src
         self.dst = dst
+        self.nv = None 
 
     def __repr__(self):
         src_name = 'None' if self.src is None else self.src.name
@@ -232,7 +232,8 @@ class Rfield(object):
     def _expand_stats_(self):
         '''After the initial backward sweep calculation of numbers of input
         elements necessary for a requested number of output elements, do a forward
-        sweep, calculating the number of output elements that would be produced'''
+        sweep, calculating the number of output elements that would be produced.
+        Updates each stat's nv field'''
         rf = self 
         while rf is not None and rf.dst is not None:
             rf.dst.nv = rf._num_out_elem(rf.src.nv)
@@ -259,20 +260,24 @@ class Rfield(object):
             s.l_pos = s.l_pos - min_l_pos
             s.r_pos = s.r_pos - max_r_pos
 
-    def gen_stats(self, n_out_el, source, out_spc=1, out_vspc=1, l_out_pos=0,
+    def gen_stats(self, source, out_spc=1, out_vspc=1, l_out_pos=0,
             r_out_pos=0, prev_stat=None):
         '''Populate stats members backwards of this chain of transformations.
         Each Rfield in the chain [source, self] (inclusive) will have is src
         and dst fields initialized with a Stats object.  If any transformation
         leads to a zero-length or negative-length tensor, raise exception.
+        Does not initialize the .nv field of stats.  Use init_nv() for that.
         '''
         if prev_stat is None:
-            prev_stat = _Stats(0, 0, n_out_el, out_spc, out_vspc, l_out_pos, r_out_pos,
+            prev_stat = _Stats(0, 0, out_spc, out_vspc, l_out_pos, r_out_pos,
                     src=self, dst=None)
         self.dst = prev_stat 
 
         l_off, r_off = self._local_bounds()
-        n_in_el = self._num_in_elem(n_out_el)
+
+        # This is a check that the architecture is non-vacuous.  A vacuous
+        # Rfield is one that can produce an output element with no input.
+        n_in_el = self._num_in_elem(1)
         if n_in_el <= 0:
             raise RuntimeError('gen_stats: invalid model architecture results in a'
                     ' output with {} element(s)'.format(n_in_el))
@@ -281,17 +286,32 @@ class Rfield(object):
         l_in_pos = l_out_pos - l_off * in_spc
         r_in_pos = r_out_pos - r_off * in_spc
 
-        stat = _Stats(self.l_pad, self.r_pad, n_in_el, in_spc, in_vspc,
-                l_in_pos, r_in_pos, src=self.parent, dst=self)
+        stat = _Stats(self.l_pad, self.r_pad, in_spc, in_vspc, l_in_pos,
+                r_in_pos, src=self.parent, dst=self)
         self.src = stat
 
         if self == source: 
-            self._expand_stats_()
             self._normalize_stats_()
             return 
         else:
-            return self.parent.gen_stats(n_in_el, source, in_spc, in_vspc,
-                    l_in_pos, r_in_pos, stat)
+            return self.parent.gen_stats(source, in_spc, in_vspc, l_in_pos,
+                    r_in_pos, stat)
+
+    def init_nv(self, out_nv_requested):
+        '''Populate the .nv field of stats.  Propagates the requested number
+        of output value elements backwards until , then updates forwards to get
+        the actual number'''
+        if self.src is None:
+            raise RuntimeError('Must call gen_stats() first')
+
+        n_in_el = self._num_in_elem(out_nv_requested)
+
+        if self.parent is None or self.parent.src is None:
+            self.src.nv = n_in_el
+            self._expand_stats_()
+            return 
+        else:
+            return self.parent.init_nv(n_in_el)
 
 
 def offsets(beg_rf, end_rf):
@@ -299,10 +319,10 @@ def offsets(beg_rf, end_rf):
     the net which consists of the range [beg, end], inclusive.  gen_stats()
     must be called before this, but the offsets don't depend on the n_out_el
     argument'''
-    beg_stat = beg_rf.src
-    end_stat = end_rf.dst
-    l_off = (end_stat.l_pos - beg_stat.l_pos) / beg_stat.spc
-    r_off = (end_stat.r_pos - beg_stat.r_pos) / beg_stat.spc
+    beg_st = beg_rf.src
+    end_st = end_rf.dst
+    l_off = (end_st.l_pos - beg_st.l_pos) / beg_st.spc
+    r_off = (end_st.r_pos - beg_st.r_pos) / beg_st.spc
     if not (l_off == int(l_off) and r_off == int(r_off)):
         raise RuntimeError(('non-integer offsets found ({}, {}).  For this model '
                 + 'architecture, there is not a one-to-one vector element '
@@ -313,19 +333,19 @@ def offsets(beg_rf, end_rf):
 def condensed(beg_rf, end_rf, name=None):
     '''Produce a single Rfield with the same geometry between input and output
     elements as the chain source->self. '''
-    beg = beg_rf.src
-    end = end_rf.dst
-    if beg is None or end is None:
+    beg_st = beg_rf.src
+    end_st = end_rf.dst
+    if beg_st is None or end_st is None:
         raise RuntimeError('Must call gen_stats() first')
 
-    l_pad = beg.spc * beg.l_pad
-    r_pad = beg.spc * beg.r_pad
-    filt = (end.l_pos - beg.l_pos + l_pad, -end.r_pos + beg.r_pos + r_pad)
-    downsample = beg.vspc < end.vspc
+    l_pad = beg_st.spc * beg_st.l_pad
+    r_pad = beg_st.spc * beg_st.r_pad
+    filt = (end_st.l_pos - beg_st.l_pos + l_pad, -end_st.r_pos + beg_st.r_pos + r_pad)
+    downsample = beg_st.vspc < end_st.vspc
     if downsample: 
-        stride = end.vspc / beg.vspc
+        stride = end_st.vspc / beg_st.vspc
     else:
-        stride = beg.vspc / end.vspc
+        stride = beg_st.vspc / end_st.vspc
     if stride != int(stride):
         raise RuntimeError('Cannot condense for non-integer stride ratio {}'.format(stride))
     return Rfield(filt, (l_pad, r_pad), int(stride), downsample, None, name)

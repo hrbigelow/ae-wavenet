@@ -3,6 +3,11 @@ from torch import nn
 import rfield
 import numpy as np
 
+def _xavier_init(mod):
+    nn.init.xavier_uniform_(mod.weight)
+    if mod.bias is not None:
+        nn.init.constant_(mod.bias, 0)
+
 
 class ConvReLURes(nn.Module):
     def __init__(self, n_in_chan, n_out_chan, filter_sz, stride=1, do_res=True,
@@ -18,12 +23,15 @@ class ConvReLURes(nn.Module):
         self.n_in = n_in_chan
         self.n_out = n_out_chan
         self.conv = nn.Conv1d(n_in_chan, n_out_chan, filter_sz, stride, padding=0, bias=False)
-        #self.relu = nn.ReLU(inplace=True)
         self.relu = nn.ReLU()
+        # !!! Try again without BN.  Perhaps it is not necessary, and the instability
+        # was related to another bug.
         self.bn = nn.BatchNorm1d(n_out_chan)
 
         self.rf = rfield.Rfield(filter_info=filter_sz, stride=stride,
                 parent=parent_rf, name=name)
+
+        _xavier_init(self.conv)
 
     def forward(self, x):
         '''

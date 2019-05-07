@@ -46,8 +46,6 @@ def main():
         #with torch.autograd.set_detect_anomaly(True):
         model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params,
                 opts.n_sam_per_slice)
-        print('Initializing model parameters', file=stderr)
-        model.initialize_weights()
 
         # Construct overall state
         state = checkpoint.State(0, model, data)
@@ -55,7 +53,7 @@ def main():
     else:
         state = checkpoint.State()
         state.load(opts.ckpt_file)
-        state.model.set_geometry(opts.n_sam_per_slice)
+        state.model.set_slice_size(opts.n_sam_per_slice)
         print('Restored model and data from {}'.format(opts.ckpt_file), file=stderr)
 
 

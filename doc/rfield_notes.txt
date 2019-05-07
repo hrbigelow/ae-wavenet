@@ -98,28 +98,24 @@ pair of any two consecutive elements, ignoring their type, is called just
 A transformation is characterized by its stride_ratio, which equals
 out.value_spacing / in.value_spacing.
 
+Here, there are a few important concepts.  First is the spacing between
+elements in spacing_ratio.  This equals output_spacing / input_spacing.  Note,
+though that there are two kinds of spacing for each tensor: unpadded_spacing,
+and padded_spacing.
 
+The initial input spacing should be such that the output stride is a whole
+number.  So, this reduces to the problem of finding the multiple for the
+overall stride that brings the output to a whole number.  Actually, not only
+that, we need every intermediate number to be a whole number.
 
-Here, there are a few important concepts.  First is the spacing between elements in
-spacing_ratio.  This equals
-output_spacing / input_spacing.  Note, though that there are two kinds of spacing
-for each tensor: unpadded_spacing, and padded_spacing.
-
-
-
-
-The initial input spacing should be such that the output stride is a whole number.
-So, this reduces to the problem of finding the multiple for the overall stride that
-brings the output to a whole number.  Actually, not only that, we need every intermediate
-number to be a whole number.
-
-So, how to do that?  store each stride as a reduced ratio.  For instance, your strides might be:
+So, how to do that?  store each stride as a reduced ratio.  For instance, your
+strides might be:
 
 1, 2/3, 1/2, 1/4
 
-And, so, you'd need to find the least common multiple of the denominators.  Actually,
-though, since the strides are all running products of either integers or reciprocal
-integers, then we have:
+And, so, you'd need to find the least common multiple of the denominators.
+Actually, though, since the strides are all running products of either integers
+or reciprocal integers, then we have:
 
 We want to find the LCM of the denominators of all of the strides.  This implies we need to
 accumulate them as we return.  Could they be calculated in another way, on the way down?

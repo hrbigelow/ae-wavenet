@@ -117,7 +117,8 @@ def cold_parser():
 
 # Complete parser for resuming from Checkpoint
 def resume_parser():
-    resume = argparse.ArgumentParser(parents=[train], add_help=True)
+    tp = train_parser()
+    resume = argparse.ArgumentParser(parents=[tp], add_help=True)
     resume.add_argument('ckpt_file', type=str, metavar='CHECKPOINT_FILE',
             help="""Checkpoint file generated from a previous run.  Restores model
             architecture, model parameters, and data generator state.""")
