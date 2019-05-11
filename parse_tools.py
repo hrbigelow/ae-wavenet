@@ -81,6 +81,10 @@ def cold_parser():
             help='bottleneck type (one of "ae", "vae", or "vqvae")')
     cold.add_argument('--bn-n-out', '-bo', type=int, metavar='INT', default=64,
             help='number of output channels for the bottleneck')
+    cold.add_argument('--bn-vq-beta', '-vqb', type=float, metavar='FLOAT', default=0.25,
+            help='beta multiplier for commitment loss term, eq 3 from VQVAE paper')
+    cold.add_argument('--bn-vq-n-embed', '-vqn', type=int, metavar='INT', default=4096,
+            help='number of embedding vectors, K, in section 3.1 of VQVAE paper')
 
     # Decoder architectural parameters
     cold.add_argument('--dec-filter-sz', '-dfs', type=int, metavar='INT', default=2,

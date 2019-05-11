@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import netmisc
 
 
 class StopGradFn(torch.autograd.Function):
@@ -79,21 +80,24 @@ class L2Error(nn.Module):
         return l2_error
 
 class VQ(nn.Module):
-    def __init__(self, n_latent_dim, n_embed_vecs):
+    def __init__(self, n_in, n_out, vq_beta, vq_n_embed):
         super(VQ, self).__init__()
+        self.d = n_out
+        self.beta = vq_beta
+        self.k = vq_n_embed 
+        self.linear = nn.Conv1d(n_in, self.d, 1, bias=False)
         self.sg = StopGrad()
         self.rg = ReplaceGrad()
-        self.d = n_latent_dim 
-        self.k = n_embed_vecs
         self.ze = None
         self.l2norm_min = None
         self.register_buffer('emb', torch.empty((self.k, self.d), requires_grad=True))
 
-    def forward(self, ze):
+    def forward(self, z):
         """
         B, Q, K, N: n_batch, n_quant_dims, n_quant_vecs, n_timesteps
         ze: (B, Q, N), 
         """
+        ze = self.linear(z)
         self.ze = ze
         sg_emb = self.sg(self.emb)
         l2n_sq = ((ze.unsqueeze(2) - sg_emb) ** 2).sum(dim=1) # B, K, N
@@ -103,17 +107,16 @@ class VQ(nn.Module):
         return zq_rg
 
 class VQLoss(nn.Module):
-    def __init__(self, bottleneck, beta):
+    def __init__(self, bottleneck):
         super(VQLoss, self).__init__()
         self.bottleneck = bottleneck 
-        self.beta = beta
         self.logsoftmax = nn.LogSoftmax(1) # input is (B, Q, N)
-        self.combine = LCCombine('LCCombine')
+        self.combine = netmisc.LCCombine('LCCombine')
         self.l2 = L2Error()
 
     def forward(self, quant_pred, target_wav):
         l2_loss = self.l2(self.bottleneck.ze, self.bottleneck.emb)
-        com_loss = self.l2norm_min * self.beta
+        com_loss = self.l2norm_min * self.bottleneck.beta
 
         l2_loss_comb = self.combine(l2_loss)[...,:-1]
         com_loss_comb = self.combine(com_loss)[...,:-1]

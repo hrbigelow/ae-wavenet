@@ -2,12 +2,7 @@ import torch
 from torch import nn
 import rfield
 import numpy as np
-
-def _xavier_init(mod):
-    nn.init.xavier_uniform_(mod.weight)
-    if mod.bias is not None:
-        nn.init.constant_(mod.bias, 0)
-
+import netmisc
 
 class ConvReLURes(nn.Module):
     def __init__(self, n_in_chan, n_out_chan, filter_sz, stride=1, do_res=True,
@@ -28,8 +23,7 @@ class ConvReLURes(nn.Module):
 
         self.rf = rfield.Rfield(filter_info=filter_sz, stride=stride,
                 parent=parent_rf, name=name)
-
-        _xavier_init(self.conv)
+        netmisc.xavier_init(self.conv)
 
     def forward(self, x):
         '''

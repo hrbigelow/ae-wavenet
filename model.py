@@ -94,8 +94,8 @@ class AutoEncoder(nn.Module):
         # In each case, the objective function's 'forward' method takes the
         # same arguments.
         if bn_type == 'vqvae':
-            self.bottleneck = vq_bn.VQVAE(**bn_extra, n_in=enc_params['n_out'])
-            self.objective = vq_bn.VQLoss(self.bottleneck, bn_params['beta'])
+            self.bottleneck = vq_bn.VQ(**bn_extra, n_in=enc_params['n_out'])
+            self.objective = vq_bn.VQLoss(self.bottleneck)
 
         elif bn_type == 'vae':
             # mu and sigma members  

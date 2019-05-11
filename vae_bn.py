@@ -13,8 +13,8 @@ class VAE(nn.Module):
         self.tanh = nn.Tanh()
         self.linear2 = nn.Conv1d(n_out * 2, n_out * 2, 1, bias=bias)
         self.n_sam_per_datapoint = n_sam_per_datapoint
-        _xavier_init(self.linear)
-        _xavier_init(self.linear2)
+        netmisc.xavier_init(self.linear)
+        netmisc.xavier_init(self.linear2)
 
         # Cache these values for later access by the objective function
         self.mu = None

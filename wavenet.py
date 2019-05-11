@@ -4,12 +4,7 @@ from torch import distributions as dist
 import rfield
 from numpy import prod as np_prod
 import util
-
-def _xavier_init(mod):
-    if hasattr(mod, 'weight') and mod.weight is not None:
-        nn.init.xavier_uniform_(mod.weight)
-    if hasattr(mod, 'bias') and mod.bias is not None:
-        nn.init.constant_(mod.bias, 0)
+import netmisc
 
 class GatedResidualCondConv(nn.Module):
     def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, filter_sz=2,
@@ -38,7 +33,7 @@ class GatedResidualCondConv(nn.Module):
                 parent=parent_rf, name=name)
         self.beg_rf = None
         self.end_rf = None
-        self.apply(_xavier_init)
+        self.apply(netmisc.xavier_init)
 
     def init_bound_rfs(self, beg_rf, end_rf):
         '''last_rf is the last GRCC unit in the stack.  This initialization is
@@ -181,7 +176,7 @@ class Conditioning(nn.Module):
         super(Conditioning, self).__init__()
         self.speaker_embedding = nn.Linear(n_speakers, n_embed, bias)
         self.register_buffer('eye', torch.eye(n_speakers))
-        self.apply(_xavier_init)
+        self.apply(netmisc.xavier_init)
 
     def forward(self, lc, speaker_inds):
         '''
@@ -210,7 +205,7 @@ class Upsampling(nn.Module):
 
         self.tconv = nn.ConvTranspose1d(n_chan, n_chan, filter_sz, stride,
                 padding=filter_sz - stride, bias=bias)
-        self.apply(_xavier_init)
+        self.apply(netmisc.xavier_init)
 
     def forward(self, lc):
         '''B, T, S, C: batch_sz, timestep, less-frequent timesteps, input channels
@@ -227,7 +222,7 @@ class Conv1dWrap(nn.Conv1d):
     '''Simple wrapper that ensures initialization'''
     def __init__(self, *args, **kwargs):
         super(Conv1dWrap, self).__init__(*args, **kwargs)
-        self.apply(_xavier_init)
+        self.apply(netmisc.xavier_init)
 
 
 

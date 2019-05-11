@@ -2,9 +2,10 @@
 from torch import nn
 import rfield
 
-def _xavier_init(mod):
-    nn.init.xavier_uniform_(mod.weight)
-    if mod.bias is not None:
+def xavier_init(mod):
+    if hasattr(mod, 'weight') and mod.weight is not None:
+        nn.init.xavier_uniform_(mod.weight)
+    if hasattr(mod, 'bias') and mod.bias is not None:
         nn.init.constant_(mod.bias, 0)
 
 
