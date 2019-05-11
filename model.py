@@ -1,7 +1,9 @@
 # Full Autoencoder model
 import mfcc
 import wave_encoder as enc
-import bottlenecks as bn
+import vq_bn
+import vae_bn
+import ae_bn
 import wavenet as dec 
 import util
 import torch
@@ -92,16 +94,16 @@ class AutoEncoder(nn.Module):
         # In each case, the objective function's 'forward' method takes the
         # same arguments.
         if bn_type == 'vqvae':
-            self.bottleneck = bn.VQVAE(**bn_extra, n_in=enc_params['n_out'])
-            self.objective = None
+            self.bottleneck = vq_bn.VQVAE(**bn_extra, n_in=enc_params['n_out'])
+            self.objective = vq_bn.VQLoss(self.bottleneck, bn_params['beta'])
 
         elif bn_type == 'vae':
             # mu and sigma members  
-            self.bottleneck = bn.VAE(**bn_extra, n_in=enc_params['n_out'])
-            self.objective = bn.SGVBLoss(self.bottleneck)
+            self.bottleneck = vae_bn.VAE(**bn_extra, n_in=enc_params['n_out'])
+            self.objective = vae_bn.SGVBLoss(self.bottleneck)
 
         elif bn_type == 'ae':
-            self.bottleneck = bn.AE(**bn_extra, n_in=enc_params['n_out'])
+            self.bottleneck = ae_bn.AE(**bn_extra, n_in=enc_params['n_out'])
             self.objective = torch.nn.CrossEntropyLoss()
 
         else:

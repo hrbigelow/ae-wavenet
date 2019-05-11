@@ -24,9 +24,7 @@ class ConvReLURes(nn.Module):
         self.n_out = n_out_chan
         self.conv = nn.Conv1d(n_in_chan, n_out_chan, filter_sz, stride, padding=0, bias=False)
         self.relu = nn.ReLU()
-        # !!! Try again without BN.  Perhaps it is not necessary, and the instability
-        # was related to another bug.
-        self.bn = nn.BatchNorm1d(n_out_chan)
+        # self.bn = nn.BatchNorm1d(n_out_chan)
 
         self.rf = rfield.Rfield(filter_info=filter_sz, stride=stride,
                 parent=parent_rf, name=name)
@@ -40,7 +38,7 @@ class ConvReLURes(nn.Module):
         '''
         assert self.rf.src.nv == x.shape[2]
         out = self.conv(x)
-        out = self.bn(out)
+        # out = self.bn(out)
         out = self.relu(out)
         if (self.do_res):
             l_off, r_off = rfield.offsets(self.rf, self.rf)
