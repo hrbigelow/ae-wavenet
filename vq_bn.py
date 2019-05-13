@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import netmisc
+import util
 
 
 class StopGradFn(torch.autograd.Function):
@@ -71,39 +72,51 @@ class L2Error(nn.Module):
         """
         B, Q, K, N: n_batch, n_quant_dims, n_quant_vecs, n_timesteps
         ze: (B, Q, N), 
-        emb: (K, N), the quantized embedding vectors
+        emb: (K, Q), the quantized embedding vectors
+        returns: (B, N) 
         """
         sg_ze = self.sg(ze)
-        l2n_sq = ((sg_ze.unsqueeze(2) - emb) ** 2).sum(dim=1) # B, K, N
-        l2n_min_val, __ = l2n_sq.min(dim=1) # B, N
-        l2_error = l2n_min_val
+        l2norm_sq = ((sg_ze.unsqueeze(1) - emb.unsqueeze(2)) ** 2).sum(dim=2) # B, K, N
+        l2norm_min_val, l2norm_min_ind = l2norm_sq.min(dim=1) # B, N
+        l2_error = l2norm_min_val
         return l2_error
 
 class VQ(nn.Module):
-    def __init__(self, n_in, n_out, vq_beta, vq_n_embed):
+    def __init__(self, n_in, n_out, vq_gamma, vq_n_embed):
         super(VQ, self).__init__()
         self.d = n_out
-        self.beta = vq_beta
+        self.gamma = vq_gamma
         self.k = vq_n_embed 
         self.linear = nn.Conv1d(n_in, self.d, 1, bias=False)
         self.sg = StopGrad()
         self.rg = ReplaceGrad()
         self.ze = None
         self.l2norm_min = None
-        self.register_buffer('emb', torch.empty((self.k, self.d), requires_grad=True))
+        self.ind_hist = torch.zeros(self.k) 
+        self.emb = nn.Parameter(data=torch.empty(self.k, self.d))
+        netmisc.xavier_init(self.linear)
+        nn.init.xavier_uniform_(self.emb, gain=100)
 
     def forward(self, z):
         """
         B, Q, K, N: n_batch, n_quant_dims, n_quant_vecs, n_timesteps
-        ze: (B, Q, N), 
+        ze: (B, Q, N) 
+        emb: (K, Q)
         """
         ze = self.linear(z)
         self.ze = ze
         sg_emb = self.sg(self.emb)
-        l2n_sq = ((ze.unsqueeze(2) - sg_emb) ** 2).sum(dim=1) # B, K, N
-        self.l2norm_min, l2norm_min_ind = l2n_sq.min(dim=1) # B, N
-        zq = torch.index_select(self.ze, 0, l2norm_min_ind) # B, Q, N
+        l2norm_sq = ((ze.unsqueeze(1) - sg_emb.unsqueeze(2)) ** 2).sum(dim=2) # B, K, N
+        self.l2norm_min, l2norm_min_ind = l2norm_sq.min(dim=1) # B, N
+        zq = util.gather_md(sg_emb, 0, l2norm_min_ind).permute(1, 0, 2)
         zq_rg, __ = self.rg(zq, self.ze)
+
+        # Diagnostics
+        self.ind_hist.scatter_add_(0, l2norm_min_ind.squeeze(0), torch.ones(ze.shape[2])) 
+        self.uniq = l2norm_min_ind.unique()
+        self.ze_norm = (self.ze ** 2).sum(dim=1).sqrt()
+        self.emb_norm = (self.emb ** 2).sum(dim=1).sqrt()
+
         return zq_rg
 
 class VQLoss(nn.Module):
@@ -114,18 +127,35 @@ class VQLoss(nn.Module):
         self.combine = netmisc.LCCombine('LCCombine')
         self.l2 = L2Error()
 
+    def set_geometry(self, beg_rf, end_rf):
+        self.combine.set_geometry(beg_rf, end_rf)
+
     def forward(self, quant_pred, target_wav):
-        l2_loss = self.l2(self.bottleneck.ze, self.bottleneck.emb)
-        com_loss = self.l2norm_min * self.bottleneck.beta
-
-        l2_loss_comb = self.combine(l2_loss)[...,:-1]
-        com_loss_comb = self.combine(com_loss)[...,:-1]
-
+        # Loss per embedding vector 
+        l2_loss_embeds = self.l2(self.bottleneck.ze, self.bottleneck.emb)
+        com_loss_embeds = self.bottleneck.l2norm_min * self.bottleneck.gamma
         log_pred = self.logsoftmax(quant_pred)
-        log_pred_target = torch.gather(log_pred, 1, target_wav)
+        log_pred_target = torch.gather(log_pred, 1, target_wav.unsqueeze(1))
 
-        total_loss_terms = log_pred_target + l2_loss_comb + com_loss_comb
-        total_loss = total_loss_terms.mean()
+        # Loss per timestep
+        l2_loss_ts = self.combine(l2_loss_embeds.unsqueeze(1))[...,:-1]
+        com_loss_ts = self.combine(com_loss_embeds.unsqueeze(1))[...,:-1]
+        log_pred_loss_ts = - log_pred_target
+
+        total_loss_ts = log_pred_loss_ts + l2_loss_ts + com_loss_ts
+        total_loss = total_loss_ts.mean()
+
+        losses = { 
+                'rec': log_pred_loss_ts.mean(),
+                'l2': l2_loss_ts.mean(),
+                'com': com_loss_ts.mean(),
+                #'p_m': log_pred.max(dim=1)[0].to(torch.float).mean(),
+                #'p_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
+                'unq': self.bottleneck.uniq,
+                'm_ze': self.bottleneck.ze_norm.min(),
+                'm_emb': self.bottleneck.emb_norm.min()
+                }
+        netmisc.print_metrics(log_pred, self.bottleneck.emb, losses)
 
         return total_loss
 

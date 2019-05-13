@@ -115,12 +115,8 @@ class SGVBLoss(nn.Module):
         log_pred_loss = - log_pred_target_avg.mean()
         kl_div_loss = - combined_kl.mean()
 
-        peak_mean = log_pred.max(dim=1)[0].to(torch.float).mean()
-        peak_sd = log_pred.max(dim=1)[0].to(torch.float).std()
-
-        fmt='kl_div_loss: {:.5f}, log_pred_loss: {:.5f}, peak_mean: {:.3f}, peak_sd: {:.3f}'
-        print(fmt.format(kl_div_loss, log_pred_loss, peak_mean, peak_sd), file=stderr)
-        stderr.flush()
+        losses = { 'kl_div_loss': kl_div_loss, 'log_pred_loss': log_pred_loss }
+        netmisc.print_metrics(log_pred, losses)
 
         return total_loss 
 

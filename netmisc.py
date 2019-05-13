@@ -1,6 +1,8 @@
 # Miscellaneous functions for the network
+import torch
 from torch import nn
 import rfield
+from sys import stderr
 
 def xavier_init(mod):
     if hasattr(mod, 'weight') and mod.weight is not None:
@@ -51,3 +53,37 @@ class LCCombine(nn.Module):
         out_trim = out[:,self.l_trim:-self.r_trim or None,:]
         return out_trim
 
+
+def print_metrics(log_pred, emb, losses):
+    peak_mean = log_pred.max(dim=1)[0].to(torch.float).mean()
+    peak_sd = log_pred.max(dim=1)[0].to(torch.float).std()
+
+    emb0 = emb - emb.mean(dim=0)
+    chan_var = (emb0 ** 2).sum(dim=0)
+    chan_covar = torch.matmul(emb0.transpose(1, 0), emb0) - torch.diag(chan_var)
+
+    s = ''
+    sep = ''
+    d = dict(losses)
+    d.update({
+        'peak_mean': peak_mean,
+        'peak_sd': peak_sd,
+        #'emb_var_min': chan_var.min(),
+        #'emb_var_max': chan_var.max(),
+        #'emb_covar_min': chan_covar.min(),
+        #'emb_covar_max': chan_covar.max()
+        })
+    for k, v in d.items():
+        if isinstance(v, torch.Tensor) and v.numel() == 1:
+            v = v.item()
+        if isinstance(v, int):
+            fmt = ' {:4d}'
+        elif isinstance(v, float):
+            fmt = ' {:8.3f}'
+        else:
+            fmt = ' {}' 
+        s += sep + k + fmt.format(v)
+        sep = ', '
+
+    print(s, file=stderr)
+    stderr.flush()

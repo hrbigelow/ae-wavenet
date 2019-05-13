@@ -101,7 +101,7 @@ def main():
 
         # Progress reporting
         if state.step % opts.progress_interval == 0:
-            fmt = "{}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
+            fmt = "{}\t{:10.5f}\t{:10.5f}\t{:10.5f}\t{:10.5f}"
             print(fmt.format(state.step, loss, avg_prob_target, avg_peak_dist,
                 avg_max), file=stderr)
             stderr.flush()
