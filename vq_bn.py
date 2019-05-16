@@ -95,7 +95,10 @@ class VQ(nn.Module):
         self.ind_hist = torch.zeros(self.k) 
         self.emb = nn.Parameter(data=torch.empty(self.k, self.d))
         netmisc.xavier_init(self.linear)
-        nn.init.xavier_uniform_(self.emb, gain=100)
+        nn.init.xavier_uniform_(self.emb, gain=10)
+
+        # Shows how many of the embedding vectors have non-zero gradients
+        #self.emb.register_hook(lambda k: print(k.sum(dim=1).unique(sorted=True)))
 
     def forward(self, z):
         """
@@ -113,16 +116,16 @@ class VQ(nn.Module):
 
         # Diagnostics
         self.ind_hist.scatter_add_(0, l2norm_min_ind.squeeze(0), torch.ones(ze.shape[2])) 
-        self.uniq = l2norm_min_ind.unique()
-        self.ze_norm = (self.ze ** 2).sum(dim=1).sqrt()
-        self.emb_norm = (self.emb ** 2).sum(dim=1).sqrt()
+        self.uniq = l2norm_min_ind.unique(sorted=False)
+        #self.ze_norm = (self.ze ** 2).sum(dim=1).sqrt()
+        #self.emb_norm = (self.emb ** 2).sum(dim=1).sqrt()
 
         return zq_rg
 
 class VQLoss(nn.Module):
     def __init__(self, bottleneck):
         super(VQLoss, self).__init__()
-        self.bottleneck = bottleneck 
+        self.bn = bottleneck 
         self.logsoftmax = nn.LogSoftmax(1) # input is (B, Q, N)
         self.combine = netmisc.LCCombine('LCCombine')
         self.l2 = L2Error()
@@ -132,8 +135,11 @@ class VQLoss(nn.Module):
 
     def forward(self, quant_pred, target_wav):
         # Loss per embedding vector 
-        l2_loss_embeds = self.l2(self.bottleneck.ze, self.bottleneck.emb)
-        com_loss_embeds = self.bottleneck.l2norm_min * self.bottleneck.gamma
+        l2_loss_embeds = self.l2(self.bn.ze, self.bn.emb)
+        com_loss_embeds = self.bn.l2norm_min * self.bn.gamma
+        # l2_loss_embeds = self.l2(self.bn.ze, self.bn.emb).sqrt()
+        # com_loss_embeds = self.bn.l2norm_min.sqrt() * self.bn.gamma
+
         log_pred = self.logsoftmax(quant_pred)
         log_pred_target = torch.gather(log_pred, 1, target_wav.unsqueeze(1))
 
@@ -145,17 +151,23 @@ class VQLoss(nn.Module):
         total_loss_ts = log_pred_loss_ts + l2_loss_ts + com_loss_ts
         total_loss = total_loss_ts.mean()
 
+        nh = self.bn.ind_hist / self.bn.ind_hist.sum()
+        hist_ent = - (nh * torch.where(nh == 0, torch.zeros(nh.shape), torch.log(nh))).sum()
+
         losses = { 
                 'rec': log_pred_loss_ts.mean(),
                 'l2': l2_loss_ts.mean(),
                 'com': com_loss_ts.mean(),
+                'ze_rng': self.bn.ze.max() - self.bn.ze.min(),
+                'emb_rng': self.bn.emb.max() - self.bn.emb.min(),
+                'hist_ent': hist_ent, 
                 #'p_m': log_pred.max(dim=1)[0].to(torch.float).mean(),
                 #'p_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
-                'unq': self.bottleneck.uniq,
-                'm_ze': self.bottleneck.ze_norm.min(),
-                'm_emb': self.bottleneck.emb_norm.min()
+                'unq': self.bn.uniq,
+                #'m_ze': self.bn.ze_norm.max(),
+                #'m_emb': self.bn.emb_norm.max()
                 }
-        netmisc.print_metrics(log_pred, self.bottleneck.emb, losses)
+        netmisc.print_metrics(log_pred, self.bn.emb, losses, 50)
 
         return total_loss
 

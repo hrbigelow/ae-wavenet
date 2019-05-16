@@ -3,6 +3,7 @@ import torch
 from torch import nn
 import rfield
 from sys import stderr
+import sys
 
 def xavier_init(mod):
     if hasattr(mod, 'weight') and mod.weight is not None:
@@ -29,6 +30,7 @@ class LCCombine(nn.Module):
         '''
         self.rf = rfield.condensed(beg_rf, end_rf, self.name) 
         self.rf.gen_stats(self.rf)
+        self.rf.init_nv(1)
         stride = self.rf.stride_ratio.denominator
         l_off, r_off = rfield.offsets(self.rf, self.rf)
         filter_sz = l_off - r_off + 1
@@ -40,7 +42,7 @@ class LCCombine(nn.Module):
         pad_arg = filter_sz - 1 - pad_add
         self.tconv = nn.ConvTranspose1d(1, 1, filter_sz, stride, pad_arg, bias=False)
         self.tconv.weight.requires_grad = False
-        nn.init.constant_(self.tconv.weight, 1.0)
+        nn.init.constant_(self.tconv.weight, 1.0 / self.rf.src.nv)
 
     def forward(self, z_metric):
         '''
@@ -54,7 +56,10 @@ class LCCombine(nn.Module):
         return out_trim
 
 
-def print_metrics(log_pred, emb, losses):
+this = sys.modules[__name__]
+this.print_iter = 0
+
+def print_metrics(log_pred, emb, losses, hdr_frequency):
     peak_mean = log_pred.max(dim=1)[0].to(torch.float).mean()
     peak_sd = log_pred.max(dim=1)[0].to(torch.float).std()
 
@@ -62,6 +67,7 @@ def print_metrics(log_pred, emb, losses):
     chan_var = (emb0 ** 2).sum(dim=0)
     chan_covar = torch.matmul(emb0.transpose(1, 0), emb0) - torch.diag(chan_var)
 
+    h = ''
     s = ''
     sep = ''
     d = dict(losses)
@@ -82,8 +88,17 @@ def print_metrics(log_pred, emb, losses):
             fmt = ' {:8.3f}'
         else:
             fmt = ' {}' 
-        s += sep + k + fmt.format(v)
+        val = fmt.format(v)
+        s += sep + val
+
+        hfmt = ' {:' + str(len(val)) + '}'
+        h += '  ' + hfmt.format(k)
         sep = ', '
 
+    if this.print_iter % hdr_frequency == 0:
+        print(h, file=stderr)
+
     print(s, file=stderr)
+    this.print_iter += 1
     stderr.flush()
+

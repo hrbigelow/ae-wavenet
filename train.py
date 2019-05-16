@@ -62,20 +62,14 @@ def main():
 
     state.model.to(device=opts.device)
 
-    #total_bytes = 0
-    #for name, par in model.named_parameters():
-    #    n_bytes = par.data.nelement() * par.data.element_size()
-    #    total_bytes += n_bytes
-    #    print(name, type(par.data), par.size(), n_bytes)
-    #print('total_bytes: ', total_bytes)
-
     # Initialize optimizer
     model_params = state.model.parameters()
     metrics = ae.Metrics(state.model, None)
     batch_gen = state.data.batch_slice_gen_fn()
 
-    #loss_fcn = state.model.loss_factory(state.data.batch_slice_gen_fn())
-
+    if state.model.bn_type == 'vqvae':
+        state.model.init_vq_embed(batch_gen)
+    
     # Start training
     print('Starting training...', file=stderr)
     print("Step\tLoss\tAvProbTrg\tPeakDist\tAvgMax", file=stderr)

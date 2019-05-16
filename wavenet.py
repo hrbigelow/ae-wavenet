@@ -174,6 +174,7 @@ class Conditioning(nn.Module):
     '''
     def __init__(self, n_speakers, n_embed, bias=True):
         super(Conditioning, self).__init__()
+        # Look at nn.embedding
         self.speaker_embedding = nn.Linear(n_speakers, n_embed, bias)
         self.register_buffer('eye', torch.eye(n_speakers))
         self.apply(netmisc.xavier_init)

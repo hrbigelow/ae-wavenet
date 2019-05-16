@@ -16,7 +16,7 @@ used as a representative.  Currently troubleshooting.
 
 
 # TODO
-1. VAE and VQVAE versions of the bottleneck / training objectives
+1. VAE and VQVAE versions of the bottleneck / training objectives [DONE]
 2. Inference mode
  
 # Example training setup

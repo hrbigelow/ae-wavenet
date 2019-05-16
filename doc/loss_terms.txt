@@ -1,0 +1,224 @@
+What is happening in the VQVAE?  The encoder is presented with windows of the
+wav data.  For each window, it produces 14 vectors (64-dimensional), spaced one
+every 320 timesteps.  Each one is matched with its L2-nearest neighbor in a
+dictionary of 4096 embedding vectors.  The original outputs from the encoder
+are named ze.  The nearest neighbor embeddings are named zq (q = quantized).
+
+These zq are used as input to condition the decoder.  The decoder also receives
+an overlapping window, similar but not identical to the wav data window input
+to the encoder.  Together with the conditioning zq, the decoder produces
+prediction output in autoregressive fashion.
+
+The log probability given to the correct output is the first loss term.  Note
+that, because this log probability is derived from logsoftmax, its gradient
+will affect all of the incoming logits.
+
+The gradient from the logsoftmax flows backward through the decoder, but when
+it reaches the conditioning inputs zq, the gradient is applied in a
+pass-through scheme to the ze corresponding to them.  In this way, the encoder
+gets an approximate signal as to how it should improve its outputs.
+
+The pass-through gradient and quantization has two effects.  First is that the
+decoder sees the same quantized vector zq for multiple timesteps, even though
+it may supply a gradient consistently in a particular direction.  Meanwhile,
+the gradient is passed on to the corresponding ze, which then drifts in the
+gradient direction.  This drift may bring it closer to the zq or farther away.
+But, ultimately, it will end up drifting into another Voronoi cell, and the
+decoder will then receive a different zq as input.  Theoretically, this process
+will find the optimal zq for the decoder for that context.
+
+The structure of the embedding vectors themselves may be suboptimal as well.
+Apart from linear independence, though, it's hard to imagine what properties
+are desirable for the distribution of an embedding space.  And, whether each
+embedding vector is moving so much that its "role" changes from one usage to
+the next.
+
+However, the ability of the model to move the embedding vectors gives it
+freedom during the learning process as well.  Perhaps the decoder has
+difficulty with a particular vector, and needs it to move a bit.  This makes
+some sense.
+
+
+To effect this, there are loss terms two and three.  Loss term two is L2 error,
+which is the average L2 distance between the zq and ze.  This loss trains the
+embedding vectors themselves specifically, and does NOT train the encoder
+output ze.
+
+The third term is the same loss (L2 squared distance) as the second, except it
+is scaled by gamma.  And, it does NOT train the embedding vectors zq.  It does
+train the encoder output ze however.
+
+They call this the "commitment loss".  They say the commitment loss is
+"introduced to encourage the encoder to produce vectors which lie close to
+prototypes.  Without the commitment loss, VQ-VAE training can diverge by
+emitting representations with unbounded magnitude." 
+
+
+So, at any given training step, the following things happen:
+
+Forward:
+
+1. encoder consumes wav snippets and outputs ze 2. the nearest neighbor zq are
+found from the embedding table 3. the zq, plus the wav snippet are fed to the
+decoder 4. the decoder outputs the logsoftmax probabilities for the next
+timestep
+
+Loss terms:
+
+5. the actual next timestep value is compared with the logsoftmax corresponding
+to that value.  this is the reconstruction loss.
+
+6. the squared L2 distance between the zq and ze is used as a loss and
+propagated to the embedding vectors zq.  this is the L2 error loss.
+
+7. the gamma-scaled squared L2 distance between the zq and ze is used as a loss
+and propagated to the encoder outputs ze.  This is the commitment loss.
+
+Backward:
+
+8. the reconstruction loss produces gradients through the parameters of the
+decoder.  when the gradients reach the zq inputs to the decoder, they are
+propagated directly to the representative ze's.  These gradients are modest,
+since the reconstruction loss value is in the range of 5-10.
+
+9. the L2 error loss value is very large at first, around 50000.  Thus it
+produces very large gradients, passing them on to the embedding table vectors.
+This produces pressure to move the zq towards their respective ze.
+
+10. the commitment loss value is also very large, differing only by the gamma
+factor. These very large gradients are passed to the original encoder outputs
+ze.  This produces pressure to move them to be close to their representatives
+zq.
+
+The encoder parameters receive the combined gradients from both the commitment
+loss and the reconstruction loss.  These may oppose each other.  For instance,
+suppose the reconstruction loss gradient wants to push a zq to the left, and
+the representative ze is to left of the zq.  The ze will receive the
+pass-through gradient, which pushes it to the left.  But the commitment loss
+will push the ze towards the zq (i.e.  to the right).
+
+In short, the ze gets pushed by reconstruction (via pass-through) and
+commitment loss.
+
+The zq gets pushed only by the l2 error, towards its representative ze.
+
+Should we expect the set of 14 embedding vectors to be different?
+
+Collapse
+
+During training, the ze vectors output by the encoder have a very high range in
+their component values, as given by ze.min(), ze.max().  Meanwhile, emb is
+initialized with a xavier_uniform, which is a uniform within a range of xmin,
+xmax, which also takes a multiplier term which affects the range.  I've tried
+multiplier terms of 1, 10, 100, 1000.  With a gain=10, the min/max values are
+around +/- 0.38, while the min/max values for ze start out around +/- 25.
+
+Over time, emb min/max values slowly expand, while ze min/max rapidly shrink.
+For a few hundred steps, the number of distinct zq vectors mapped stay around
+10-12.  As the ze min/max values approach about 3x the range of emb min/max,
+the number of distinct zq vectors mapped starts to shrink down to one.
+Ultimately, this one is the same vector at each timestep.  At that point, the
+encoder has no expressive power, and the decoder's gradients w.r.t to it
+presumably shrink to zero, and thus the weights stay put, effectively treating
+it as a bias term.
+
+One possible issue is that, while all of the encoder parameters receive
+gradients at every timestep, only at most 12 of the 4096 embedding vectors
+receive gradients.  So, if there is a scale mismatch, where the majority of ze
+outputs lie well outside the region of embedding vectors, then they all rapidly
+shrink.  Even so, it doesn't seem as though any particular embedding vector is
+singled out at this stage due to its being "pulled out" of the cloud.
+
+Instead, one of the vectors gets pulled in to be about 10x shorter than the
+rest, and then, it becomes the single representative for all of them.
+
+I think this happens because, as the training starts out, and all of the ze are
+much longer on average than the emb, the ze are under a very intense gradient
+to become shorter.  Meanwhile, only at most 12 of the 4096 emb vectors
+experience any gradient to become longer at each timestep.  So, a majority of
+the 4096 vectors are exactly where they started, a moderate average length.
+Some have been pulled outward, but only once or twice.
+
+Question:  if you have an N-dimensional hypercube volume [-1, 1]^n and a
+uniform distribution of vectors within it, what is the distribution of their L2
+lengths?  It will be very strongly peaked towards the maximum, because the
+"surface area" grows as radius^(n-1)
+
+
+The main problem is that one of the failure modes of the encoder is that it
+just dies out.  All of the weights go to zero, and its outputs go to zero, and
+the one vector which happens to be closest to zero becomes the representatitve
+vector for all outputs.  The rep vector receives the L2 error signal compounded
+12 times each timestep, so gets strongly pulled in towards zero.  The L2 error
+then shrinks to zero, and the commitment loss as well goes to zero.  And, even
+if the decoder is providing a pass-through gradient to the encoder output, with
+12 repeated uses, the gradients may tend to cancel each other.  And, in any
+case, the commitment loss counters any reconstruction loss that is trying to
+diversify consecutive outputs.
+
+What to do about this?  There can't be any hard-and-fast rule constraining the
+encoder to maximize distances between its output vectors for a given input
+window, because in cases of silence of slow speech, repeating a vector seems
+like the right thing to do.  However, this vulnerability leads me to question
+whether Jitter is really the best approach.  It doesn't seem like it is.
+
+In general, we could assume that the encoder outputs embedding vectors of a
+certain length range.  The range itself is not really relevant, but the various
+length ratios and directions are.  In any case, at any point in the training,
+we would like the overall distribution of the embedding vectors to roughly
+coincide with the distribution of output vectors (were we to run them on a
+large batch of data)
+
+At a uniform density, the number of vectors that exist within a certain length
+range will depend on r^n in n dimensions.
+
+Another way of thinking of this is that the overall density of vectors output
+by the encoder should match the density of the embedding.  It's not so much
+that the encoder outputs zero or close-to-zero vectors that is the problem.
+The problem is that these vectors are distributed much more densely than the
+embedding vectors are distributed, so they all map to the same nearest
+neighbor.
+
+It is this mapping to the same nearest neighbor that is the root of the
+problem, because that is what allows the two L2 loss terms to go to zero and
+the decoder gradients for the conditioning vector to go to zero.
+
+What can we say about the stability of this setup?  Given a particular
+initialization of weights and biases for the encoder, the distribution of
+output embeddings is determined from the distribution of inputs.  If we could
+characterize this, and initialize the embedding dictionary to a similar
+distribution, would this be stable?  Let's see...well, if this were the case,
+then it is likely that the sets of output embeddings would find distinct
+representatives.  Their movement towards the representatives would not perturb
+them too much.  Also, given that the relative distribution is uniform, a random
+sampling from it would have a much better chance of identifying distinct
+vectors.  (This might require a batch size > 1 though, since the
+window-batching exhibits correlation).  But, given the overall similarity of
+the two distributions (i.e.  relative uniformity) it doesn't seem like the L2
+loss terms would change the *shape* of either distribution, but rather the fine
+structure. 
+
+But, the problem is there is no way to know what sort of shape this
+distribution takes on.  One could make ad-hoc arguments that it has a certain
+range, and perhaps symmetry between different dimensions (i.e. every dimension
+has the same marginal statistics).  And, perhaps symmetry in the marginal
+distribution of each dimension itself, around zero.
+
+These would be sufficient statistics-y types of information.  But, they would
+only be known after running the naive encoder on lots of input data.  It would
+be much more desirable to modify the loss function so that it can't fall into
+this degenerate state.
+
+So, let's test this out.  How about let's initialize the 4096 embedding vectors
+with a sampling from the encoder before any training.  To do this, we would need 
+to pre-run the encoder on some data.  Perhaps it would be good to use different data
+at the outset.  (It will be revisited later, anyhow)
+
+So let's try it!
+
+
+
+ 
+
+
+

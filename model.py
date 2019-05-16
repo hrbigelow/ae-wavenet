@@ -154,6 +154,26 @@ class AutoEncoder(nn.Module):
         self.input_size = self.preprocess.rf.src.nv 
         self.output_size = self.decoder.rf.dst.nv 
 
+    def init_vq_embed(self, batch_gen):
+        """Initialize the VQ Embedding with samples from the encoder."""
+        if self.bn_type != 'vqvae':
+            raise RuntimeError('init_vq_embed only applies to the vqvae model type')
+
+        bn = self.bottleneck
+        n = bn.emb.size()[0]
+        e = 0
+        
+        while e != n:
+            __, voice_inds_np, wav_np = next(batch_gen)
+            __, mels, __, __ = self.preprocess(voice_inds_np, wav_np)
+            encoding = self.encoder(mels)
+            ze = self.bottleneck.linear(encoding)
+            b = ze.size()[0]
+            chunk = min(b, n - e)
+            with torch.no_grad():
+                bn.emb[e:e+chunk] = ze[0:chunk,:,0]
+            e += chunk
+        
         
     def print_offsets(self):
         '''Show the set of offsets for each section of the model'''
