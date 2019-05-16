@@ -153,7 +153,7 @@ class VQLoss(nn.Module):
         total_loss = total_loss_ts.mean()
 
         nh = self.bn.ind_hist / self.bn.ind_hist.sum()
-        hist_ent = - (nh * torch.where(nh == 0, torch.zeros(nh.shape), torch.log(nh))).sum()
+        hist_ent = - (nh * torch.where(nh == 0, nh.new_zeros(nh.size()), torch.log(nh))).sum()
 
         losses = { 
                 'rec': log_pred_loss_ts.mean(),
