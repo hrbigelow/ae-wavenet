@@ -92,7 +92,7 @@ class VQ(nn.Module):
         self.rg = ReplaceGrad()
         self.ze = None
         self.l2norm_min = None
-        self.ind_hist = torch.zeros(self.k) 
+        self.register_buffer('ind_hist', torch.zeros(self.k))
         self.emb = nn.Parameter(data=torch.empty(self.k, self.d))
         netmisc.xavier_init(self.linear)
         nn.init.xavier_uniform_(self.emb, gain=10)
