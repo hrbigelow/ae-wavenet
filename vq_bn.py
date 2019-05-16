@@ -115,7 +115,8 @@ class VQ(nn.Module):
         zq_rg, __ = self.rg(zq, self.ze)
 
         # Diagnostics
-        self.ind_hist.scatter_add_(0, l2norm_min_ind.squeeze(0), torch.ones(ze.shape[2])) 
+        ones = ze.new_ones(ze.shape[2])
+        self.ind_hist.scatter_add_(0, l2norm_min_ind.squeeze(0), ones) 
         self.uniq = l2norm_min_ind.unique(sorted=False)
         #self.ze_norm = (self.ze ** 2).sum(dim=1).sqrt()
         #self.emb_norm = (self.emb ** 2).sum(dim=1).sqrt()
