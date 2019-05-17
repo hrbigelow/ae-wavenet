@@ -97,7 +97,7 @@ def int_hist(ten, ignore_val=None, accu=None):
         mask = ten.ne(ignore_val)
         ten = ten.masked_select(mask)
 
-    ne = ten.max() + 1
+    ne = max(ten.max() + 1, ten.nelement())
     o = ten.new_ones(ne, dtype=torch.float)
     if accu is None:
         z = o.new_zeros(ne)

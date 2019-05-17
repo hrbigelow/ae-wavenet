@@ -8,5 +8,5 @@
     "progress_interval": 10,
     "cpu_only": false,
     "learning_rate_steps": [ 0, 4e6, 6e6, 8e6 ],
-    "learning_rate_rates": [ 4e-4, 2e-4, 1e-4, 5e-5 ] 
+    "learning_rate_rates": [ 4e-6, 2e-4, 1e-4, 5e-5 ] 
 }
