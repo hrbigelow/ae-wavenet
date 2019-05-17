@@ -67,6 +67,10 @@ def main():
     metrics = ae.Metrics(state.model, None)
     batch_gen = state.data.batch_slice_gen_fn()
 
+    for p in list(state.model.encoder.parameters()):
+        with torch.no_grad():
+            p *= 0.1
+
     if state.model.bn_type == 'vqvae':
         state.model.init_vq_embed(batch_gen)
     
