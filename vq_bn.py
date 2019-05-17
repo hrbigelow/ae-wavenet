@@ -161,10 +161,11 @@ class VQLoss(nn.Module):
         com_loss_ts = self.combine(com_loss_embeds.unsqueeze(1))[...,:-1]
         log_pred_loss_ts = - log_pred_target
 
-        #total_loss_ts = log_pred_loss_ts + l2_loss_ts + com_loss_ts
+        # total_loss_ts = log_pred_loss_ts + l2_loss_ts + com_loss_ts
         # total_loss_ts = l2_loss_ts
-        total_loss_ts = com_loss_ts
-        #total_loss_ts = log_pred_loss_ts 
+        # total_loss_ts = com_loss_ts
+        total_loss_ts = log_pred_loss_ts + l2_loss_ts
+        # total_loss_ts = log_pred_loss_ts 
 
         total_loss = total_loss_ts.mean()
 
@@ -180,6 +181,7 @@ class VQLoss(nn.Module):
                 'hist_100': util.entropy(util.int_hist(self.bn.circ_inds, -1), True),
                 #'p_m': log_pred.max(dim=1)[0].to(torch.float).mean(),
                 #'p_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
+                'nunq': self.bn.uniq.nelement(),
                 'unq': self.bn.uniq,
                 #'m_ze': self.bn.ze_norm.max(),
                 #'m_emb': self.bn.emb_norm.max()
