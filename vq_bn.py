@@ -93,6 +93,7 @@ class VQ(nn.Module):
         self.ze = None
         self.l2norm_min = None
         self.register_buffer('ind_hist', torch.zeros(self.k))
+        self.circ_inds = None
         self.emb = nn.Parameter(data=torch.empty(self.k, self.d))
         netmisc.xavier_init(self.linear)
         nn.init.xavier_uniform_(self.emb, gain=10)
@@ -107,6 +108,7 @@ class VQ(nn.Module):
         emb: (K, Q)
         """
         ze = self.linear(z)
+
         self.ze = ze
         sg_emb = self.sg(self.emb)
         l2norm_sq = ((ze.unsqueeze(1) - sg_emb.unsqueeze(2)) ** 2).sum(dim=2) # B, K, N
@@ -115,8 +117,18 @@ class VQ(nn.Module):
         zq_rg, __ = self.rg(zq, self.ze)
 
         # Diagnostics
-        ones = self.emb.new_ones(l2norm_min_ind.nelement())
-        self.ind_hist.scatter_add_(0, l2norm_min_ind.flatten(0), ones) 
+        ni = l2norm_min_ind.nelement() 
+        if self.circ_inds is None:
+            self.write_pos = 0
+            self.circ_inds = ze.new_full((100, ni), -1, dtype=torch.long)
+
+        self.circ_inds[self.write_pos,0:ni] = l2norm_min_ind.flatten(0)
+        self.circ_inds[self.write_pos,ni:] = -1
+        self.write_pos += 1
+        self.write_pos = self.write_pos % 100
+
+        ones = self.emb.new_ones(ni)
+        util.int_hist(l2norm_min_ind, accu=self.ind_hist)
         self.uniq = l2norm_min_ind.unique(sorted=False)
         #self.ze_norm = (self.ze ** 2).sum(dim=1).sqrt()
         #self.emb_norm = (self.emb ** 2).sum(dim=1).sqrt()
@@ -153,7 +165,6 @@ class VQLoss(nn.Module):
         total_loss = total_loss_ts.mean()
 
         nh = self.bn.ind_hist / self.bn.ind_hist.sum()
-        hist_ent = - (nh * torch.where(nh == 0, nh.new_zeros(nh.size()), torch.log(nh))).sum()
 
         losses = { 
                 'rec': log_pred_loss_ts.mean(),
@@ -161,7 +172,8 @@ class VQLoss(nn.Module):
                 'com': com_loss_ts.mean(),
                 'ze_rng': self.bn.ze.max() - self.bn.ze.min(),
                 'emb_rng': self.bn.emb.max() - self.bn.emb.min(),
-                'hist_ent': hist_ent, 
+                'hist_ent': util.entropy(self.bn.ind_hist, True),
+                'hist_100': util.entropy(util.int_hist(self.bn.circ_inds, -1), True),
                 #'p_m': log_pred.max(dim=1)[0].to(torch.float).mean(),
                 #'p_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
                 'unq': self.bn.uniq,

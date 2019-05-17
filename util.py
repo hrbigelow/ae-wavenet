@@ -79,6 +79,33 @@ def mu_decode_torch(quant, n_quanta):
     x = torch.sign(a) * ((1 + mu)**torch.abs(a) - 1) * inv_mu
     return x
 
+def entropy(ten, do_norm=True):
+    if do_norm:
+        s = ten.sum()
+        n = ten / s
+    else:
+        n = ten
+    lv = torch.where(n == 0, n.new_zeros(n.size()), torch.log2(n))
+    return - (n * lv).sum()
+
+def int_hist(ten, ignore_val=None, accu=None):
+    """Return a histogram of the integral-valued tensor"""
+    if ten.is_floating_point():
+        raise RuntimeError('int_hist only works for non-floating-point tensors')
+
+    if ignore_val is not None:
+        mask = ten.ne(ignore_val)
+        ten = ten.masked_select(mask)
+
+    o = ten.new_ones(ten.nelement(), dtype=torch.float)
+    if accu is None:
+        z = o.new_zeros(ten.nelement())
+    else:
+        z = accu
+    z.scatter_add_(0, ten.flatten(), o) 
+    return z
+
+
 """
 torch.index_select(input, d, query), expressed as SQL:
 
