@@ -1,5 +1,8 @@
-from . import data
+print(__package__)
+print(__name__)
+from ae_wavenet import data
 import pickle
+
 
 sample_rate = 16000
 frac_perm_use = 0.1
