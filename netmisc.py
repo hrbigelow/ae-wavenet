@@ -83,17 +83,17 @@ def print_metrics(log_pred, emb, losses, hdr_frequency):
         if isinstance(v, torch.Tensor) and v.numel() == 1:
             v = v.item()
         if isinstance(v, int):
-            fmt = ' {:4d}'
+            fmt = '{:4d}'
         elif isinstance(v, float):
-            fmt = ' {:8.3f}'
+            fmt = '{:10.3f}'
         else:
-            fmt = ' {}' 
+            fmt = '{}' 
         val = fmt.format(v)
         s += sep + val
 
-        hfmt = ' {:' + str(len(val)) + '}'
-        h += '  ' + hfmt.format(k)
-        sep = ', '
+        hfmt = '{:>' + str(len(val)) + '}'
+        h += sep + hfmt.format(k)
+        sep = ' '
 
     if this.print_iter % hdr_frequency == 0:
         print(h, file=stderr)

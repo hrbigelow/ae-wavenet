@@ -223,7 +223,7 @@ class Metrics(object):
         self.softmax = torch.nn.Softmax(1) # input to this is (B, Q, N)
 
     def update(self, batch_gen):
-        __, voice_inds_np, wav_np = next(batch_gen)
+        # __, voice_inds_np, wav_np = next(batch_gen)
         quant_pred_snip, wav_compand_out_snip = self.model.run(batch_gen) 
         self.quant = quant_pred_snip
         self.target = wav_compand_out_snip

@@ -43,12 +43,13 @@ def main():
                 opts.frac_permutation_use, opts.requested_wav_buf_sz)
         dec_params['n_speakers'] = data.num_speakers()
 
-        #with torch.autograd.set_detect_anomaly(True):
         model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params,
                 opts.n_sam_per_slice)
 
         # Construct overall state
         state = checkpoint.State(0, model, data)
+        if state.model.bn_type == 'vqvae':
+            state.model.init_vq_embed(batch_gen)
 
     else:
         state = checkpoint.State()
@@ -67,13 +68,10 @@ def main():
     metrics = ae.Metrics(state.model, None)
     batch_gen = state.data.batch_slice_gen_fn()
 
-    for p in list(state.model.encoder.parameters()):
-        with torch.no_grad():
-            p *= 0.1
+    #for p in list(state.model.encoder.parameters()):
+    #    with torch.no_grad():
+    #        p *= 1 
 
-    if state.model.bn_type == 'vqvae':
-        state.model.init_vq_embed(batch_gen)
-    
     # Start training
     print('Starting training...', file=stderr)
     print('Training parameters used:', file=stderr)
@@ -99,13 +97,20 @@ def main():
         avg_max = metrics.avg_max()
         avg_prob_target = metrics.avg_prob_target()
 
-        for n, p in list(state.model.named_parameters()):
-            g = p.grad
-            if g is None:
-                print('{:60s}\tNone'.format(n))
-            else:
-                fmt='{:60s}\t{:10.5f}\t{:10.5f}\t{:10.5f}\t{:10.5f}'
-                print(fmt.format(n, g.max(), g.min(), g.mean(), g.std()))
+        if state.step % 10 == 5 and state.model.bn_type == 'vqvae':
+            print('Reinitializing embed with current distribution', file=stderr)
+            stderr.flush()
+            state.model.init_vq_embed(batch_gen)
+
+        if False:
+            for n, p in list(state.model.encoder.named_parameters()):
+                g = p.grad
+                if g is None:
+                    print('{:60s}\tNone'.format(n))
+                else:
+                    pass
+                    fmt='{:60s}\t{:10.5f}\t{:10.5f}\t{:10.5f}\t{:10.5f}'
+                    print(fmt.format(n, g.max(), g.min(), g.mean(), g.std()))
 
         # Progress reporting
         if state.step % opts.progress_interval == 0:

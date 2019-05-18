@@ -5,6 +5,38 @@ import librosa
 # If you get 'NoBackendError' exception, try
 # sudo apt-get install libav-tools
 
+"""
+Usage:
+
+import data
+import pickle
+
+sample_rate = 16000
+frac_perm_use = 0.1
+req_wav_buf_sz = 1e7
+sam_file = 'librispeech.dev-clean.rdb'
+n_batch = 4
+input_size = 4000
+output_size = 2000
+
+sample_catalog = data.parse_sample_catalog(sam_file)
+dwav = data.WavSlices(sample_catalog, sample_rate, frac_perm_use, req_wav_buf_sz)
+dwav.set_geometry(n_batch, input_size, output_size)
+batch_gen = dwav.batch_slice_gen_fn()
+
+__, voice_inds, wav = next(batch_gen)
+
+gen_state = pickle.dumps(dwav)
+dwav_r = pickle.loads(gen_state)
+dwav_r.set_geometry(n_batch, input_size, output_size)
+
+batch_gen_r = dwav_r.batch_slice_gen_fn()
+__, voice_inds_r, wav_r = next(batch_gen_r)
+
+assert (voice_inds_r == voice_inds).all()
+assert (wav_r == wav).all()
+
+"""
 class VirtualPermutation(object):
     # closest primes to 2^1, ..., 2^40, generated with:
     # for p in $(seq 1 40); do 
@@ -160,10 +192,14 @@ class WavSlices(object):
                 'req_wav_buf_sz': self.req_wav_buf_sz,
                 'current_epoch': self.current_epoch
                 }
+        #print('WavSlices.__getstate__:', file=stderr)
+        #stderr.flush()
         return state
 
     def __setstate__(self, state):
         '''update the generator state with that checkpointed.'''
+        #print('WavSlices.__setstate__:', state, file=stderr)
+        #stderr.flush()
         self._initialize(state)
 
     def _wav_gen_fn(self, pos):
@@ -264,6 +300,9 @@ class WavSlices(object):
                 while b < self.n_batch:
                     try:
                         wav_file_ind, wav_off, vind, wav_id, wav_slice = next(sg)
+                        print('batch_slice_gen_fn: {}, {}, {}, {}'.format(
+                            wav_file_ind, wav_off, vind, wav_id), file=stderr)
+                        stderr.flush()
                     except StopIteration:
                         sg = self._slice_gen_fn()
                         continue

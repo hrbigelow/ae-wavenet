@@ -96,7 +96,7 @@ class VQ(nn.Module):
         self.circ_inds = None
         self.emb = nn.Parameter(data=torch.empty(self.k, self.d))
         netmisc.xavier_init(self.linear)
-        nn.init.xavier_uniform_(self.emb, gain=10)
+        nn.init.xavier_uniform_(self.emb, gain=1)
 
         # Shows how many of the embedding vectors have non-zero gradients
         #self.emb.register_hook(lambda k: print(k.sum(dim=1).unique(sorted=True)))
@@ -130,8 +130,8 @@ class VQ(nn.Module):
         ones = self.emb.new_ones(ni)
         util.int_hist(l2norm_min_ind, accu=self.ind_hist)
         self.uniq = l2norm_min_ind.unique(sorted=False)
-        #self.ze_norm = (self.ze ** 2).sum(dim=1).sqrt()
-        #self.emb_norm = (self.emb ** 2).sum(dim=1).sqrt()
+        self.ze_norm = (self.ze ** 2).sum(dim=1).sqrt()
+        self.emb_norm = (self.emb ** 2).sum(dim=1).sqrt()
 
         return zq_rg
 
@@ -161,11 +161,13 @@ class VQLoss(nn.Module):
         com_loss_ts = self.combine(com_loss_embeds.unsqueeze(1))[...,:-1]
         log_pred_loss_ts = - log_pred_target
 
-        # total_loss_ts = log_pred_loss_ts + l2_loss_ts + com_loss_ts
+        total_loss_ts = log_pred_loss_ts + l2_loss_ts + com_loss_ts
         # total_loss_ts = l2_loss_ts
         # total_loss_ts = com_loss_ts
-        total_loss_ts = log_pred_loss_ts + l2_loss_ts
+        # total_loss_ts = com_loss_ts + l2_loss_ts
+        # total_loss_ts = log_pred_loss_ts + l2_loss_ts
         # total_loss_ts = log_pred_loss_ts 
+        # total_loss_ts = com_loss_ts - com_loss_ts
 
         total_loss = total_loss_ts.mean()
 
@@ -175,14 +177,18 @@ class VQLoss(nn.Module):
                 'rec': log_pred_loss_ts.mean(),
                 'l2': l2_loss_ts.mean(),
                 'com': com_loss_ts.mean(),
-                'ze_rng': self.bn.ze.max() - self.bn.ze.min(),
-                'emb_rng': self.bn.emb.max() - self.bn.emb.min(),
+                #'ze_rng': self.bn.ze.max() - self.bn.ze.min(),
+                #'emb_rng': self.bn.emb.max() - self.bn.emb.min(),
+                'min_ze': self.bn.ze_norm.min(),
+                'max_ze': self.bn.ze_norm.max(),
+                'min_emb': self.bn.emb_norm.min(),
+                'max_emb': self.bn.emb_norm.max(),
                 'hist_ent': util.entropy(self.bn.ind_hist, True),
                 'hist_100': util.entropy(util.int_hist(self.bn.circ_inds, -1), True),
                 #'p_m': log_pred.max(dim=1)[0].to(torch.float).mean(),
                 #'p_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
                 'nunq': self.bn.uniq.nelement(),
-                'unq': self.bn.uniq,
+                # 'unq': self.bn.uniq,
                 #'m_ze': self.bn.ze_norm.max(),
                 #'m_emb': self.bn.emb_norm.max()
                 }
