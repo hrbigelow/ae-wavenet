@@ -1,5 +1,19 @@
+from hashlib import md5
+from pickle import dumps
 import numpy as np
 import torch
+
+def digest(obj):
+    return md5(dumps(obj)).hexdigest()
+
+def tensor_digest(tensors):
+    try:
+        it = iter(tensors)
+    except TypeError:
+        tensors = list(tensors)
+
+    vals = list(map(lambda t: t.flatten().detach().cpu().numpy().tolist(), tensors))
+    return digest(vals)
 
 def _validate_checkpoint_info(ckpt_dir, ckpt_file_template):
     # Unfortunately, Python doesn't provide a way to hold an open directory

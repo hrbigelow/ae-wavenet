@@ -2,41 +2,17 @@ import numpy as np
 from sys import stderr
 import util
 import librosa
+
 # If you get 'NoBackendError' exception, try
 # sudo apt-get install libav-tools
 
 """
-Usage:
-
-import data
-import pickle
-
-sample_rate = 16000
-frac_perm_use = 0.1
-req_wav_buf_sz = 1e7
-sam_file = 'librispeech.dev-clean.rdb'
-n_batch = 4
-input_size = 4000
-output_size = 2000
-
-sample_catalog = data.parse_sample_catalog(sam_file)
-dwav = data.WavSlices(sample_catalog, sample_rate, frac_perm_use, req_wav_buf_sz)
-dwav.set_geometry(n_batch, input_size, output_size)
-batch_gen = dwav.batch_slice_gen_fn()
-
-__, voice_inds, wav = next(batch_gen)
-
-gen_state = pickle.dumps(dwav)
-dwav_r = pickle.loads(gen_state)
-dwav_r.set_geometry(n_batch, input_size, output_size)
-
-batch_gen_r = dwav_r.batch_slice_gen_fn()
-__, voice_inds_r, wav_r = next(batch_gen_r)
-
-assert (voice_inds_r == voice_inds).all()
-assert (wav_r == wav).all()
+Usage: see test_data.py for example
 
 """
+
+
+
 class VirtualPermutation(object):
     # closest primes to 2^1, ..., 2^40, generated with:
     # for p in $(seq 1 40); do 
@@ -57,11 +33,10 @@ class VirtualPermutation(object):
             raise InvalidArgument
         return cls.primes[ind]
 
-    def __init__(self, rand_state, requested_n_items):
-        self.rand_state = rand_state
+    def __init__(self, requested_n_items):
         self.n_items = self.compute_n_items(requested_n_items)
 
-    def permutation_gen_fn(self, beg, end):
+    def permutation_gen_fn(self, rand, beg, end):
         '''
         # Generate (end - beg) elements of a random permutation of [0, self.n_items) 
         # beg is the logical start position within the virtual permutation.
@@ -79,10 +54,11 @@ class VirtualPermutation(object):
         if not (0 < end <= n):
             raise RuntimeError('end must be between 1 and {}'.format(n))
 
-        a = self.rand_state.randint(0, n, 1, dtype='int64')[0]
+        a = rand.randint(0, n, 1, dtype='int64')[0]
         # We choose a range not too close to 0 or n, so that we get a
         # moderately fast moving circle.
-        b = self.rand_state.randint(n//5, (4*n)//5, 1, dtype='int64')[0]
+        b = rand.randint(n//5, (4*n)//5, 1, dtype='int64')[0]
+        # print('permutation_gen_fn: ', a, b)
         for iter_pos in range(beg, end):
             yield iter_pos, (a + iter_pos*b) % n
 
@@ -125,6 +101,10 @@ class WavSlices(object):
     Also, if the user memory (requested_wav_buf_sz) is as large as the full
     data set, then the order will be globally random, and frac_perm_use
     should be set to 1 in order to minimize buffer reloads.
+
+    The final generator chains together three generators.  Each of them maintains
+    its position at all times by updating member variables just before each yield.
+
     '''
 
     def __init__(self, sample_catalog, sample_rate, frac_perm_use,
@@ -139,20 +119,19 @@ class WavSlices(object):
 
     def _initialize(self, state):
         '''Shared initialization code for __init__ and __setstate__'''
-        # Used in checkpointing state
-        self.wavgen_rand_state = None
-        self.wavgen_pos = None 
-        self.lead_wavgen_rand_state = None 
-        self.lead_wavgen_pos = None 
-        self.perm_gen_pos = None 
+        # Used in checkpointing state.  These values will be overridden by
+        # state if provided
+        self.rand = np.random.mtrand.RandomState()
+        self.rand_state = self.rand.get_state()
+        self.sg_rand = np.random.mtrand.RandomState()
+        self.sg_rand_state = self.sg_rand.get_state()
+        self.init_wavgen_pos = 0 
+        self.perm_gen_pos = 0 
         self.current_epoch = 1 
-        self.rand_state = np.random.mtrand.RandomState()
         
-        brs_key = 'buffer_rand_state'
-        self.__dict__.update({ k:v for k,v in state.items() if k != brs_key})
-        rs = state.get(brs_key)
-        if rs is not None:
-            self.rand_state.set_state(rs)
+        self.__dict__.update(state)
+        self.rand.set_state(self.rand_state)
+        self.sg_rand.set_state(self.sg_rand_state)
 
         if not (0 <= self.frac_perm_use <= 1.0):
             raise ValueError('frac_perm_use must be between 0 and 1.  got '
@@ -163,6 +142,12 @@ class WavSlices(object):
         self.wav_ids = []
         self.vstart = []
         self.speaker_id_map = dict((v,k) for k,v in enumerate(self.speaker_ids()))
+
+    def __repr__(self):
+        fmt = 'rand_state: {}, sg_rand_state: {}, init_wavgen_pos: {}, perm_gen_pos: {}\n'
+        return fmt.format(util.digest(self.rand_state),
+                util.digest(self.sg_rand_state), self.init_wavgen_pos,
+                self.perm_gen_pos)
 
     def speaker_ids(self):
         return set(id for id,__ in self.sample_catalog)
@@ -175,16 +160,15 @@ class WavSlices(object):
         self.n_sample_win = n_sam_per_slice
         self.slice_size = slice_size 
         est_n_slices = int(self.req_wav_buf_sz / self.n_sample_win)
-        self.perm = VirtualPermutation(self.rand_state, est_n_slices)
+        self.perm = VirtualPermutation(est_n_slices)
 
     def __getstate__(self):
         '''Return the state of this data generator.  Analogous to
         torch.nn.Module.state_dict()'''
-        if self.buffer_rand_state is None:
-            raise RuntimeError('No generator created yet, so no checkpoint defined.')
         state = {
-                'buffer_rand_state': self.buffer_rand_state,
-                'buffer_pos': self.buffer_pos,
+                'rand_state': self.rand_state,
+                'sg_rand_state': self.sg_rand_state,
+                'init_wavgen_pos': self.init_wavgen_pos,
                 'perm_gen_pos': self.perm_gen_pos,
                 'sample_catalog': self.sample_catalog,
                 'sample_rate': self.sample_rate,
@@ -192,90 +176,91 @@ class WavSlices(object):
                 'req_wav_buf_sz': self.req_wav_buf_sz,
                 'current_epoch': self.current_epoch
                 }
-        #print('WavSlices.__getstate__:', file=stderr)
-        #stderr.flush()
         return state
 
     def __setstate__(self, state):
         '''update the generator state with that checkpointed.'''
-        #print('WavSlices.__setstate__:', state, file=stderr)
-        #stderr.flush()
         self._initialize(state)
 
-    def _wav_gen_fn(self, pos):
+    def _wav_gen_fn(self):
         '''random order generation of one epoch of whole wav files.'''
-        # State for save/restore
-        self.wavgen_rand_state = self.rand_state.get_state()
-        self.wavgen_pos = pos
+        # State determined by self.rand_state and self.wavgen_pos.
+        # Only called inside _load_wav_buffer
+        pos = self.wavgen_pos
+        self.wavgen_rand_state = self.rand.get_state()
+        shuffle_index = self.rand.permutation(len(self.sample_catalog))
+        # print('Digest of shuffle index: ', util.digest(shuffle_index))
+        shuffle_catalog = [self.sample_catalog[i] for i in shuffle_index] 
 
         def gen_fn():
-            shuffle_index = self.rand_state.permutation(len(self.sample_catalog))
-            shuffle_catalog = [self.sample_catalog[i] for i in shuffle_index] 
             for iter_pos, s in enumerate(shuffle_catalog[pos:], pos):
                 vid, wav_path = s[0], s[1]
                 wav, _ = librosa.load(wav_path, self.sample_rate)
                 # print('Parsing ', wav_path, file=stderr)
-                self.wavgen_pos = iter_pos
+                self.wavgen_pos = iter_pos + 1
                 yield iter_pos, vid, wav
 
             # Completed a full epoch
             print('Data: finished epoch {}'.format(self.current_epoch), file=stderr)
             self.current_epoch += 1
+            self.wavgen_pos = 0
 
         return gen_fn()
 
-    def _load_wav_buffer(self):
+    def _load_wav_buffer(self, offset):
         '''Fully load the wav file buffer, which is a list of full wav arrays
         taking up up to the requested memory size.
-        
-        Consumes remaining contents of current wav_gen, reissuing generators as
-        needed.  This function relies on the checkpoint state through
-        self.wav_gen and self.rand_state
         '''
         vpos = 0
         self.wav_buf = []
         self.wav_ids = []
         self.vstart = []
 
-        if self.wav_gen is None:
-            self.wav_gen = self._wav_gen_fn(0)
+        last_v_start = offset + (self.perm.n_items - 1) * self.n_sample_win
+        #print('Calling _load_wav_buffer with ', util.digest(self.wavgen_rand_state),
+        #        self.wavgen_pos)
 
-        # State information for save/restore.
-        self.buffer_rand_state = self.wavgen_rand_state
-        self.buffer_pos = self.wavgen_pos
-
-        self.offset = self.rand_state.randint(0, self.n_sample_win, 1, dtype='int32')[0] 
-        last_v_start = self.offset + (self.perm.n_items - 1) * self.n_sample_win
+        first_iter_pos = None
         while vpos < last_v_start:
             try:
                 iter_pos, vid, wav = next(self.wav_gen)
             except StopIteration:
-                self.wav_gen = self._wav_gen_fn(0)
+                self.wav_gen = self._wav_gen_fn()
                 iter_pos, vid, wav = next(self.wav_gen)
 
             self.wav_buf.append(wav)
             self.wav_ids.append(vid)
             self.vstart.append(vpos)
             vpos += len(wav) - self.slice_size
-        # print('Data: loaded wav buffer', file=stderr)
+        # print('Got digest ', util.digest(self.wav_buf))
+
 
     def _slice_gen_fn(self):
         '''Extracts slices from the wav buffer (see self._load_wav_buffer) in 
         a random permutation ordering.  Only extracts a fraction of the total
         available slices (set by self.frac_perm_use) before exhausting.
         '''
-        # State for save/restore: self.perm_gen_pos
-        self._load_wav_buffer()
-        if self.perm_gen_pos is None:
-            self.perm_gen_pos = 0
+        if self.wav_gen is None:
+            # In 'restore' mode.  Restore all state variables from saved values
+            self.rand.set_state(self.rand_state)
+            self.sg_rand.set_state(self.sg_rand_state)
+            self.wavgen_pos = self.init_wavgen_pos
+            self.wav_gen = self._wav_gen_fn()
+        else:
+            # In continue mode.  Save state variables
+            self.rand_state = self.wavgen_rand_state
+            self.sg_rand_state = self.sg_rand.get_state()
+            self.init_wavgen_pos = self.wavgen_pos
+
+        offset = self.sg_rand.randint(0, self.n_sample_win, 1, dtype='int32')[0] 
+        perm_gen = self.perm.permutation_gen_fn(self.sg_rand,
+                self.perm_gen_pos, int(self.perm.n_items * self.frac_perm_use))
+
+        self._load_wav_buffer(offset)
 
         def gen_fn():
-            # random state for self.perm is determined from
-            # self.wav_buffer_rand_state, so don't need to store it.
-            perm_gen = self.perm.permutation_gen_fn(self.perm_gen_pos,
-                    int(self.perm.n_items * self.frac_perm_use))
             for iter_pos, vind in perm_gen:
-                vpos = self.offset + vind * self.n_sample_win
+                vpos = offset + vind * self.n_sample_win
                 wav_file_ind = util.greatest_lower_bound(self.vstart, vpos)
                 wav_off = vpos - self.vstart[wav_file_ind]
 
@@ -284,13 +269,15 @@ class WavSlices(object):
                 yield wav_file_ind, wav_off, vind, \
                         self.wav_ids[wav_file_ind], \
                         self.wav_buf[wav_file_ind][wav_off:wav_off + self.slice_size]
-
-            # We've exhausted the iterator, next position should be zero
+            # Reset state variables 
             self.perm_gen_pos = 0
+
         return gen_fn()
 
     def batch_slice_gen_fn(self):
-        '''infinite generator for batched slices of wav files'''
+        '''infinite generator for batched slices of wav files.
+        State of returned generator depends only on sg, which is
+        created from self._slice_gen_fn()'''
         def gen_fn(sg):
             b = 0
             wavs = np.empty((self.n_batch, self.slice_size), dtype='float32')
@@ -300,9 +287,9 @@ class WavSlices(object):
                 while b < self.n_batch:
                     try:
                         wav_file_ind, wav_off, vind, wav_id, wav_slice = next(sg)
-                        print('batch_slice_gen_fn: {}, {}, {}, {}'.format(
-                            wav_file_ind, wav_off, vind, wav_id), file=stderr)
-                        stderr.flush()
+                        #print('batch_slice_gen_fn: {}, {}, {}, {}'.format(
+                        #    wav_file_ind, wav_off, vind, wav_id), file=stderr)
+                        #stderr.flush()
                     except StopIteration:
                         sg = self._slice_gen_fn()
                         continue

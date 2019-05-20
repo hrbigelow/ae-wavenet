@@ -1,17 +1,19 @@
 # Full Autoencoder model
-import mfcc
-import wave_encoder as enc
-import vq_bn
-import vae_bn
-import ae_bn
-import wavenet as dec 
-import util
+from hashlib import md5
+import numpy as np
+from pickle import dumps
 import torch
 from torch import nn
 from torch.nn.modules import loss
-import rfield
-import numpy as np
 
+import ae_bn
+import mfcc
+import rfield
+import util
+import vq_bn
+import vae_bn
+import wave_encoder as enc
+import wavenet as dec 
 
 # from numpy import vectorize as np_vectorize
 class PreProcess(nn.Module):
@@ -119,8 +121,7 @@ class AutoEncoder(nn.Module):
     def __getstate__(self):
         state = { 
                 'args': self.args,
-                'state_dict': self.state_dict(),
-                'rand_state': torch.default_generator.get_state()
+                'state_dict': self.state_dict()
                 }
         return state 
 
@@ -128,8 +129,6 @@ class AutoEncoder(nn.Module):
         self.args = state['args']
         self._initialize()
         self.load_state_dict(state['state_dict'])
-        if 'rand_state' in state:
-            torch.default_generator.set_state(state['rand_state'])
 
     def set_geometry(self):
         '''Compute the timestep offsets between the window boundaries of the
@@ -174,6 +173,9 @@ class AutoEncoder(nn.Module):
                 bn.emb[e:e+chunk] = ze[0:chunk,:,0]
             e += chunk
         
+    def checksum(self):
+        '''Return checksum of entire set of model parameters'''
+        return util.tensor_digest(self.parameters())
         
     def print_offsets(self):
         '''Show the set of offsets for each section of the model'''
@@ -215,16 +217,15 @@ class AutoEncoder(nn.Module):
 
 class Metrics(object):
     '''Manage running the model and saving output and target state'''
-    def __init__(self, model, optim):
-        self.model = model
-        self.optim = optim
+    def __init__(self, state):
+        self.state = state
         self.quant = None
         self.target = None
         self.softmax = torch.nn.Softmax(1) # input to this is (B, Q, N)
 
     def update(self, batch_gen):
         # __, voice_inds_np, wav_np = next(batch_gen)
-        quant_pred_snip, wav_compand_out_snip = self.model.run(batch_gen) 
+        quant_pred_snip, wav_compand_out_snip = self.state.model.run(batch_gen) 
         self.quant = quant_pred_snip
         self.target = wav_compand_out_snip
         self.probs = self.softmax(self.quant)
@@ -233,8 +234,8 @@ class Metrics(object):
         '''This is the closure needed for the optimizer'''
         if self.quant is None or self.target is None:
             raise RuntimeError('Must call update() first')
-        self.optim.zero_grad()
-        loss = self.model.objective(self.quant, self.target)
+        self.state.optim.zero_grad()
+        loss = self.state.model.objective(self.quant, self.target)
         loss.backward()
         return loss
     

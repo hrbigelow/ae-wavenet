@@ -5,6 +5,7 @@ import util
 import parse_tools  
 import sys
 import checkpoint
+import netmisc
 from sys import stderr
 
 def main():
@@ -24,10 +25,14 @@ def main():
     opts.device = None
     if not opts.disable_cuda and torch.cuda.is_available():
         opts.device = torch.device('cuda')
+        print('Using CUDA', file=stderr)
     else:
         opts.device = torch.device('cpu') 
+        print('Using CPU', file=stderr)
+    stderr.flush()
 
     ckpt_path = util.CheckpointPath(opts.ckpt_template)
+    learning_rates = dict(zip(opts.learning_rate_steps, opts.learning_rate_rates))
 
     # Construct model
     if mode == 'new':
@@ -45,27 +50,28 @@ def main():
 
         model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params,
                 opts.n_sam_per_slice)
-
-        # Construct overall state
-        state = checkpoint.State(0, model, data)
-        if state.model.bn_type == 'vqvae':
-            state.model.init_vq_embed(batch_gen)
+        optim = torch.optim.Adam(params=model.parameters(), lr=learning_rates[0])
+        state = checkpoint.State(0, model, data, optim)
 
     else:
         state = checkpoint.State()
         state.load(opts.ckpt_file)
         state.model.set_slice_size(opts.n_sam_per_slice)
-        print('Restored model and data from {}'.format(opts.ckpt_file), file=stderr)
+        print('Restored model, data, and optim from {}'.format(opts.ckpt_file), file=stderr)
+        #print('Data state: {}'.format(state.data), file=stderr)
+        #print('Model state: {}'.format(state.model.checksum()))
+        #print('Optim state: {}'.format(state.optim_checksum()))
+        stderr.flush()
 
+    start_step = state.step
+    netmisc.set_print_iter(start_step)
 
     state.data.set_geometry(opts.n_batch, state.model.input_size,
             state.model.output_size)
-
-    state.model.to(device=opts.device)
+    state.to(device=opts.device)
 
     # Initialize optimizer
-    model_params = state.model.parameters()
-    metrics = ae.Metrics(state.model, None)
+    metrics = ae.Metrics(state)
     batch_gen = state.data.batch_slice_gen_fn()
 
     #for p in list(state.model.encoder.parameters()):
@@ -74,30 +80,25 @@ def main():
 
     # Start training
     print('Starting training...', file=stderr)
-    print('Training parameters used:', file=stderr)
-    print(opts)
-    print("Step\tLoss\tAvProbTrg\tPeakDist\tAvgMax", file=stderr)
+    print('Training parameters used:', opts, file=stderr)
+    hdr_fmt = 'M\t{:s}\t{:s}\t{:s}\t{:s}\t{:s}'
+    print(hdr_fmt.format('Step', 'Loss', 'AvProbTrg', 'PeakDist', 'AvgMax'), file=stderr)
     stderr.flush()
 
-    learning_rates = dict(zip(opts.learning_rate_steps, opts.learning_rate_rates))
-    start_step = state.step
-    if start_step not in learning_rates:
-        ref_step = util.greatest_lower_bound(opts.learning_rate_steps, start_step)
-        metrics.optim = torch.optim.Adam(params=model_params,
-                lr=learning_rates[ref_step])
+    state.init_torch_generator()
+    #print('Generator state: {}'.format(util.tensor_digest(torch.get_rng_state())))
 
     while state.step < opts.max_steps:
-        if state.step in learning_rates:
-            metrics.optim = torch.optim.Adam(params=model_params,
-                    lr=learning_rates[state.step])
+        #if state.step in learning_rates:
+        #    state.update_learning_rate(learning_rates[state.step])
         # do 'pip install --upgrade scipy' if you get 'FutureWarning: ...'
         metrics.update(batch_gen)
-        loss = metrics.optim.step(metrics.loss)
+        loss = metrics.state.optim.step(metrics.loss)
         avg_peak_dist = metrics.peak_dist()
         avg_max = metrics.avg_max()
         avg_prob_target = metrics.avg_prob_target()
 
-        if state.step % 10 == 5 and state.model.bn_type == 'vqvae':
+        if state.step % 500 == 5 and state.step < 3000 and state.model.bn_type == 'vqvae':
             print('Reinitializing embed with current distribution', file=stderr)
             stderr.flush()
             state.model.init_vq_embed(batch_gen)
@@ -108,24 +109,30 @@ def main():
                 if g is None:
                     print('{:60s}\tNone'.format(n))
                 else:
-                    pass
-                    fmt='{:60s}\t{:10.5f}\t{:10.5f}\t{:10.5f}\t{:10.5f}'
+                    fmt='{:s}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}'
                     print(fmt.format(n, g.max(), g.min(), g.mean(), g.std()))
 
         # Progress reporting
         if state.step % opts.progress_interval == 0:
-            fmt = "{}\t{:10.5f}\t{:10.5f}\t{:10.5f}\t{:10.5f}"
+            fmt = "M\t{:d}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
             print(fmt.format(state.step, loss, avg_prob_target, avg_peak_dist,
                 avg_max), file=stderr)
             stderr.flush()
+        
+        state.step += 1
 
         # Checkpointing
         if state.step % opts.save_interval == 0 and state.step != start_step:
             ckpt_file = ckpt_path.path(state.step)
             state.save(ckpt_file)
             print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
+            #print('Model state: {}'.format(state.model.checksum()), file=stderr)
+            #print('Generator state: {}'.format(util.tensor_digest(torch.get_rng_state())),
+            #        file=stderr)
+            #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
+            # print('Data position: ', state.data, file=stderr)
+            stderr.flush()
 
-        state.step += 1
 
 if __name__ == '__main__':
     main()

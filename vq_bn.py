@@ -192,7 +192,7 @@ class VQLoss(nn.Module):
                 #'m_ze': self.bn.ze_norm.max(),
                 #'m_emb': self.bn.emb_norm.max()
                 }
-        netmisc.print_metrics(log_pred, self.bn.emb, losses, 50)
+        netmisc.print_metrics(log_pred, self.bn.emb, losses, 10000000)
 
         return total_loss
 
