@@ -189,6 +189,7 @@ class VQLoss(nn.Module):
                 #'p_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
                 'nunq': self.bn.uniq.nelement(),
                 'peak_mean': log_pred.max(dim=1)[0].to(torch.float).mean(),
+                'peak_nunq': log_pred.max(dim=1)[1].unique().nelement(),
                 'peak_unq': log_pred.max(dim=1)[1].unique(),
                 'peak_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
                 # 'unq': self.bn.uniq,
