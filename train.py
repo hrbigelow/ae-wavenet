@@ -12,6 +12,8 @@ def main():
     if len(sys.argv) == 1 or sys.argv[1] not in ('new', 'resume'):
         print(parse_tools.top_usage, file=stderr)
         return
+    print('Command line: ', ' '.join(sys.argv), file=stderr)
+    stderr.flush()
 
     mode = sys.argv[1]
     del sys.argv[1]
@@ -25,7 +27,7 @@ def main():
     opts.device = None
     if not opts.disable_cuda and torch.cuda.is_available():
         opts.device = torch.device('cuda')
-        print('Using CUDA', file=stderr)
+        print('Using GPU', file=stderr)
     else:
         opts.device = torch.device('cpu') 
         print('Using CPU', file=stderr)
@@ -79,7 +81,6 @@ def main():
     #        p *= 1 
 
     # Start training
-    print('Starting training...', file=stderr)
     print('Training parameters used:', opts, file=stderr)
     hdr_fmt = 'M\t{:s}\t{:s}\t{:s}\t{:s}\t{:s}'
     print(hdr_fmt.format('Step', 'Loss', 'AvProbTrg', 'PeakDist', 'AvgMax'), file=stderr)
@@ -107,10 +108,10 @@ def main():
             for n, p in list(state.model.encoder.named_parameters()):
                 g = p.grad
                 if g is None:
-                    print('{:60s}\tNone'.format(n))
+                    print('{:60s}\tNone'.format(n), file=stderr)
                 else:
                     fmt='{:s}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}'
-                    print(fmt.format(n, g.max(), g.min(), g.mean(), g.std()))
+                    print(fmt.format(n, g.max(), g.min(), g.mean(), g.std()), file=stderr)
 
         # Progress reporting
         if state.step % opts.progress_interval == 0:

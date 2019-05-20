@@ -15,6 +15,7 @@ First runs using vqvae mode.  After ~200 iterations, only one quantized vector i
 used as a representative.  Currently troubleshooting.
 
 
+
 # TODO
 1. VAE and VQVAE versions of the bottleneck / training objectives [DONE]
 2. Inference mode
