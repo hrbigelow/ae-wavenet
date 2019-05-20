@@ -20,7 +20,7 @@ def train_parser():
             help='Maximum number of training steps')
     train.add_argument('--save-interval', '-si', type=int, default=1000, metavar='INT',
             help='Save a checkpoint after this many steps each time')
-    train.add_argument('--progress-interval', '-pi', type=int, default=10, metavar='INT',
+    train.add_argument('--progress-interval', '-pi', type=int, default=1, metavar='INT',
             help='Print a progress message at this interval')
     train.add_argument('--disable-cuda', '-dc', action='store_true', default=False,
             help='If present, do all computation on CPU')

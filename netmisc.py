@@ -63,28 +63,13 @@ def set_print_iter(pos):
     this.print_iter = pos
 
 
-def print_metrics(log_pred, emb, losses, hdr_frequency):
-    peak_mean = log_pred.max(dim=1)[0].to(torch.float).mean()
-    peak_unq = log_pred.max(dim=1)[1].unique()
-    peak_sd = log_pred.max(dim=1)[0].to(torch.float).std()
-
-    emb0 = emb - emb.mean(dim=0)
-    chan_var = (emb0 ** 2).sum(dim=0)
-    chan_covar = torch.matmul(emb0.transpose(1, 0), emb0) - torch.diag(chan_var)
-
+def print_metrics(step, losses, hdr_frequency):
     nlstrip = re.compile('\\n\s+')
-    h, s, sep = 'S', 'S', '\t'
+    sep = '\t'
+    h = 'S\tStep'
+    s = 'S\t{}'.format(step)
     d = dict(losses)
-    d.update({
-        'peak_mean': peak_mean,
-        'peak_sd': peak_sd,
-        'peak_nunq': peak_unq.nelement(),
-        'peak_unq': peak_unq,
-        #'emb_var_min': chan_var.min(),
-        #'emb_var_max': chan_var.max(),
-        #'emb_covar_min': chan_covar.min(),
-        #'emb_covar_max': chan_covar.max()
-        })
+
     for k, v in d.items():
         if isinstance(v, torch.Tensor) and v.numel() == 1:
             v = v.item()
@@ -96,11 +81,7 @@ def print_metrics(log_pred, emb, losses, hdr_frequency):
             fmt = '{}' 
         val = nlstrip.sub(' ', fmt.format(v))
         s += sep + val
-
-        #hfmt = '{:>' + str(len(val)) + '}'
-        hfmt = '{}'
-        h += sep + hfmt.format(k)
-        #sep = '\t'
+        h += sep + '{}'.format(k)
 
     if this.print_iter % hdr_frequency == 0:
         print(h, file=stderr)

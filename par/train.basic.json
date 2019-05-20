@@ -5,7 +5,7 @@
     "requested_wav_buf_sz": 1e7,
     "max_steps": 1e20,
     "save_interval": 1000,
-    "progress_interval": 10,
+    "progress_interval": 1,
     "cpu_only": false,
     "learning_rate_steps": [ 0, 4e6, 6e6, 8e6 ],
     "learning_rate_rates": [ 4e-4, 2e-4, 1e-4, 5e-5 ] 

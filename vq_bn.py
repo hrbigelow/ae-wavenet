@@ -173,7 +173,7 @@ class VQLoss(nn.Module):
 
         nh = self.bn.ind_hist / self.bn.ind_hist.sum()
 
-        losses = { 
+        self.metrics = { 
                 'rec': log_pred_loss_ts.mean(),
                 'l2': l2_loss_ts.mean(),
                 'com': com_loss_ts.mean(),
@@ -188,11 +188,17 @@ class VQLoss(nn.Module):
                 #'p_m': log_pred.max(dim=1)[0].to(torch.float).mean(),
                 #'p_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
                 'nunq': self.bn.uniq.nelement(),
+                'peak_mean': log_pred.max(dim=1)[0].to(torch.float).mean(),
+                'peak_unq': log_pred.max(dim=1)[1].unique(),
+                'peak_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
                 # 'unq': self.bn.uniq,
                 #'m_ze': self.bn.ze_norm.max(),
                 #'m_emb': self.bn.emb_norm.max()
+                #emb0 = emb - emb.mean(dim=0)
+                #chan_var = (emb0 ** 2).sum(dim=0)
+                #chan_covar = torch.matmul(emb0.transpose(1, 0), emb0) - torch.diag(chan_var)
                 }
-        netmisc.print_metrics(log_pred, self.bn.emb, losses, 10000000)
+        # netmisc.print_metrics(losses, 10000000)
 
         return total_loss
 

@@ -1,17 +1,19 @@
+import sys
+from sys import stderr
 import torch
+
 import model as ae
 import data as D 
 import util
 import parse_tools  
-import sys
 import checkpoint
 import netmisc
-from sys import stderr
 
 def main():
     if len(sys.argv) == 1 or sys.argv[1] not in ('new', 'resume'):
         print(parse_tools.top_usage, file=stderr)
         return
+
     print('Command line: ', ' '.join(sys.argv), file=stderr)
     stderr.flush()
 
@@ -118,6 +120,9 @@ def main():
             fmt = "M\t{:d}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
             print(fmt.format(state.step, loss, avg_prob_target, avg_peak_dist,
                 avg_max), file=stderr)
+            if state.model.bn_type == 'vqvae':
+                netmisc.print_metrics(state.step,
+                        state.model.objective.metrics, 1000000)
             stderr.flush()
         
         state.step += 1
