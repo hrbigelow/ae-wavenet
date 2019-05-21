@@ -68,6 +68,11 @@ def main():
         stderr.flush()
 
     start_step = state.step
+
+    print('Model input size: {}'.format(state.model.input_size), file=stderr)
+    stderr.flush()
+
+    # set this to zero if you want to print out a logging header in resume mode as well
     netmisc.set_print_iter(start_step)
 
     state.data.set_geometry(opts.n_batch, state.model.input_size,

@@ -2,7 +2,7 @@
     "n_batch": 16,
     "n_sam_per_slice": 100,
     "frac_permutation_use": 0.1,
-    "requested_wav_buf_sz": 1e7,
+    "requested_wav_buf_sz": 1e8,
     "max_steps": 1e20,
     "save_interval": 1000,
     "progress_interval": 1,
