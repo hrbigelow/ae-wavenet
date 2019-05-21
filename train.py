@@ -73,7 +73,7 @@ def main():
     stderr.flush()
 
     # set this to zero if you want to print out a logging header in resume mode as well
-    netmisc.set_print_iter(start_step)
+    netmisc.set_print_iter(0)
 
     state.data.set_geometry(opts.n_batch, state.model.input_size,
             state.model.output_size)
@@ -89,9 +89,6 @@ def main():
 
     # Start training
     print('Training parameters used:', opts, file=stderr)
-    hdr_fmt = 'M\t{:s}\t{:s}\t{:s}\t{:s}\t{:s}'
-    print(hdr_fmt.format('Step', 'Loss', 'AvProbTrg', 'PeakDist', 'AvgMax'), file=stderr)
-    stderr.flush()
 
     state.init_torch_generator()
     #print('Generator state: {}'.format(util.tensor_digest(torch.get_rng_state())))
@@ -106,7 +103,7 @@ def main():
         avg_max = metrics.avg_max()
         avg_prob_target = metrics.avg_prob_target()
 
-        if state.step % 500 == 5 and state.step < 3000 and state.model.bn_type == 'vqvae':
+        if state.step in (10, 100, 300, 500) and state.model.bn_type == 'vqvae':
             print('Reinitializing embed with current distribution', file=stderr)
             stderr.flush()
             state.model.init_vq_embed(batch_gen)
@@ -122,18 +119,26 @@ def main():
 
         # Progress reporting
         if state.step % opts.progress_interval == 0:
-            fmt = "M\t{:d}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
-            print(fmt.format(state.step, loss, avg_prob_target, avg_peak_dist,
-                avg_max), file=stderr)
+            current_stats = {
+                    'step': state.step,
+                    'loss': loss,
+                    'tprob_m': avg_prob_target,
+                    'peak_dist_m': avg_peak_dist
+                    }
+            #fmt = "M\t{:d}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
+            #print(fmt.format(state.step, loss, avg_prob_target, avg_peak_dist,
+            #    avg_max), file=stderr)
             if state.model.bn_type == 'vqvae':
-                netmisc.print_metrics(state.step,
-                        state.model.objective.metrics, 1000000)
+                current_stats.update(state.model.objective.metrics)
+                
+            netmisc.print_metrics(current_stats, 1000000)
             stderr.flush()
         
         state.step += 1
 
         # Checkpointing
-        if state.step % opts.save_interval == 0 and state.step != start_step:
+        if ((state.step % opts.save_interval == 0 and state.step != start_step) or
+                (mode == 'new' and state.step == 1)):
             ckpt_file = ckpt_path.path(state.step)
             state.save(ckpt_file)
             print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)

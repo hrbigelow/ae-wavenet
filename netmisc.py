@@ -63,12 +63,12 @@ def set_print_iter(pos):
     this.print_iter = pos
 
 
-def print_metrics(step, losses, hdr_frequency):
+def print_metrics(metrics, hdr_frequency):
     nlstrip = re.compile('\\n\s+')
-    sep = '\t'
-    h = 'S\tStep'
-    s = 'S\t{}'.format(step)
-    d = dict(losses)
+    sep = ''
+    h = ''
+    s = ''
+    d = dict(metrics)
 
     for k, v in d.items():
         if isinstance(v, torch.Tensor) and v.numel() == 1:
@@ -82,6 +82,7 @@ def print_metrics(step, losses, hdr_frequency):
         val = nlstrip.sub(' ', fmt.format(v))
         s += sep + val
         h += sep + '{}'.format(k)
+        sep = '\t'
 
     if this.print_iter % hdr_frequency == 0:
         print(h, file=stderr)
