@@ -73,6 +73,7 @@ class Encoder(nn.Module):
         '''
         assert self.beg_rf.src.nv == mels.shape[2]
         out = self.net(mels)
+        #out = torch.tanh(out * 10.0)
         assert self.rf.dst.nv == out.shape[2]
         return out
 

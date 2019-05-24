@@ -36,6 +36,8 @@ class _Stats(object):
         return ' '.join([l_pad, body, r_pad])
 
     def span(self):
+        if self.nv is None:
+            return None
         return (self.nv - 1) * self.vspc + self.l_pos - self.r_pos + 1
 
     def gen(self):

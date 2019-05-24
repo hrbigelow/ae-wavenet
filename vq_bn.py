@@ -157,11 +157,17 @@ class VQLoss(nn.Module):
         log_pred_target = torch.gather(log_pred, 1, target_wav.unsqueeze(1))
 
         # Loss per timestep
+        rec_loss_ts = - log_pred_target
         l2_loss_ts = self.combine(l2_loss_embeds.unsqueeze(1))[...,:-1]
         com_loss_ts = self.combine(com_loss_embeds.unsqueeze(1))[...,:-1]
-        log_pred_loss_ts = - log_pred_target
 
-        total_loss_ts = log_pred_loss_ts + l2_loss_ts + com_loss_ts
+        # Use only a subset of the overlapping windows
+        sl = slice(0, 1)
+        rec_loss_sel = rec_loss_ts[...,sl]
+        l2_loss_sel = l2_loss_ts[...,sl]
+        com_loss_sel = com_loss_ts[...,sl]
+        
+        total_loss_sel = rec_loss_sel + l2_loss_sel + com_loss_sel
         # total_loss_ts = l2_loss_ts
         # total_loss_ts = com_loss_ts
         # total_loss_ts = com_loss_ts + l2_loss_ts
@@ -169,29 +175,29 @@ class VQLoss(nn.Module):
         # total_loss_ts = log_pred_loss_ts 
         # total_loss_ts = com_loss_ts - com_loss_ts
 
-        total_loss = total_loss_ts.mean()
+        total_loss = total_loss_sel.mean()
 
         nh = self.bn.ind_hist / self.bn.ind_hist.sum()
 
         self.metrics = { 
-                'rec': log_pred_loss_ts.mean(),
-                'l2': l2_loss_ts.mean(),
-                'com': com_loss_ts.mean(),
+                'rec': rec_loss_sel.mean(),
+                'l2': l2_loss_sel.mean(),
+                'com': com_loss_sel.mean(),
                 #'ze_rng': self.bn.ze.max() - self.bn.ze.min(),
                 #'emb_rng': self.bn.emb.max() - self.bn.emb.min(),
                 'min_ze': self.bn.ze_norm.min(),
                 'max_ze': self.bn.ze_norm.max(),
                 'min_emb': self.bn.emb_norm.min(),
                 'max_emb': self.bn.emb_norm.max(),
-                'hist_ent': util.entropy(self.bn.ind_hist, True),
-                'hist_100': util.entropy(util.int_hist(self.bn.circ_inds, -1), True),
+                'hst_ent': util.entropy(self.bn.ind_hist, True),
+                'hst_100': util.entropy(util.int_hist(self.bn.circ_inds, -1), True),
                 #'p_m': log_pred.max(dim=1)[0].to(torch.float).mean(),
                 #'p_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
                 'nunq': self.bn.uniq.nelement(),
-                'peak_mean': log_pred.max(dim=1)[0].to(torch.float).mean(),
-                'peak_nunq': log_pred.max(dim=1)[1].unique().nelement(),
-                'peak_unq': log_pred.max(dim=1)[1].unique(),
-                'peak_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
+                'pk_m': log_pred.max(dim=1)[0].to(torch.float).mean(),
+                'pk_nuq': log_pred.max(dim=1)[1].unique().nelement(),
+                # 'peak_unq': log_pred.max(dim=1)[1].unique(),
+                'pk_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
                 # 'unq': self.bn.uniq,
                 #'m_ze': self.bn.ze_norm.max(),
                 #'m_emb': self.bn.emb_norm.max()

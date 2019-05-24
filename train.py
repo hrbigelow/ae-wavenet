@@ -1,5 +1,6 @@
 import sys
 from sys import stderr
+from pprint import pprint
 import torch
 
 import model as ae
@@ -8,6 +9,7 @@ import util
 import parse_tools  
 import checkpoint
 import netmisc
+
 
 def main():
     if len(sys.argv) == 1 or sys.argv[1] not in ('new', 'resume'):
@@ -88,25 +90,33 @@ def main():
     #        p *= 1 
 
     # Start training
-    print('Training parameters used:', opts, file=stderr)
+    print('Training parameters used:', file=stderr)
+    pprint(opts, stderr)
 
     state.init_torch_generator()
     #print('Generator state: {}'.format(util.tensor_digest(torch.get_rng_state())))
+    #print('after init_torch_generator: {}'.format(torch.cuda.get_rng_state_all()))
+    #print('GPU Generator state: {}'.format(
+    #    util.tensor_digest(torch.cuda.get_rng_state_all())))
 
     while state.step < opts.max_steps:
-        #if state.step in learning_rates:
-        #    state.update_learning_rate(learning_rates[state.step])
+        if state.step in learning_rates:
+            state.update_learning_rate(learning_rates[state.step])
         # do 'pip install --upgrade scipy' if you get 'FutureWarning: ...'
+        # print('in main loop')
+        #print('current gpu state: {}'.format(torch.cuda.get_rng_state_all()))
+        #print('current gpu state sum: {}'.format(torch.cuda.get_rng_state_all()[0].sum()))
+
+        if state.step in (1, 10, 50, 100, 300, 500) and state.model.bn_type == 'vqvae':
+            print('Reinitializing embed with current distribution', file=stderr)
+            stderr.flush()
+            state.model.init_vq_embed(batch_gen)
+
         metrics.update(batch_gen)
         loss = metrics.state.optim.step(metrics.loss)
         avg_peak_dist = metrics.peak_dist()
         avg_max = metrics.avg_max()
         avg_prob_target = metrics.avg_prob_target()
-
-        if state.step in (10, 100, 300, 500) and state.model.bn_type == 'vqvae':
-            print('Reinitializing embed with current distribution', file=stderr)
-            stderr.flush()
-            state.model.init_vq_embed(batch_gen)
 
         if False:
             for n, p in list(state.model.encoder.named_parameters()):
@@ -122,8 +132,8 @@ def main():
             current_stats = {
                     'step': state.step,
                     'loss': loss,
-                    'tprob_m': avg_prob_target,
-                    'peak_dist_m': avg_peak_dist
+                    'tprb_m': avg_prob_target,
+                    'pk_d_m': avg_peak_dist
                     }
             #fmt = "M\t{:d}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
             #print(fmt.format(state.step, loss, avg_prob_target, avg_peak_dist,
@@ -142,13 +152,16 @@ def main():
             ckpt_file = ckpt_path.path(state.step)
             state.save(ckpt_file)
             print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
+            #print('current gpu state: {}'.format(torch.cuda.get_rng_state_all()))
+            #print('current gpu state sum: {}'.format(torch.cuda.get_rng_state_all()[0].sum()))
             #print('Model state: {}'.format(state.model.checksum()), file=stderr)
             #print('Generator state: {}'.format(util.tensor_digest(torch.get_rng_state())),
             #        file=stderr)
+            #print('GPU Generator state: {}'.format(
+            #    util.tensor_digest(torch.cuda.get_rng_state_all())))
             #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
             # print('Data position: ', state.data, file=stderr)
             stderr.flush()
-
 
 if __name__ == '__main__':
     main()
