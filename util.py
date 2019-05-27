@@ -201,24 +201,29 @@ def greatest_lower_bound(a, q):
 
 
 
-def sigfig(fp_val, nsigfig, maxwidth):
+def sigfig(f, s, m):
     """format a floating point value in fixed point notation but
     with a fixed number of significant figures.
     Examples with nsigfig=3, maxwidth=
     Rule is:
-    1. Round the number to the desired number of significant figures
-    2. Render the number in fixed point notation
+    1. If f < 1.0e-s, render with {:.ne} where n = s-1
+    2. If f > 1.0e+l, render with {:.ne} where n = s-1
+    3. Otherwise, render with {:0.ge} where g is:
+       s if f in (0.1, 
 
-    1.23456789e-4  => '0.123e-3'
-    1.23456789e-3  => '0.123e-2'
-    1.23456789e-2  => '0.123e-1'
-    1.23456789e-1  => '0.123'
-    1.23456789e+0  => '1.230'
-    1.23456789e+1  => '12.30'
-    1.23456789e+2  => '123.0'
-    1.23456789e+3  => '1230.'
-    1.23456789e+4  => '12300'
-    1.23456789e+5  => '12300e+1'
+         f         {:2e}       final
+    1.23456e-04 => 1.23e-04 => unchanged
+    1.23456e-03 => 1.23e-03 => unchanged
+    1.23456e-02 => 1.23e-02 => unchanged 
+    1.23456e-01 => 1.23e-01 => 0.123
+    1.23456e+00 => 1.23e+00 => 1.230
+    1.23456e+01 => 1.23e+01 => 12.30 
+    1.23456e+02 => 1.23e+02 => 123.0
+    1.23456e+03 => 1.23e+03 => 1230.
+    1.23456e+04 => 1.23e+04 => 12300
+    1.23456e+05 => 1.23e+05 => unchanged
+    1.23456e+06 => 1.23e+06 => unchanged
+
     """
     pass
 

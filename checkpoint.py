@@ -1,5 +1,6 @@
-import torch
 import pickle
+import torch
+from sys import stderr
 import util
 
 class State(object):

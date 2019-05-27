@@ -1,5 +1,10 @@
-# An instance of this class represents the coordinate relationship between an
-# output element and its input receptive field.
+# An instance of Rfield represents a windowed, convolution-like transformation
+# of an input tensor to an output tensor.  The relationship is defined both in
+# a tensor index coordinates, and physical coordinates.  Multiple Rfield's may
+# be chained together in the output of one is fed to the input of the other.
+# The relationship in index coordinates maps an input index range to an output
+# index range.
+
 import fractions 
 import numpy as np
 import math
@@ -12,7 +17,13 @@ class _Stats(object):
         self.r_pad = r_pad
         self.spc = spc
         self.vspc = vspc
+
+        # Assuming the previous tensor's left element is at zero in physical
+        # coordinates, this tensor starts at l_pos
         self.l_pos = l_pos
+
+        # Assuming the previous tensor's right element is at zero in physical
+        # coordinates, this tensor starts at -r_pos
         self.r_pos = r_pos
         self.src = src
         self.dst = dst
@@ -53,6 +64,10 @@ class _Stats(object):
         while s is not None:
             yield s
             s = None if s.src is None else s.src.src
+
+    def li_pos(self, index):
+        """The"""
+
 
 
 def print_stats(beg, xpad='x', ipad='o', data='*'):
@@ -101,11 +116,15 @@ class Rfield(object):
     def __init__(self, filter_info, padding=(0, 0), stride=1,
             is_downsample=True, parent=None, name=None):
         self.parent = parent
+        self.child = None
         self.l_pad = padding[0]
         self.r_pad = padding[1]
         self.name = name
         self.src = None
         self.dst = None
+
+        if self.parent is not None:
+            self.parent.child = self
 
         # stride_ratio is ratio of output spacing to input spacing
         if is_downsample:
@@ -148,6 +167,14 @@ class Rfield(object):
             in_vspc = in_spc / self.stride_ratio
         return in_spc, in_vspc
 
+    @property
+    def l_off(self):
+        return self.l_wing_sz - self.l_pad
+
+    @property
+    def r_off(self):
+        return self.r_pad - self.r_wing_sz
+
     def _local_bounds(self):
         '''For this transformation, calculates the offset between the first
         value elements of the input and the output, assuming output element
@@ -171,18 +198,17 @@ class Rfield(object):
             raise RuntimeError('chain ended and stop node not found')
         return n
 
-    def _get_chain(self, chain=None):
-        if chain is None:
-            chain = []
-        cur = self
-        while cur is not None:
-            chain.append(cur)
-            cur = cur.parent
-        return chain
+    def chain_beg(self):
+        rf = self
+        while rf.prev() is not None:
+            rf = rf.prev()
+        return rf
 
-    def get_chain(self):
-        '''Get all transformations in child->parent order'''
-        return self._get_chain()
+    def chain_end(self):
+        rf = self
+        while rf.next() is not None:
+            rf = rf.next()
+        return rf
 
     def _num_in_elem(self, n_out_elem_req):
         '''calculate the number of input value elements (not counting padding
@@ -301,7 +327,7 @@ class Rfield(object):
 
     def init_nv(self, out_nv_requested):
         '''Populate the .nv field of stats.  Propagates the requested number
-        of output value elements backwards until , then updates forwards to get
+        of output value elements backwards, then updates forwards to get
         the actual number'''
         if self.src is None:
             raise RuntimeError('Must call gen_stats() first')
@@ -315,6 +341,9 @@ class Rfield(object):
         else:
             return self.parent.init_nv(n_in_el)
 
+
+def get_index_range(beg_rf, end_rf, index):
+    l_off, r_off = offsets(beg_rf, end_rf)
 
 def offsets(beg_rf, end_rf):
     '''Get relative left and right offsets between the input/output of
