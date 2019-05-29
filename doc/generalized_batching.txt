@@ -1,0 +1,48 @@
+The nice thing is that we can define the windows used for gradient calculation
+by first selecting a sufficient aligned window, and then sub-selecting the
+set of predictions we want, which can be a subset of the total number of
+predictions arising from the window.
+
+There are a couple design decisions to be made.
+
+1. Truncate each wav file to the nearest maximal receptive field that is needed
+   to produce an integer number of mels.
+
+2. Choose some number of consecutive windows to use.  (Or, we may even want to
+   use skipping windows)
+
+3. Back-calculate the receptive field needed for the desired timestep calculations,
+   using rfield.
+
+4. The mask can be used to achieve out-of-register predictions
+
+5. The picking logic could be designed in such a way to cluster, or not.
+
+Either way, the effect of "clumpiness" of data, due to the batch size N, is
+one that should be explored.
+
+rfield has init_nv, but it doesn't have the analogous function to compute the
+number of output elements that result from a given number of input elements.
+
+But, let's review how init_nv works:
+
+init_nv moves up the chain of parents.  on each node, it calls _num_in_elem,
+which returns the required number of input elements to achieve the requested
+number of output elements.  It repeats this until it gets to the end, and then
+calls _expand_stats_.
+
+_expand_stats_ does the opposite: it moves down the chain towards the children,
+calling _num_out_elem for the given input elements.
+
+We can do the reverse as well:
+
+start at the parent with the 'available number', call 'expand_stats', then call
+init_nv with the final number
+
+Is there a better way to do that?
+
+We really only need a forward and then reverse pass.
+
+
+
+
