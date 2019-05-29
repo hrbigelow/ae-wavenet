@@ -41,8 +41,8 @@ class ProcessWav(object):
         # See padding_notes.txt 
         # NOTE: This function can't be executed on GPU due to the use of
         # librosa.feature.mfcc
-        # B, C, T: n_batch, n_mels, n_timesteps
-        # Output: B, C, T
+        # C, T: n_mels, n_timesteps
+        # Output: C, T
         # This assert doesn't seem to work when we just want to process an entire wav file
         # assert self.rf.src.nv == wav.shape[0]
         adj = 1 if self.window_sz % 2 == 0 else 0

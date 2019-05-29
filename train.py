@@ -4,7 +4,7 @@ from pprint import pprint
 import torch
 
 import model as ae
-import data as D 
+import data
 import util
 import parse_tools  
 import checkpoint
@@ -49,15 +49,15 @@ def main():
         dec_params = parse_tools.get_prefixed_items(vars(opts), 'dec_')
 
         # Initialize data
-        sample_catalog = D.parse_sample_catalog(opts.sam_file)
-        data = D.WavSlices(sample_catalog, pre_params['sample_rate'],
-                opts.frac_permutation_use, opts.requested_wav_buf_sz)
-        dec_params['n_speakers'] = data.num_speakers()
+        data_source = data.Slice(opts.index_file_prefix,
+                opts.max_gpu_data_bytes, opts.n_batch)
+
+        dec_params['n_speakers'] = data_source.num_speakers()
 
         model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params,
                 opts.n_sam_per_slice)
         optim = torch.optim.Adam(params=model.parameters(), lr=learning_rates[0])
-        state = checkpoint.State(0, model, data, optim)
+        state = checkpoint.State(0, model, data_source, optim)
 
     else:
         state = checkpoint.State()
@@ -77,8 +77,11 @@ def main():
     # set this to zero if you want to print out a logging header in resume mode as well
     netmisc.set_print_iter(0)
 
-    state.data.set_geometry(opts.n_batch, state.model.input_size,
-            state.model.output_size)
+    state.data.init_geometry(state.model.preprocess.rf,
+            state.model)
+
+    #state.data.set_geometry(opts.n_batch, state.model.input_size,
+    #        state.model.output_size)
     state.to(device=opts.device)
 
     # Initialize optimizer
@@ -94,18 +97,12 @@ def main():
     pprint(opts, stderr)
 
     state.init_torch_generator()
-    #print('Generator state: {}'.format(util.tensor_digest(torch.get_rng_state())))
-    #print('after init_torch_generator: {}'.format(torch.cuda.get_rng_state_all()))
-    #print('GPU Generator state: {}'.format(
-    #    util.tensor_digest(torch.cuda.get_rng_state_all())))
 
     while state.step < opts.max_steps:
         if state.step in learning_rates:
             state.update_learning_rate(learning_rates[state.step])
         # do 'pip install --upgrade scipy' if you get 'FutureWarning: ...'
         # print('in main loop')
-        #print('current gpu state: {}'.format(torch.cuda.get_rng_state_all()))
-        #print('current gpu state sum: {}'.format(torch.cuda.get_rng_state_all()[0].sum()))
 
         if state.step in (1, 10, 50, 100, 300, 500) and state.model.bn_type == 'vqvae':
             print('Reinitializing embed with current distribution', file=stderr)
@@ -152,15 +149,7 @@ def main():
             ckpt_file = ckpt_path.path(state.step)
             state.save(ckpt_file)
             print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
-            #print('current gpu state: {}'.format(torch.cuda.get_rng_state_all()))
-            #print('current gpu state sum: {}'.format(torch.cuda.get_rng_state_all()[0].sum()))
-            #print('Model state: {}'.format(state.model.checksum()), file=stderr)
-            #print('Generator state: {}'.format(util.tensor_digest(torch.get_rng_state())),
-            #        file=stderr)
-            #print('GPU Generator state: {}'.format(
-            #    util.tensor_digest(torch.cuda.get_rng_state_all())))
             #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
-            # print('Data position: ', state.data, file=stderr)
             stderr.flush()
 
 if __name__ == '__main__':

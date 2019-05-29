@@ -115,8 +115,8 @@ class AutoEncoder(nn.Module):
         self.decoder = dec.WaveNet(**dec_params, parent_rf=self.encoder.rf,
                 n_lc_in=bn_params['n_out'])
         self.rf = self.decoder.rf
-        self.set_geometry()
-        self.set_slice_size(sam_per_slice)
+        #self.set_geometry()
+        #self.set_slice_size(sam_per_slice)
 
     def __getstate__(self):
         state = { 

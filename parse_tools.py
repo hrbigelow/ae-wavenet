@@ -47,17 +47,11 @@ def cold_parser():
             help='INI file specifying training and other hyperparameters')
 
     # Data generation options
-    cold.add_argument('--frac-permutation-use', '-fpu', type=float,
-            metavar='FLOAT', default=0.1,
-            help='Fraction of each random data permutation to '
-            'use.  Lower fraction causes more frequent reading of data from '
-            'disk, but more globally random order of data samples presented '
-            'to the model')
-    cold.add_argument('--requested-wav-buf-sz', '-rws', type=int,
-            metavar='INT', default=1e7,
-            help='Size in bytes of the total memory available '
-            'to buffer training data.  A higher value will minimize re-reading '
-            'of data and allow more globally random sample order')
+    cold.add_argument('--max-gpu-data-bytes', '-gmm', type=int, metavar='INT',
+            default=1e9,
+            help='Maximum memory in bytes to allocate on the GPU for the data. '
+            'If all data fit on the GPU, will eliminate redundant '
+            'transfering of overlapping data.') 
 
     # Preprocessing parameters
     cold.add_argument('--pre-sample-rate', '-sr', type=int, metavar='INT', default=16000,
@@ -113,10 +107,8 @@ def cold_parser():
             help='decoder number of global embedding channels')
 
     # positional arguments
-    cold.add_argument('sam_file', type=str, metavar='SAMPLES_FILE',
-            help='File containing lines:\n'
-            + '<id1>\t/path/to/sample1.flac\n'
-            + '<id2>\t/path/to/sample2.flac\n')
+    cold.add_argument('index_file_prefix', type=str, metavar='INDEX_FILE_PREFIX',
+            help='Prefix preprocess.py used to create <prefix>.{ind,dat,mel} files')
     return cold
 
 # Complete parser for resuming from Checkpoint
