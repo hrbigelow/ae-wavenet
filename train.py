@@ -86,7 +86,6 @@ def main():
 
     # Initialize optimizer
     metrics = ae.Metrics(state)
-    batch_gen = state.data.batch_slice_gen_fn()
 
     #for p in list(state.model.encoder.parameters()):
     #    with torch.no_grad():
@@ -107,9 +106,9 @@ def main():
         if state.step in (1, 10, 50, 100, 300, 500) and state.model.bn_type == 'vqvae':
             print('Reinitializing embed with current distribution', file=stderr)
             stderr.flush()
-            state.model.init_vq_embed(batch_gen)
+            state.model.init_vq_embed(state.data)
 
-        metrics.update(batch_gen)
+        metrics.update()
         loss = metrics.state.optim.step(metrics.loss)
         avg_peak_dist = metrics.peak_dist()
         avg_max = metrics.avg_max()

@@ -17,7 +17,7 @@ import wavenet as dec
 
 # from numpy import vectorize as np_vectorize
 class PreProcess(nn.Module):
-    '''Shape tensors by appropriate offsets to feed to Loss function'''
+    """Shape tensors by appropriate offsets to feed to Loss function"""
     def __init__(self, pre_params, n_quant):
         super(PreProcess, self).__init__()
         self.mfcc = mfcc.ProcessWav(**pre_params, name='mfcc')
@@ -29,53 +29,41 @@ class PreProcess(nn.Module):
         self.register_buffer('dummy_buf', torch.empty(0))
 
     def set_geometry(self, enc_off, dec_off):
-        '''
-        '''
+        """
+        """
         self.l_enc_off, self.r_enc_off = enc_off
         self.l_dec_off, self.r_dec_off = dec_off 
 
 
     def one_hot(self, wav_compand):
-        '''
+        """
         wav_compand: (B, T)
         B, Q, T: n_batch, n_quant, n_timesteps
         returns: (B, Q, T)
-        '''
+        """
         wav_one_hot = util.gather_md(self.quant_onehot, 0, wav_compand.long()).permute(1,0,2)
         return wav_one_hot
 
-
-    def forward(self, inds_np, wav_np):
-        '''Inputs:
+    def forward(self, snd_batch):
+        """
+        Inputs:
         B, M, Q: n_batch, n_mels, n_quant
         T: n_timesteps, receptive field of decoder 
         T': n_timesteps, output size of decoder
-        inds_np: (B) (numpy)
-        wav_np: (B, T)
-        Outputs:
-        inds: (B) (torch.tensor on current device)
-        mels: (B,  
+        mel_batch: (B, M)   
         wav_onehot_dec: (B, Q, T) (input to decoder)
         wav_compand_out: (B, T') (input matching the timestep range of decoder output)
-        '''
-        mels_np = np.apply_along_axis(self.mfcc.func, axis=1, arr=wav_np)
-
-        # First moving of tensors to the destination device
-        mels = torch.tensor(mels_np, device=self.dummy_buf.device)
-        wav = torch.tensor(wav_np, device=self.dummy_buf.device)
-        inds = torch.tensor(inds_np, device=self.dummy_buf.device)
-
-        wav_dec = wav[:,self.l_enc_off:self.r_enc_off or None]
-        wav_compand_dec = util.mu_encode_torch(wav_dec, self.n_quant)
-        wav_compand_out = wav_compand_dec[:, self.l_dec_off:self.r_dec_off or None]
-        wav_onehot_dec = self.one_hot(wav_compand_dec)
-        return inds, mels, wav_onehot_dec, wav_compand_out
+        """
+        snd_batch_dec = snd_batch[:,self.l_enc_off:self.r_enc_off or None]
+        snd_batch_out = snd_batch_dec[:, self.l_dec_off:self.r_dec_off or None]
+        snd_onehot_dec = self.one_hot(snd_batch_dec)
+        return snd_onehot_dec, snd_batch_out
 
 
 class AutoEncoder(nn.Module):
-    '''
+    """
     Full Autoencoder model
-    '''
+    """
     def __init__(self, pre_params, enc_params, bn_params, dec_params, sam_per_slice):
         self.args = [pre_params, enc_params, bn_params, dec_params, sam_per_slice]
         self._initialize()
@@ -131,9 +119,9 @@ class AutoEncoder(nn.Module):
         self.load_state_dict(state['state_dict'])
 
     def set_geometry(self):
-        '''Compute the timestep offsets between the window boundaries of the
+        """Compute the timestep offsets between the window boundaries of the
         encoder input wav, decoder input wav, and supervising wav input to the
-        loss function'''
+        loss function"""
         self.vc.gen_stats(self.preprocess.vc)
         if self.bn_type in ('vae', 'vqvae'):
             self.objective.set_geometry(self.decoder.pre_upsample_vc,
@@ -153,7 +141,7 @@ class AutoEncoder(nn.Module):
         self.input_size = self.preprocess.vc.src.nv 
         self.output_size = self.decoder.vc.dst.nv 
 
-    def init_vq_embed(self, batch_gen):
+    def init_vq_embed(self, data):
         """Initialize the VQ Embedding with samples from the encoder."""
         if self.bn_type != 'vqvae':
             raise RuntimeError('init_vq_embed only applies to the vqvae model type')
@@ -163,9 +151,8 @@ class AutoEncoder(nn.Module):
         e = 0
         
         while e != n:
-            __, voice_inds_np, wav_np = next(batch_gen)
-            __, mels, __, __ = self.preprocess(voice_inds_np, wav_np)
-            encoding = self.encoder(mels)
+            data.next_slice()
+            encoding = self.encoder(data.mel_slice)
             ze = self.bottleneck.linear(encoding)
             b = ze.size()[0]
             chunk = min(b, n - e)
@@ -174,15 +161,15 @@ class AutoEncoder(nn.Module):
             e += chunk
         
     def checksum(self):
-        '''Return checksum of entire set of model parameters'''
+        """Return checksum of entire set of model parameters"""
         return util.tensor_digest(self.parameters())
         
     def print_offsets(self):
-        '''Show the set of offsets for each section of the model'''
+        """Show the set of offsets for each section of the model"""
         self.vc.print_chain()
 
     def forward(self, mels, wav_onehot_dec, voice_inds):
-        '''
+        """
         B: n_batch
         T: receptive field of autoencoder
         T': receptive field of decoder 
@@ -193,45 +180,43 @@ class AutoEncoder(nn.Module):
         wav_onehot_dec: (B, T')  
         Outputs: 
         quant_pred (B, Q, N) # predicted wav amplitudes
-        '''
+        """
         encoding = self.encoder(mels)
         encoding_bn = self.bottleneck(encoding)
         quant = self.decoder(wav_onehot_dec, encoding_bn, voice_inds)
         return quant
 
-    def run(self, batch_gen):
-        '''Run the model on one batch, returning the predicted and
+    def run(self, batch):
+        """Run the model on one batch, returning the predicted and
         actual output
         B, T, Q: n_batch, n_timesteps, n_quant
         Outputs:
         quant_pred: (B, Q, T) (the prediction from the model)
         wav_compand_out: (B, T) (the actual data from the same timesteps)
-        '''
-        __, voice_inds_np, wav_np = next(batch_gen)
-        voice_inds, mels, wav_onehot_dec, wav_compand_out = \
-                self.preprocess(voice_inds_np, wav_np)
+        """
+        snd_onehot_dec, snd_batch_out = self.preprocess(batch.snd_slice)
 
-        quant = self.forward(mels, wav_onehot_dec, voice_inds)
+        quant = self.forward(batch.mel_slice, snd_onehot_dec, batch.slice_voice_index)
         # quant_pred[:,:,0] is a prediction for wav_compand_out[:,1] 
-        return quant[...,:-1], wav_compand_out[:,1:]
+        return quant[...,:-1], snd_batch_out[:,1:]
 
 class Metrics(object):
-    '''Manage running the model and saving output and target state'''
+    """Manage running the model and saving output and target state"""
     def __init__(self, state):
         self.state = state
         self.quant = None
         self.target = None
         self.softmax = torch.nn.Softmax(1) # input to this is (B, Q, N)
 
-    def update(self, batch_gen):
-        # __, voice_inds_np, wav_np = next(batch_gen)
-        quant_pred_snip, wav_compand_out_snip = self.state.model.run(batch_gen) 
+    def update(self):
+        self.state.data.next_slice()
+        quant_pred_snip, wav_compand_out_snip = self.state.model.run(self.state.data) 
         self.quant = quant_pred_snip
         self.target = wav_compand_out_snip
         self.probs = self.softmax(self.quant)
 
     def loss(self):
-        '''This is the closure needed for the optimizer'''
+        """This is the closure needed for the optimizer"""
         if self.quant is None or self.target is None:
             raise RuntimeError('Must call update() first')
         self.state.optim.zero_grad()
@@ -240,21 +225,21 @@ class Metrics(object):
         return loss
     
     def peak_dist(self):
-        '''Average distance between the indices of the peaks in pred and
-        target'''
+        """Average distance between the indices of the peaks in pred and
+        target"""
         diffs = torch.argmax(self.quant, dim=1) - self.target 
         mean = torch.mean(torch.abs(diffs).float())
         return mean
 
     def avg_max(self):
-        '''Average max value for the predictions.  As the prediction becomes
-        more peaked, this should go up...'''
+        """Average max value for the predictions.  As the prediction becomes
+        more peaked, this should go up"""
         max_val, max_ind = torch.max(self.probs, dim=1)
         mean = torch.mean(max_val)
         return mean
         
     def avg_prob_target(self):
-        '''Average probability given to target'''
+        """Average probability given to target"""
         target_probs = torch.gather(self.probs, 1, self.target.unsqueeze(1)) 
         mean = torch.mean(target_probs)
         return mean

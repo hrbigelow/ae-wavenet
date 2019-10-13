@@ -23,6 +23,12 @@ def parse_catalog(sam_file):
 
 def convert(catalog, pfx, n_quant, sample_rate=16000, win_sz=400, hop_sz=160,
         n_mels=80, n_mfcc=13):
+    """
+    Convert all input data and save in a pack of .dat, .ind, and .mel files.
+    The .mel file contains the concatenated contents of computed mfcc coefficients.
+    The .dat file contains the concatenated contents of the mu-encoded wav files.
+    The .ind file contains the indexing information.
+    """
 
     mfcc_proc = mfcc.ProcessWav(sample_rate, win_sz, hop_sz, n_mels, n_mfcc)
 
@@ -36,10 +42,12 @@ def convert(catalog, pfx, n_quant, sample_rate=16000, win_sz=400, hop_sz=160,
     snd_file = pfx + '.dat'
     ind_file = pfx + '.ind'
     mel_file = pfx + '.mel'
-    ind = { 'voice_id': [], 'n_snd_elem': [], 'n_mel_elem': [], 'snd_path': [] }
+    ind = { 'voice_index': [], 'n_snd_elem': [], 'n_mel_elem': [], 'snd_path': [] }
     n_snd_elem = 0
     n_mel_elem = 0
     n_mel_chan = None
+    speaker_ids = set(id for id,__ in catalog)
+    speaker_id_map = dict((v,k) for k,v in enumerate(speaker_ids))
 
     with open(snd_file, 'wb') as snd_fh, open(mel_file, 'wb') as mel_fh:
         for (voice_id, snd_path) in catalog:
@@ -54,12 +62,12 @@ def convert(catalog, pfx, n_quant, sample_rate=16000, win_sz=400, hop_sz=160,
             mel = mel.transpose((1, 0)).flatten()
             snd_fh.write(snd_mu.data)
             mel_fh.write(mel.data)
-            ind['voice_id'].append(voice_id)
+            ind['voice_index'].append(speaker_id_map[voice_id])
             ind['n_snd_elem'].append(snd.size)
             ind['n_mel_elem'].append(mel.size)
             ind['snd_path'].append(snd_path)
-            if len(ind['voice_id']) % 100 == 0:
-                print('Converted {} files of {}.'.format(len(ind['voice_id']),
+            if len(ind['voice_index']) % 100 == 0:
+                print('Converted {} files of {}.'.format(len(ind['voice_index']),
                     len(catalog), file=stderr))
                 stderr.flush()
             n_snd_elem += snd.size
@@ -92,7 +100,7 @@ class Slice(nn.Module):
 
         self.batch_size = batch_size
 
-        # index contains arrays voice_id[], n_snd_elem[], n_mel_elem[], wav_path[]
+        # index contains arrays voice_index[], n_snd_elem[], n_mel_elem[], wav_path[]
         self.__dict__.update(index)
         self.n_files = len(self.n_snd_elem)
         self.snd_offset = np.empty(self.n_files, dtype=np.int32)
@@ -144,9 +152,11 @@ class Slice(nn.Module):
             dtype=torch.float))
         self.register_buffer('mask', torch.empty((batch_size, 0),
             dtype=torch.float))
+        self.register_buffer('voice_index', torch.empty((batch_size, 0),
+            dtype=torch.int))
 
     def num_speakers(self):
-        return len(set(self.voice_id))
+        return len(set(self.voice_index))
 
     def init_geometry(self, ae_wav_in, ae_mel_in, dec_wav_in, dec_out):
         self.ae_wav_in = ae_wav_in
@@ -185,5 +195,7 @@ class Slice(nn.Module):
             self.mel_slice[b] = self.mel_data[(mel_off + mel_in_b):(mel_off + mel_in_e + 1)]
             self.mask[b].zero_()
             self.mask[b,sam_i-out_b] = 1
+            self.slice_voice_index[b] = self.voice_index[file_i]
+
             assert self.mask.size()[1] == out_e - out_b
 
