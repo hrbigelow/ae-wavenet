@@ -1,14 +1,14 @@
 import torch
 from torch import nn
 from torch import distributions as dist
-import rfield
+import vconv
 from numpy import prod as np_prod
 import util
 import netmisc
 
 class GatedResidualCondConv(nn.Module):
     def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, filter_sz=2,
-            bias=True, parent_rf=None, name=None):
+            bias=True, parent_vc=None, name=None):
         '''
         filter_sz: # elements in the dilated kernels
         n_cond: # channels of local condition vectors
@@ -29,36 +29,36 @@ class GatedResidualCondConv(nn.Module):
         # stack of these, the output corresponds to the position just after
         # this, but within the stack of convolutions, outputs right-aligned.
         dil_filter_sz = (filter_sz - 1) * dil + 1
-        self.rf = rfield.Rfield(filter_info=(dil_filter_sz - 1, 0),
-                parent=parent_rf, name=name)
-        self.beg_rf = None
-        self.end_rf = None
+        self.vc = vconv.VirtualConv(filter_info=(dil_filter_sz - 1, 0),
+                parent=parent_vc, name=name)
+        self.beg_vc = None
+        self.end_vc = None
         self.apply(netmisc.xavier_init)
 
-    def init_bound_rfs(self, beg_rf, end_rf):
-        '''last_rf is the last GRCC unit in the stack.  This initialization is
-        needed because the destination Rfield is not known at initialization
+    def init_bound_rfs(self, beg_vc, end_vc):
+        '''last_vc is the last GRCC unit in the stack.  This initialization is
+        needed because the destination VirtualConv is not known at initialization
         time'''
-        self.beg_rf = beg_rf
-        self.end_rf = end_rf
+        self.beg_vc = beg_vc
+        self.end_vc = end_vc
         
     def cond_lead(self):
         '''distance from start of the overall stack input to
         the start of this convolution'''
-        l_off, __ = rfield.offsets(self.beg_rf, self.rf)
+        l_off, __ = vconv.offsets(self.beg_vc, self.vc)
         return l_off
 
     def skip_lead(self):
         '''distance from start of this *output* to start of the final stack
-        output.  Note that the skip information is the *output* of self.rf, not
+        output.  Note that the skip information is the *output* of self.vc, not
         the input.
         '''
-        if self.end_rf is None:
-            raise RuntimeError('Must call init_bound_rfs() first')
-        if self.rf == self.end_rf:
+        if self.end_vc is None:
+            raise RuntimeError('Must call init_bound_vcs() first')
+        if self.vc == self.end_vc:
             return 0
 
-        l_off, __ = rfield.offsets(self.rf.next(), self.end_rf)
+        l_off, __ = vconv.offsets(self.vc.next(), self.end_vc)
         return l_off
 
     def forward(self, x, cond):
@@ -72,18 +72,18 @@ class GatedResidualCondConv(nn.Module):
         cond_lead = self.cond_lead()
         skip_lead = self.skip_lead()
 
-        assert self.rf.src.nv == x.shape[2]
-        assert self.rf.dst.nv == cond.shape[2] - cond_lead
+        assert self.vc.src.nv == x.shape[2]
+        assert self.vc.dst.nv == cond.shape[2] - cond_lead
 
         filt = self.conv_signal(x) + self.proj_signal(cond[:,:,cond_lead:])
         gate = self.conv_gate(x) + self.proj_gate(cond[:,:,cond_lead:])
         z = torch.tanh(filt) * torch.sigmoid(gate)
         sig = self.dil_res(z)
         skp = self.dil_skp(z[:,:,skip_lead:])
-        sig += x[:,:,self.rf.l_wing_sz:]
+        sig += x[:,:,self.vc.l_wing_sz:]
 
-        assert self.rf.dst.nv == sig.shape[2]
-        assert self.end_rf.dst.nv == skp.shape[2] 
+        assert self.vc.dst.nv == sig.shape[2]
+        assert self.end_vc.dst.nv == skp.shape[2] 
         return sig, skp 
 
 class Jitter(nn.Module):
@@ -195,14 +195,14 @@ class Conditioning(nn.Module):
         return all_cond
 
 class Upsampling(nn.Module):
-    def __init__(self, n_chan, filter_sz, stride, parent_rf, bias=True, name=None):
+    def __init__(self, n_chan, filter_sz, stride, parent_vc, bias=True, name=None):
         super(Upsampling, self).__init__()
         # See upsampling_notes.txt: padding = filter_sz - stride
         # and: left_offset = left_wing_sz - end_padding
         end_padding = stride - 1
-        self.rf = rfield.Rfield(filter_info=filter_sz, stride=stride,
+        self.vc = vconv.VirtualConv(filter_info=filter_sz, stride=stride,
                 padding=(end_padding, end_padding), is_downsample=False,
-                parent=parent_rf, name=name)
+                parent=parent_vc, name=name)
 
         self.tconv = nn.ConvTranspose1d(n_chan, n_chan, filter_sz, stride,
                 padding=filter_sz - stride, bias=bias)
@@ -213,9 +213,9 @@ class Upsampling(nn.Module):
         lc: (B, C, S)
         returns: (B, C, T)
         '''
-        assert self.rf.src.nv == lc.shape[2]
+        assert self.vc.src.nv == lc.shape[2]
         lc_up = self.tconv(lc)
-        assert self.rf.dst.nv == lc_up.shape[2]
+        assert self.vc.dst.nv == lc_up.shape[2]
 
         return lc_up
 
@@ -231,7 +231,7 @@ class WaveNet(nn.Module):
     def __init__(self, filter_sz, n_lc_in, n_lc_out, lc_upsample_filt_sizes,
             lc_upsample_strides, n_res, n_dil, n_skp, n_post, n_quant,
             n_blocks, n_block_layers, jitter_prob, n_speakers, n_global_embed,
-            bias=True, parent_rf=None):
+            bias=True, parent_vc=None):
         super(WaveNet, self).__init__()
 
         self.n_blocks = n_blocks
@@ -247,27 +247,27 @@ class WaveNet(nn.Module):
         self.lc_conv = Conv1dWrap(n_lc_in, n_lc_out,
                 kernel_size=post_jitter_filt_sz, stride=1, bias=self.bias)
 
-        cur_rf = rfield.Rfield(filter_info=post_jitter_filt_sz,
-                stride=1, parent=parent_rf, name=lc_conv_name)
-        self.beg_rf = cur_rf
+        cur_vc = vconv.VirtualConv(filter_info=post_jitter_filt_sz,
+                stride=1, parent=parent_vc, name=lc_conv_name)
+        self.beg_vc = cur_vc
         
         # This RF is the first processing of the local conditioning after the
         # Jitter. It is the starting point for the commitment loss aggregation
-        self.pre_upsample_rf = cur_rf
+        self.pre_upsample_vc = cur_vc
         self.lc_upsample = nn.Sequential()
 
-        # WaveNet is a stand-alone model, so parent_rf is None
-        # The Autoencoder model in model.py will link parent_rfs together.
+        # WaveNet is a stand-alone model, so parent_vc is None
+        # The Autoencoder model in model.py will link parent_vcs together.
         for i, (filt_sz, stride) in enumerate(zip(lc_upsample_filt_sizes,
             lc_upsample_strides)):
             name = 'Upsampling_{}(filter_sz={}, stride={})'.format(i, filt_sz, stride)   
-            mod = Upsampling(n_lc_out, filt_sz, stride, cur_rf, name=name)
+            mod = Upsampling(n_lc_out, filt_sz, stride, cur_vc, name=name)
             self.lc_upsample.add_module(str(i), mod)
-            cur_rf = mod.rf
+            cur_vc = mod.vc
 
-        # This rf describes the bounds of the input wav corresponding to the
+        # This vc describes the bounds of the input wav corresponding to the
         # local conditioning vectors
-        self.last_upsample_rf = cur_rf
+        self.last_upsample_vc = cur_vc
         self.cond = Conditioning(n_speakers, n_global_embed)
         self.base_layer = Conv1dWrap(n_quant, n_res, kernel_size=1, stride=1,
                 dilation=1, bias=self.bias)
@@ -280,25 +280,25 @@ class WaveNet(nn.Module):
                 dil = 2**bl
                 name = 'GRCC_{},{}(dil={})'.format(b, bl, dil)
                 grc = GatedResidualCondConv(n_cond, n_res, n_dil, n_skp, 1,
-                        dil, filter_sz, bias, cur_rf, name)
+                        dil, filter_sz, bias, cur_vc, name)
                 self.conv_layers.append(grc)
-                cur_rf = grc.rf
+                cur_vc = grc.vc
 
-        self.last_grcc_rf = cur_rf
+        self.last_grcc_vc = cur_vc
 
         # Each module in the stack needs to know the dimensions of
         # the input and output of the overall stack, in order to trim
         # residual connections
-        beg_grcc_rf = self.conv_layers[0].rf
-        end_grcc_rf = self.conv_layers[-1].rf 
+        beg_grcc_vc = self.conv_layers[0].vc
+        end_grcc_vc = self.conv_layers[-1].vc 
         for mod in self.conv_layers.children():
-            mod.init_bound_rfs(beg_grcc_rf, end_grcc_rf)
+            mod.init_bound_vcs(beg_grcc_vc, end_grcc_vc)
 
         self.relu = nn.ReLU()
         self.post1 = Conv1dWrap(n_skp, n_post, 1, bias=bias)
         self.post2 = Conv1dWrap(n_post, n_quant, 1, bias=bias)
         self.logsoftmax = nn.LogSoftmax(1) # (B, Q, N)
-        self.rf = cur_rf
+        self.vc = cur_vc
 
     def forward(self, wav_onehot, lc_sparse, speaker_inds):
         '''

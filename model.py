@@ -8,7 +8,7 @@ from torch.nn.modules import loss
 
 import ae_bn
 import mfcc
-import rfield
+import vconv
 import util
 import vq_bn
 import vae_bn
@@ -21,7 +21,7 @@ class PreProcess(nn.Module):
     def __init__(self, pre_params, n_quant):
         super(PreProcess, self).__init__()
         self.mfcc = mfcc.ProcessWav(**pre_params, name='mfcc')
-        self.rf = self.mfcc.rf
+        self.vc = self.mfcc.vc
         self.n_quant = n_quant
         self.register_buffer('quant_onehot', torch.eye(self.n_quant))
 
@@ -88,7 +88,7 @@ class AutoEncoder(nn.Module):
         self.preprocess = PreProcess(pre_params, n_quant=dec_params['n_quant'])
 
         self.encoder = enc.Encoder(n_in=self.preprocess.mfcc.n_out,
-                parent_rf=self.preprocess.rf, **enc_params)
+                parent_vc=self.preprocess.vc, **enc_params)
 
         bn_type = bn_params['type']
         bn_extra = dict((k, v) for k, v in bn_params.items() if k != 'type')
@@ -112,9 +112,9 @@ class AutoEncoder(nn.Module):
             raise InvalidArgument('bn_type must be one of "ae", "vae", or "vqvae"')
 
         self.bn_type = bn_type
-        self.decoder = dec.WaveNet(**dec_params, parent_rf=self.encoder.rf,
+        self.decoder = dec.WaveNet(**dec_params, parent_vc=self.encoder.vc,
                 n_lc_in=bn_params['n_out'])
-        self.rf = self.decoder.rf
+        self.vc = self.decoder.vc
         #self.set_geometry()
         #self.set_slice_size(sam_per_slice)
 
@@ -134,24 +134,24 @@ class AutoEncoder(nn.Module):
         '''Compute the timestep offsets between the window boundaries of the
         encoder input wav, decoder input wav, and supervising wav input to the
         loss function'''
-        self.rf.gen_stats(self.preprocess.rf)
+        self.vc.gen_stats(self.preprocess.vc)
         if self.bn_type in ('vae', 'vqvae'):
-            self.objective.set_geometry(self.decoder.pre_upsample_rf,
-                    self.decoder.last_grcc_rf)
+            self.objective.set_geometry(self.decoder.pre_upsample_vc,
+                    self.decoder.last_grcc_vc)
 
         # timestep offsets between input and output of the encoder
-        enc_off = rfield.offsets(self.preprocess.rf, self.decoder.last_upsample_rf)
+        enc_off = vconv.offsets(self.preprocess.vc, self.decoder.last_upsample_vc)
 
         # timestep offsets between wav input and output of decoder 
         # NOTE: this starts from after the upsampling, because it is concerned
         # with the wav input, not conditioning vectors
-        dec_off = rfield.offsets(self.decoder.last_upsample_rf.next(), self.decoder.rf)
+        dec_off = vconv.offsets(self.decoder.last_upsample_vc.next(), self.decoder.vc)
         self.preprocess.set_geometry(enc_off, dec_off)
 
     def set_slice_size(self, n_sam_per_slice_req):
-        self.rf.init_nv(n_sam_per_slice_req)
-        self.input_size = self.preprocess.rf.src.nv 
-        self.output_size = self.decoder.rf.dst.nv 
+        self.vc.init_nv(n_sam_per_slice_req)
+        self.input_size = self.preprocess.vc.src.nv 
+        self.output_size = self.decoder.vc.dst.nv 
 
     def init_vq_embed(self, batch_gen):
         """Initialize the VQ Embedding with samples from the encoder."""
@@ -179,14 +179,14 @@ class AutoEncoder(nn.Module):
         
     def print_offsets(self):
         '''Show the set of offsets for each section of the model'''
-        self.rf.print_chain()
+        self.vc.print_chain()
 
     def forward(self, mels, wav_onehot_dec, voice_inds):
         '''
         B: n_batch
         T: receptive field of autoencoder
         T': receptive field of decoder 
-        R: size of local conditioning output of encoder (T - encoder.rf.total())
+        R: size of local conditioning output of encoder (T - encoder.vc.total())
         N: n_win (# consecutive samples processed in one batch channel)
         Q: n_quant
         wav_compand: (B, T)

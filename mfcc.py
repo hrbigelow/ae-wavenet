@@ -22,7 +22,7 @@
 
 import librosa
 import numpy as np
-import rfield
+import vconv 
 import math
 
 class ProcessWav(object):
@@ -34,7 +34,7 @@ class ProcessWav(object):
         self.n_mels = n_mels
         self.n_mfcc = n_mfcc
         self.n_out = n_mfcc * 3
-        self.rf = rfield.Rfield(filter_info=self.window_sz, stride=self.hop_sz,
+        self.vc = vconv.VirtualConv(filter_info=self.window_sz, stride=self.hop_sz,
                 parent=None, name=name)
 
     def func(self, wav):
@@ -44,13 +44,13 @@ class ProcessWav(object):
         # C, T: n_mels, n_timesteps
         # Output: C, T
         # This assert doesn't seem to work when we just want to process an entire wav file
-        # assert self.rf.src.nv == wav.shape[0]
+        # assert self.vc.src.nv == wav.shape[0]
         adj = 1 if self.window_sz % 2 == 0 else 0
-        adj_l_wing_sz = self.rf.l_wing_sz + adj 
+        adj_l_wing_sz = self.vc.l_wing_sz + adj 
 
         left_pad = adj_l_wing_sz % self.hop_sz
         trim_left = adj_l_wing_sz // self.hop_sz
-        trim_right = self.rf.r_wing_sz // self.hop_sz
+        trim_right = self.vc.r_wing_sz // self.hop_sz
 
         wav_pad = np.concatenate((np.zeros(left_pad), wav), axis=0) 
         mfcc = librosa.feature.mfcc(y=wav_pad, sr=self.sample_rate,
@@ -73,6 +73,6 @@ class ProcessWav(object):
         mfcc_delta2 = librosa.feature.delta(mfcc_trim, order=2)
         mfcc_and_derivatives = np.concatenate((mfcc_trim, mfcc_delta, mfcc_delta2), axis=0)
 
-        # assert self.rf.dst.nv == mfcc_and_derivatives.shape[1]
+        # assert self.vc.dst.nv == mfcc_and_derivatives.shape[1]
         return mfcc_and_derivatives.astype(wav.dtype)
 

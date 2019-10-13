@@ -70,8 +70,8 @@ class SGVBLoss(nn.Module):
         self.logsoftmax = nn.LogSoftmax(1) # input is (B, Q, N)
         self.combine = netmisc.LCCombine('LCCombine')
 
-    def set_geometry(self, beg_rf, end_rf):
-        self.combine.set_geometry(beg_rf, end_rf)
+    def set_geometry(self, beg_vc, end_vc):
+        self.combine.set_geometry(beg_vc, end_vc)
 
     def forward(self, quant_pred, target_wav):
         '''

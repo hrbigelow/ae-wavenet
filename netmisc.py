@@ -1,7 +1,7 @@
 # Miscellaneous functions for the network
 import torch
 from torch import nn
-import rfield
+import vconv 
 from sys import stderr
 import sys
 import re
@@ -29,7 +29,7 @@ class LCCombine(nn.Module):
         Constructs the transpose convolution which mimics the usage pattern
         of WaveNet's local conditioning vectors and output.
         '''
-        self.rf = rfield.condensed(beg_rf, end_rf, self.name) 
+        self.rf = vconv.condensed(beg_rf, end_rf, self.name) 
         self.rf.gen_stats(self.rf)
         self.rf.init_nv(1)
         stride = self.rf.stride_ratio.denominator

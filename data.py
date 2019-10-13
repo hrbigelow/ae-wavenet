@@ -181,8 +181,8 @@ class Slice(nn.Module):
 
             snd_off = self.snd_offset[file_i]
             mel_off = self.mel_offset[file_i]
-            self.snd_slice[b] = self.snd_data[snd_off + dec_in_b:snd_off + dec_in_e + 1]
-            self.mel_slice[b] = self.mel_data[mel_off + mel_in_b:mel_off + mel_in_e + 1]
+            self.snd_slice[b] = self.snd_data[(snd_off + dec_in_b):(snd_off + dec_in_e + 1)]
+            self.mel_slice[b] = self.mel_data[(mel_off + mel_in_b):(mel_off + mel_in_e + 1)]
             self.mask[b].zero_()
             self.mask[b,sam_i-out_b] = 1
             assert self.mask.size()[1] == out_e - out_b

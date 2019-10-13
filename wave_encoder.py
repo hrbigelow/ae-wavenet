@@ -1,12 +1,12 @@
 import torch
 from torch import nn
-import rfield
+import vconv
 import numpy as np
 import netmisc
 
 class ConvReLURes(nn.Module):
     def __init__(self, n_in_chan, n_out_chan, filter_sz, stride=1, do_res=True,
-            parent_rf=None, name=None):
+            parent_vc=None, name=None):
         super(ConvReLURes, self).__init__()
         self.do_res = do_res
         if self.do_res:
@@ -21,8 +21,8 @@ class ConvReLURes(nn.Module):
         self.relu = nn.ReLU()
         # self.bn = nn.BatchNorm1d(n_out_chan)
 
-        self.rf = rfield.Rfield(filter_info=filter_sz, stride=stride,
-                parent=parent_rf, name=name)
+        self.vc = vconv.VirtualConv(filter_info=filter_sz, stride=stride,
+                parent=parent_vc, name=name)
         netmisc.xavier_init(self.conv)
 
     def forward(self, x):
@@ -30,19 +30,19 @@ class ConvReLURes(nn.Module):
         B, C, T = n_batch, n_in_chan, n_win
         x: (B, C, T)
         '''
-        assert self.rf.src.nv == x.shape[2]
+        assert self.vc.src.nv == x.shape[2]
         out = self.conv(x)
         # out = self.bn(out)
         out = self.relu(out)
         if (self.do_res):
-            l_off, r_off = rfield.offsets(self.rf, self.rf)
+            l_off, r_off = vconv.offsets(self.vc, self.vc)
             out += x[:,:,l_off:r_off or None]
-        assert self.rf.dst.nv == out.shape[2]
+        assert self.vc.dst.nv == out.shape[2]
         return out
 
 
 class Encoder(nn.Module):
-    def __init__(self, n_in, n_out, parent_rf):
+    def __init__(self, n_in, n_out, parent_vc):
         super(Encoder, self).__init__()
 
         # the "stack"
@@ -58,12 +58,12 @@ class Encoder(nn.Module):
             name = 'CRR_{}(filter_sz={}, stride={}, do_res={})'.format(i,
                     filt_sz, stride, do_res)
             mod = ConvReLURes(in_chan, n_out, filt_sz, stride, do_res,
-                    parent_rf, name)
+                    parent_vc, name)
             self.net.add_module(str(i), mod)
-            parent_rf = mod.rf
+            parent_vc = mod.vc
 
-        self.beg_rf = self.net[0].rf
-        self.rf = parent_rf 
+        self.beg_vc = self.net[0].vc
+        self.vc = parent_vc 
 
     def forward(self, mels):
         '''
@@ -71,9 +71,9 @@ class Encoder(nn.Module):
         mels: (B, M, T) (torch.tensor)
         outputs: (B, C, T)
         '''
-        assert self.beg_rf.src.nv == mels.shape[2]
+        assert self.beg_vc.src.nv == mels.shape[2]
         out = self.net(mels)
         #out = torch.tanh(out * 10.0)
-        assert self.rf.dst.nv == out.shape[2]
+        assert self.vc.dst.nv == out.shape[2]
         return out
 
