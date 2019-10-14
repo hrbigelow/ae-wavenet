@@ -30,14 +30,16 @@ class ConvReLURes(nn.Module):
         B, C, T = n_batch, n_in_chan, n_win
         x: (B, C, T)
         '''
-        assert self.vc.src.nv == x.shape[2]
+        # assert self.vc.src.nv == x.shape[2]
         out = self.conv(x)
         # out = self.bn(out)
         out = self.relu(out)
         if (self.do_res):
-            l_off, r_off = vconv.offsets(self.vc, self.vc)
-            out += x[:,:,l_off:r_off or None]
-        assert self.vc.dst.nv == out.shape[2]
+            win_size = x.shape[2] 
+            shadow_b, shadow_e = vconv.shadow(self.vc, self.vc, 0, win_size, win_size) 
+            e_off = win_size - shadow_e
+            out += x[:,:,shadow_b:e_off or None]
+        # assert self.vc.dst.nv == out.shape[2]
         return out
 
 
@@ -71,9 +73,9 @@ class Encoder(nn.Module):
         mels: (B, M, T) (torch.tensor)
         outputs: (B, C, T)
         '''
-        assert self.beg_vc.src.nv == mels.shape[2]
+        #assert self.beg_vc.src.nv == mels.shape[2]
         out = self.net(mels)
         #out = torch.tanh(out * 10.0)
-        assert self.vc.dst.nv == out.shape[2]
+        #assert self.vc.dst.nv == out.shape[2]
         return out
 

@@ -49,13 +49,14 @@ def main():
         dec_params = parse_tools.get_prefixed_items(vars(opts), 'dec_')
 
         # Initialize data
-        data_source = data.Slice(opts.index_file_prefix,
+        data_source = data.Slice(
+                opts.index_file_prefix,
                 opts.max_gpu_data_bytes, opts.n_batch)
 
         dec_params['n_speakers'] = data_source.num_speakers()
 
-        model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params,
-                opts.n_sam_per_slice)
+        model = ae.AutoEncoder(
+                pre_params, enc_params, bn_params, dec_params, opts.n_sam_per_slice)
         optim = torch.optim.Adam(params=model.parameters(), lr=learning_rates[0])
         state = checkpoint.State(0, model, data_source, optim)
 
@@ -80,8 +81,6 @@ def main():
     state.data.init_geometry(state.model.preprocess.rf,
             state.model)
 
-    #state.data.set_geometry(opts.n_batch, state.model.input_size,
-    #        state.model.output_size)
     state.to(device=opts.device)
 
     # Initialize optimizer

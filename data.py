@@ -159,6 +159,11 @@ class Slice(nn.Module):
         return len(set(self.voice_index))
 
     def init_geometry(self, ae_wav_in, ae_mel_in, dec_wav_in, dec_out):
+        """
+        Inputs:
+        ae_wav_in: 
+
+        """
         self.ae_wav_in = ae_wav_in
         self.ae_mel_in = ae_mel_in
         self.dec_wav_in = dec_wav_in
@@ -174,8 +179,11 @@ class Slice(nn.Module):
         self.n_total_samples = voff
 
     def next_slice(self):
-        """Get a random slice of a file, together with its start position
-        and ID.  Populates self.snd_slice, self.mel_slice, and self.mask"""
+        """
+        Get a random slice of a file, together with its start position and ID.
+        Populates self.snd_slice, self.mel_slice, self.mask, and
+        self.slice_voice_index
+        """
         picks = np.random(0, self.n_total_samples, self.batch_size)
         for vpos, b in enumerate(picks):
             file_i = util.greatest_lower_bound(self.voffset, vpos)

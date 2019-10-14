@@ -19,8 +19,6 @@ class VirtualConv(object):
         self.l_pad = padding[0]
         self.r_pad = padding[1]
         self.name = name
-        self.src = None
-        self.dst = None
 
         if self.parent is not None:
             self.parent.child = self

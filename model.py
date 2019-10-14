@@ -62,7 +62,8 @@ class PreProcess(nn.Module):
 
 class AutoEncoder(nn.Module):
     """
-    Full Autoencoder model
+    Full Autoencoder model.  The _initialize method allows us to seamlessly initialize
+    from __init__ or __setstate__ 
     """
     def __init__(self, pre_params, enc_params, bn_params, dec_params, sam_per_slice):
         self.args = [pre_params, enc_params, bn_params, dec_params, sam_per_slice]
@@ -100,11 +101,14 @@ class AutoEncoder(nn.Module):
             raise InvalidArgument('bn_type must be one of "ae", "vae", or "vqvae"')
 
         self.bn_type = bn_type
-        self.decoder = dec.WaveNet(**dec_params, parent_vc=self.encoder.vc,
-                n_lc_in=bn_params['n_out'])
+        self.decoder = dec.WaveNet(
+                **dec_params,
+                parent_vc=self.encoder.vc,
+                n_lc_in=bn_params['n_out']
+                )
         self.vc = self.decoder.vc
-        #self.set_geometry()
-        #self.set_slice_size(sam_per_slice)
+        self.set_geometry()
+        self.set_slice_size(sam_per_slice)
 
     def __getstate__(self):
         state = { 
@@ -119,12 +123,15 @@ class AutoEncoder(nn.Module):
         self.load_state_dict(state['state_dict'])
 
     def set_geometry(self):
-        """Compute the timestep offsets between the window boundaries of the
+        """
+        Compute the timestep offsets between the window boundaries of the
         encoder input wav, decoder input wav, and supervising wav input to the
-        loss function"""
+        loss function
+        """
         self.vc.gen_stats(self.preprocess.vc)
         if self.bn_type in ('vae', 'vqvae'):
-            self.objective.set_geometry(self.decoder.pre_upsample_vc,
+            self.objective.set_geometry(
+                    self.decoder.pre_upsample_vc,
                     self.decoder.last_grcc_vc)
 
         # timestep offsets between input and output of the encoder

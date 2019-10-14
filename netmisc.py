@@ -27,7 +27,7 @@ class LCCombine(nn.Module):
     def set_geometry(self, beg_rf, end_rf):
         '''
         Constructs the transpose convolution which mimics the usage pattern
-        of WaveNet's local conditioning vectors and output.
+        of WaveNet's local conditioning vectors and output.  
         '''
         self.rf = vconv.condensed(beg_rf, end_rf, self.name) 
         self.rf.gen_stats(self.rf)

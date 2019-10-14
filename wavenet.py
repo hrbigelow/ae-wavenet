@@ -9,13 +9,13 @@ import netmisc
 class GatedResidualCondConv(nn.Module):
     def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, filter_sz=2,
             bias=True, parent_vc=None, name=None):
-        '''
+        """
         filter_sz: # elements in the dilated kernels
         n_cond: # channels of local condition vectors
         n_res : # residual channels
         n_dil : # output channels for dilated kernel
         n_skp : # channels output to skip connections
-        '''
+        """
         super(GatedResidualCondConv, self).__init__()
         self.conv_signal = nn.Conv1d(n_res, n_dil, filter_sz, dilation=dil, bias=bias)
         self.conv_gate = nn.Conv1d(n_res, n_dil, filter_sz, dilation=dil, bias=bias)
@@ -35,45 +35,48 @@ class GatedResidualCondConv(nn.Module):
         self.end_vc = None
         self.apply(netmisc.xavier_init)
 
-    def init_bound_rfs(self, beg_vc, end_vc):
-        '''last_vc is the last GRCC unit in the stack.  This initialization is
+    def init_bound_vcs(self, beg_vc, end_vc):
+        """
+        last_vc is the last GRCC unit in the stack.  This initialization is
         needed because the destination VirtualConv is not known at initialization
-        time'''
+        time
+        """
         self.beg_vc = beg_vc
         self.end_vc = end_vc
         
-    def cond_lead(self):
-        '''distance from start of the overall stack input to
-        the start of this convolution'''
-        l_off, __ = vconv.offsets(self.beg_vc, self.vc)
-        return l_off
+    def cond_lead(self, win_size):
+        """
+        distance from start of the overall stack input to
+        the start of this convolution
+        """
+        shadow_b, __ = vconv.shadow(self.beg_vc, self.vc, 0, win_size, win_size)
+        return shadow_b 
 
-    def skip_lead(self):
-        '''distance from start of this *output* to start of the final stack
+    def skip_lead(self, win_size):
+        """
+        distance from start of this *output* to start of the final stack
         output.  Note that the skip information is the *output* of self.vc, not
         the input.
-        '''
+        """
         if self.end_vc is None:
             raise RuntimeError('Must call init_bound_vcs() first')
         if self.vc == self.end_vc:
             return 0
 
-        l_off, __ = vconv.offsets(self.vc.next(), self.end_vc)
-        return l_off
+        shadow_b, __ = vconv.shadow(self.vc.next(), self.end_vc, 0, win_size, win_size)
+        return shadow_b 
 
     def forward(self, x, cond):
-        '''
+        """
         B, T: batchsize, win_size (determined from input)
         C, R, D, S: n_cond, n_res, n_dil, n_skp
         x: (B, R, T) (necessary shape for Conv1d)
         cond: (B, C, T) (necessary shape for Conv1d)
         returns: sig: (B, R, T), skp: (B, S, T) 
-        '''
-        cond_lead = self.cond_lead()
-        skip_lead = self.skip_lead()
-
-        assert self.vc.src.nv == x.shape[2]
-        assert self.vc.dst.nv == cond.shape[2] - cond_lead
+        """
+        win_size = cond.shape[2]
+        cond_lead = self.cond_lead(win_size)
+        skip_lead = self.skip_lead(win_size)
 
         filt = self.conv_signal(x) + self.proj_signal(cond[:,:,cond_lead:])
         gate = self.conv_gate(x) + self.proj_gate(cond[:,:,cond_lead:])
@@ -81,13 +84,11 @@ class GatedResidualCondConv(nn.Module):
         sig = self.dil_res(z)
         skp = self.dil_skp(z[:,:,skip_lead:])
         sig += x[:,:,self.vc.l_wing_sz:]
-
-        assert self.vc.dst.nv == sig.shape[2]
-        assert self.end_vc.dst.nv == skp.shape[2] 
         return sig, skp 
 
+
 class Jitter(nn.Module):
-    '''Time-jitter regularization.  With probability [p, (1-2p), p], replace
+    """Time-jitter regularization.  With probability [p, (1-2p), p], replace
     element i with element [i-1, i, i+1] respectively.  Disallow a run of 3
     identical elements in the output.  Let p = replacement probability, s =
     "stay probability" = (1-2p).
@@ -115,10 +116,10 @@ class Jitter(nn.Module):
     Jitter has a "receptive field" of 3, and it is unpadded.  Our index mask will be
     pre-constructed to have {0, ..., n_win
 
-    '''
+    """
     def __init__(self, replace_prob):
-        '''n_win gives number of 
-        '''
+        """n_win gives number of 
+        """
         super(Jitter, self).__init__()
         p, s = replace_prob, (1 - 2 * replace_prob)
         tmp = torch.Tensor([p, s, p]).repeat(3, 3, 1)
@@ -128,8 +129,10 @@ class Jitter(nn.Module):
         self.adjust = None
 
     def gen_mask(self):
-        '''populates a tensor mask to be used for jitter, and sends it to GPU for
-        next window'''
+        """
+        populates a tensor mask to be used for jitter, and sends it to GPU for
+        next window
+        """
         n_batch = self.mindex.shape[0]
         n_time = self.mindex.shape[1] - 1
         self.mindex[:,0:2] = 1
@@ -151,7 +154,9 @@ class Jitter(nn.Module):
 
     # Will this play well with back-prop?
     def forward(self, x):
-        '''Input: (B, I, T)'''
+        """
+        Input: (B, I, T)
+        """
         n_batch = x.shape[0]
         if self.mindex is None:
             n_time = x.shape[2]
@@ -169,9 +174,10 @@ class Jitter(nn.Module):
 
 
 class Conditioning(nn.Module):
-    '''Module for merging up-sampled local conditioning vectors
+    """
+    Module for merging up-sampled local conditioning vectors
     with voice ids.
-    '''
+    """
     def __init__(self, n_speakers, n_embed, bias=True):
         super(Conditioning, self).__init__()
         # Look at nn.embedding
@@ -180,12 +186,12 @@ class Conditioning(nn.Module):
         self.apply(netmisc.xavier_init)
 
     def forward(self, lc, speaker_inds):
-        '''
+        """
         I, G, S: n_in_chan, n_embed_chan, n_speakers
         lc : (B, T, I)
         speaker_inds: (B)
         returns: (B, T, I+G)
-        '''
+        """
         assert speaker_inds.dtype == torch.long
         # one_hot: (B, S)
         one_hot = util.gather_md(self.eye, 0, speaker_inds).permute(1, 0) 
@@ -200,27 +206,29 @@ class Upsampling(nn.Module):
         # See upsampling_notes.txt: padding = filter_sz - stride
         # and: left_offset = left_wing_sz - end_padding
         end_padding = stride - 1
-        self.vc = vconv.VirtualConv(filter_info=filter_sz, stride=stride,
+        self.vc = vconv.VirtualConv(
+                filter_info=filter_sz, stride=stride,
                 padding=(end_padding, end_padding), is_downsample=False,
-                parent=parent_vc, name=name)
+                parent=parent_vc, name=name
+                )
 
         self.tconv = nn.ConvTranspose1d(n_chan, n_chan, filter_sz, stride,
                 padding=filter_sz - stride, bias=bias)
         self.apply(netmisc.xavier_init)
 
     def forward(self, lc):
-        '''B, T, S, C: batch_sz, timestep, less-frequent timesteps, input channels
+        """
+        B, T, S, C: batch_sz, timestep, less-frequent timesteps, input channels
         lc: (B, C, S)
         returns: (B, C, T)
-        '''
-        assert self.vc.src.nv == lc.shape[2]
+        """
         lc_up = self.tconv(lc)
-        assert self.vc.dst.nv == lc_up.shape[2]
-
         return lc_up
 
 class Conv1dWrap(nn.Conv1d):
-    '''Simple wrapper that ensures initialization'''
+    """
+    Simple wrapper that ensures initialization
+    """
     def __init__(self, *args, **kwargs):
         super(Conv1dWrap, self).__init__(*args, **kwargs)
         self.apply(netmisc.xavier_init)
@@ -301,7 +309,7 @@ class WaveNet(nn.Module):
         self.vc = cur_vc
 
     def forward(self, wav_onehot, lc_sparse, speaker_inds):
-        '''
+        """
         B: n_batch (# of separate wav streams being processed)
         T1: n_wav_timesteps
         T2: n_conditioning_timesteps
@@ -313,7 +321,7 @@ class WaveNet(nn.Module):
         lc: (B, L, T2)
         speaker_inds: (B, T)
         outputs: (B, Q, N)
-        '''
+        """
         lc_sparse = self.jitter(lc_sparse)
         lc_sparse = self.lc_conv(lc_sparse) 
         lc_dense = self.lc_upsample(lc_sparse)
