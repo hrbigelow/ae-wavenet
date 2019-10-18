@@ -140,11 +140,15 @@ class VQLoss(nn.Module):
         super(VQLoss, self).__init__()
         self.bn = bottleneck 
         self.logsoftmax = nn.LogSoftmax(1) # input is (B, Q, N)
-        self.combine = netmisc.LCCombine('LCCombine')
+        # self.combine = netmisc.LCCombine('LCCombine')
+        self.usage_adjust = netmisc.EmbedLossAdjust('EmbedLossAdjust')
         self.l2 = L2Error()
 
-    def set_geometry(self, beg_vc, end_vc):
-        self.combine.set_geometry(beg_vc, end_vc)
+    def post_init(self, beg_vc, end_vc, n_sam_per_slice):
+        self.usage_adjust.init_weight_usage(beg_vc, end_vc, n_sam_per_slice)
+
+    #def set_geometry(self, beg_vc, end_vc):
+    #    self.combine.set_geometry(beg_vc, end_vc)
 
     def forward(self, quant_pred, target_wav):
         # Loss per embedding vector 
@@ -157,17 +161,23 @@ class VQLoss(nn.Module):
         log_pred_target = torch.gather(log_pred, 1, target_wav.unsqueeze(1))
 
         # Loss per timestep
+        # !!! We don't need a 'loss per timestep'.  We only need
+        # to adjust the l2 and com losses by usage weight of each
+        # code.  (The codes at the two ends of the window will be
+        # used less)
         rec_loss_ts = - log_pred_target
-        l2_loss_ts = self.combine(l2_loss_embeds.unsqueeze(1))[...,:-1]
-        com_loss_ts = self.combine(com_loss_embeds.unsqueeze(1))[...,:-1]
+        l2_loss_adjust = self.usage_adjust(l2_loss_embeds)
+        com_loss_adjust = self.usage_adjust(com_loss_embeds)
+        #l2_loss_ts = self.combine(l2_loss_embeds.unsqueeze(1))[...,:-1]
+        #com_loss_ts = self.combine(com_loss_embeds.unsqueeze(1))[...,:-1]
 
         # Use only a subset of the overlapping windows
-        sl = slice(0, 1)
-        rec_loss_sel = rec_loss_ts[...,sl]
-        l2_loss_sel = l2_loss_ts[...,sl]
-        com_loss_sel = com_loss_ts[...,sl]
+        #sl = slice(0, 1)
+        #rec_loss_sel = rec_loss_ts[...,sl]
+        #l2_loss_sel = l2_loss_ts[...,sl]
+        #com_loss_sel = com_loss_ts[...,sl]
         
-        total_loss_sel = rec_loss_sel + l2_loss_sel + com_loss_sel
+        # total_loss_sel = rec_loss_sel + l2_loss_sel + com_loss_sel
         # total_loss_ts = l2_loss_ts
         # total_loss_ts = com_loss_ts
         # total_loss_ts = com_loss_ts + l2_loss_ts
@@ -175,14 +185,22 @@ class VQLoss(nn.Module):
         # total_loss_ts = log_pred_loss_ts 
         # total_loss_ts = com_loss_ts - com_loss_ts
 
-        total_loss = total_loss_sel.mean()
+        # total_loss = total_loss_sel.mean()
+
+        # We use sum here for each of the three loss terms because each element
+        # should affect the total loss equally.  For a typical WaveNet
+        # architecture, there will be only one l2 loss term (or com_loss term)
+        # per 320 rec_loss terms, due to upsampling.  We could adjust for that.
+        # Implicitly, com_loss is already adjusted by gamma.  Perhaps l2_loss
+        # should also be adjusted, but at the moment it is not.
+        total_loss = rec_loss_ts.sum() + l2_loss_adjust.sum() + com_loss_adjust.sum()
 
         nh = self.bn.ind_hist / self.bn.ind_hist.sum()
 
         self.metrics = { 
-                'rec': rec_loss_sel.mean(),
-                'l2': l2_loss_sel.mean(),
-                'com': com_loss_sel.mean(),
+                'rec': rec_loss_ts.mean(),
+                'l2': l2_loss_adjust.mean(),
+                'com': com_loss_adjust.mean(),
                 #'ze_rng': self.bn.ze.max() - self.bn.ze.min(),
                 #'emb_rng': self.bn.emb.max() - self.bn.emb.min(),
                 'min_ze': self.bn.ze_norm.min(),

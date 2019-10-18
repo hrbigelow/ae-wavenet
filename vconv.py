@@ -40,9 +40,16 @@ class VirtualConv(object):
             raise RuntimeError('filter_info must be either a 2-tuple of '
                     '(l_wing_sz, r_wing_sz) or an integer of filter_sz')
 
-        fmt = '[{}, {}, {}, {}, "{}"]'
+        if (self.l_pad > self.l_wing_sz or
+                self.r_pad > self.r_wing_sz):
+            raise RuntimeError('Filter wing sizes cannot be less than the respective '
+                    'padding')
+        
+
+        fmt = '[{}, {}, {}, {}, {}, {}, "{}"]'
         print(fmt.format(self.l_wing_sz, self.r_wing_sz,
             self.stride_ratio.numerator, self.stride_ratio.denominator,
+            self.l_pad, self.r_pad,
             name))
 
     def __repr__(self):
@@ -51,17 +58,19 @@ class VirtualConv(object):
                 self.stride_ratio, (self.l_pad, self.r_pad))
 
     def _get_rfield_lb(self, out_i):
-        """Get the start of the input range which is the receptive field for
-        the output element out_i
+        """
+        Get the start of the input range which is the receptive field for the
+        output element out_i.  spc_i is the index in the spaced padded input
+        that corresponds to out_i's left-most receptive field element.
         """
         if self.stride_ratio >= 1:
             stride = self.stride_ratio.numerator
-            pad_i = out_i * stride
-            in_i = max(0, pad_i - self.l_pad)
+            spc_i = out_i * stride
+            in_i = max(0, spc_i - self.l_pad)
         else:
             stride = self.stride_ratio.denominator
-            pad_i = out_i // stride
-            in_i = max(0, pad_i - self.l_pad)
+            spc_i = out_i // stride
+            in_i = max(0, spc_i - self.l_pad)
         return in_i
 
     # !!! fix this to agree with bounds logic
@@ -73,19 +82,22 @@ class VirtualConv(object):
         """
         w = self.l_wing_sz + self.r_wing_sz
         p = self.l_pad + self.r_pad
+        assert p <= w # this is upheld by the constructor logic
+
         if self.stride_ratio >= 1:
             stride = self.stride_ratio.numerator
-            pad_i = out_i * stride + w
-            pad_e = out_e * stride + w
-            in_e = pad_e - p
-            in_i = min(max(0, pad_i - self.l_pad), in_e)
+            spc_i = out_i * stride + w
+            spc_e = out_e * stride + w
+            in_e = spc_e - p
+            in_i = min(max(0, spc_i - self.l_pad), in_e)
         else:
             inv_stride = self.stride_ratio.denominator
-            pad_i = (out_i + w) // inv_stride
-            pad_e = math.ceil((out_e + w) / inv_stride)
-            in_e = pad_e - p
-            in_i = min(max(0, pad_i - self.l_pad), in_e)
+            spc_i = (out_i + w) // inv_stride
+            spc_e = math.ceil((out_e + w) / inv_stride)
+            in_e = spc_e - p
+            in_i = min(max(0, spc_i - self.l_pad), in_e)
         return in_i
+
 
     def _get_ifield_lb(self, in_i):
         """

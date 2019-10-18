@@ -78,9 +78,7 @@ def main():
     # set this to zero if you want to print out a logging header in resume mode as well
     netmisc.set_print_iter(0)
 
-    state.data.init_geometry(state.model.preprocess.rf,
-            state.model)
-
+    state.data.init_geometry(state.model.vc)
     state.to(device=opts.device)
 
     # Initialize optimizer

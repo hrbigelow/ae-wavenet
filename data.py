@@ -29,7 +29,6 @@ def convert(catalog, pfx, n_quant, sample_rate=16000, win_sz=400, hop_sz=160,
     The .dat file contains the concatenated contents of the mu-encoded wav files.
     The .ind file contains the indexing information.
     """
-
     mfcc_proc = mfcc.ProcessWav(sample_rate, win_sz, hop_sz, n_mels, n_mfcc)
 
     if n_quant <= 2**8:
@@ -86,8 +85,9 @@ def convert(catalog, pfx, n_quant, sample_rate=16000, win_sz=400, hop_sz=160,
         index.update(ind)
         pickle.dump(index, ind_fh)
 
+
 class Slice(nn.Module):
-    def __init__(self, ind_pfx, max_gpu_mem_bytes, batch_size):
+    def __init__(self, ind_pfx, max_gpu_mem_bytes, batch_size, window_batch_size):
         super(Slice, self).__init__()
         try:
             ind_file = ind_pfx + '.ind'
@@ -99,6 +99,7 @@ class Slice(nn.Module):
             exit(1)
 
         self.batch_size = batch_size
+        self.window_batch_size = window_batch_size
 
         # index contains arrays voice_index[], n_snd_elem[], n_mel_elem[], wav_path[]
         self.__dict__.update(index)
@@ -106,32 +107,38 @@ class Slice(nn.Module):
         self.snd_offset = np.empty(self.n_files, dtype=np.int32)
         self.mel_offset = np.empty(self.n_files, dtype=np.int32)
 
+        self.mfcc_vc = vconv.VirtualConv(
+                filter_info=self.window_size,
+                stride=self.hop_sz,
+                parent=None, name='MFCC'
+        )
+
         snd_off = 0
         for i in range(self.n_files):
             self.snd_offset[i] = snd_off
             snd_off += self.n_snd_elem[i]
-        self.total_snd_elem = snd_off
+        total_snd_elem = snd_off
 
         mel_off = 0
         for i in range(self.n_files):
             self.mel_offset[i] = mel_off
             mel_off += self.n_mel_elem[i]
-        self.total_mel_elem = mel_off
+        total_mel_elem = mel_off
 
         dat_file = ind_pfx + '.dat'
         mel_file = ind_pfx + '.mel'
 
         if self.snd_dtype is np.uint8:
-            buf = torch.ByteStorage.from_file(dat_file, shared=False, size=self.total_snd_elem)
+            buf = torch.ByteStorage.from_file(dat_file, shared=False, size=total_snd_elem)
             snd_data = torch.ByteTensor(buf)
         elif self.snd_dtype is np.uint16:
-            buf = torch.ShortStorage.from_file(dat_file, shared=False, size=self.total_snd_elem)
+            buf = torch.ShortStorage.from_file(dat_file, shared=False, size=total_snd_elem)
             snd_data = torch.ShortTensor(buf)
         elif self.snd_dtype is np.int32:
-            buf = torch.IntStorage.from_file(dat_file, shared=False, size=self.total_snd_elem)
+            buf = torch.IntStorage.from_file(dat_file, shared=False, size=total_snd_elem)
             snd_data = torch.IntTensor(buf)
 
-        mel_buf = torch.FloatStorage.from_file(mel_file, shared=False, size=self.total_mel_elem)
+        mel_buf = torch.FloatStorage.from_file(mel_file, shared=False, size=total_mel_elem)
         mel_data = torch.FloatTensor(mel_buf).reshape((-1, self.n_mel_chan))
 
         # flag to indicate if we can directly use a GPU resident buffer
@@ -143,7 +150,7 @@ class Slice(nn.Module):
             self.register_buffer('mel_data', mel_data)
         else:
             # These still need to be properties, but we won't register them
-            self.data = data
+            self.snd_data = data
             self.mel_data = mel_data
 
         self.register_buffer('snd_slice', torch.empty((batch_size, 0),
@@ -158,25 +165,28 @@ class Slice(nn.Module):
     def num_speakers(self):
         return len(set(self.voice_index))
 
-    def init_geometry(self, ae_wav_in, ae_mel_in, dec_wav_in, dec_out):
+    def init_geometry(self, autoencoder_last_vc):
         """
         Inputs:
-        ae_wav_in: 
+        autoencoder_last_vc: the last vconv operation in the autoencoder
 
+        Initialize voffset and n_sam_windows arrays
+        Initialize n_total_win_batch and end_vc values
         """
-        self.ae_wav_in = ae_wav_in
-        self.ae_mel_in = ae_mel_in
-        self.dec_wav_in = dec_wav_in
-        self.dec_out = dec_out
         self.voffset = np.empty((self.n_files), dtype=np.int32)
-        self.n_samples = np.empty((self.n_files), dtype=np.int32)
+        self.n_sam_win = np.empty((self.n_files), dtype=np.int32)
+
+        # last vconv in the autoencoder
+        self.end_vc = autoencoder_last_vc 
         voff = 0
         for i, wav_len in enumerate(self.n_snd_elem):
-            __, out_e = rf.get_ifield(self.ae_wav_in, self.dec_out, 0, wav_len, True)
-            self.voffset[i] = voff
-            self.n_samples[i] = out_e
-            voff += out_e
-        self.n_total_samples = voff
+            out_b, out_e = vconv.ifield(self.mfcc_vc, self.end_vc, 0, wav_len, wav_len)
+            assert out_b == 0
+            n_sam_win = out_e // self.window_batch_size
+            self.n_sam_windows[i] = n_sam_win
+            self.voffset[i] = voff 
+            voff += n_sam_win 
+        self.n_total_win_batch = voff 
 
     def next_slice(self):
         """
@@ -184,26 +194,26 @@ class Slice(nn.Module):
         Populates self.snd_slice, self.mel_slice, self.mask, and
         self.slice_voice_index
         """
-        picks = np.random(0, self.n_total_samples, self.batch_size)
-        for vpos, b in enumerate(picks):
-            file_i = util.greatest_lower_bound(self.voffset, vpos)
-            last_in = self.n_snd_elem[file_i] - 1
-            last_out = self.n_samples[file_i] - 1
-            sam_i = vpos - self.voffset[file_i]
-            mel_in_b, mel_in_e = rf.get_rfield(self.mel_in, self.dec_out,
-                    sam_i, sam_i, last_out)
-            dec_in_b, dec_in_e = rf.get_rfield(self.dec_in, self.dec_out,
-                    sam_i, sam_i, last_out)
-            out_b, out_e = rf.get_ifield(self.ae_wav_in, self.dec_out,
-                    snd_in_b, snd_in_e, last_in)
+        picks = np.random(0, self.n_total_win_batch, self.batch_size)
+        for vwin, b in enumerate(picks):
+            file_i = util.greatest_lower_bound(self.voffset, vwin)
+            win_i = vwin - self.voffset[file_i]
+
+            # Calculate the required input ranges for snd and mel to generate
+            # the picked sample window
+            sam_b = win_i * self.window_batch_size
+            sam_e = sam_b + self.window_batch_size
+            sam_l = self.n_sam_windows[file_i] * self.window_batch_size
+            mel_in_b, mel_in_e = vconv.rfield(
+                    self.mfcc.child, self.end_vc, sam_b, sam_e, sam_l
+            )
+            dec_in_b, dec_in_e = vconv.rfield(
+                    self.mfcc, self.end_vc, sam_b, sam_e, sam_l
+            )
 
             snd_off = self.snd_offset[file_i]
             mel_off = self.mel_offset[file_i]
-            self.snd_slice[b] = self.snd_data[(snd_off + dec_in_b):(snd_off + dec_in_e + 1)]
-            self.mel_slice[b] = self.mel_data[(mel_off + mel_in_b):(mel_off + mel_in_e + 1)]
-            self.mask[b].zero_()
-            self.mask[b,sam_i-out_b] = 1
+            self.snd_slice[b] = self.snd_data[(snd_off + dec_in_b):(snd_off + dec_in_e)]
+            self.mel_slice[b] = self.mel_data[(mel_off + mel_in_b):(mel_off + mel_in_e)]
             self.slice_voice_index[b] = self.voice_index[file_i]
-
-            assert self.mask.size()[1] == out_e - out_b
 

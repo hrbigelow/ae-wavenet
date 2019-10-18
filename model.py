@@ -20,8 +20,6 @@ class PreProcess(nn.Module):
     """Shape tensors by appropriate offsets to feed to Loss function"""
     def __init__(self, pre_params, n_quant):
         super(PreProcess, self).__init__()
-        self.mfcc = mfcc.ProcessWav(**pre_params, name='mfcc')
-        self.vc = self.mfcc.vc
         self.n_quant = n_quant
         self.register_buffer('quant_onehot', torch.eye(self.n_quant))
 
@@ -128,11 +126,12 @@ class AutoEncoder(nn.Module):
         encoder input wav, decoder input wav, and supervising wav input to the
         loss function
         """
-        self.vc.gen_stats(self.preprocess.vc)
         if self.bn_type in ('vae', 'vqvae'):
-            self.objective.set_geometry(
+            self.objective.post_init(
                     self.decoder.pre_upsample_vc,
-                    self.decoder.last_grcc_vc)
+                    self.decoder.last_grcc_vc,
+                    self.n_sam_per_slice
+                    )
 
         # timestep offsets between input and output of the encoder
         enc_off = vconv.offsets(self.preprocess.vc, self.decoder.last_upsample_vc)
@@ -144,6 +143,7 @@ class AutoEncoder(nn.Module):
         self.preprocess.set_geometry(enc_off, dec_off)
 
     def set_slice_size(self, n_sam_per_slice_req):
+
         self.vc.init_nv(n_sam_per_slice_req)
         self.input_size = self.preprocess.vc.src.nv 
         self.output_size = self.decoder.vc.dst.nv 

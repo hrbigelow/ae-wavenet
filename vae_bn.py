@@ -93,9 +93,9 @@ class SGVBLoss(nn.Module):
         log_sigma_sq = torch.log(sigma_sq)
         mu_sq = mu * mu
 
-        # neg_kl_div_gaussian: (B, K)
+        # neg_kl_div_gaussian: (B, K) (from Appendix B at end of derivation)
         channel_terms = 1.0 + log_sigma_sq -  mu_sq - sigma_sq 
-        chan_dim = 1
+        chan_dim = 1 # K
         neg_kl_div_gauss = 0.5 * torch.sum(channel_terms, dim=chan_dim, keepdim=True)
 
         # The last element is a prediction past the end of our target so must trim. 
