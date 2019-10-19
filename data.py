@@ -85,6 +85,12 @@ def convert(catalog, pfx, n_quant, sample_rate=16000, win_sz=400, hop_sz=160,
         index.update(ind)
         pickle.dump(index, ind_fh)
 
+class VirualOffsets(object):
+    def __init__(self, cumul_snd_offset, cumul_mel_offset, cumul_num_slices):
+        self.cumul_snd_offset = cumul_snd_offset
+        self.cumul_mel_offset = cumul_mel_offset
+        self.cumul_vslices = cumul_num_slices
+
 
 class Slice(nn.Module):
     def __init__(self, ind_pfx, max_gpu_mem_bytes, batch_size, window_batch_size):
@@ -155,9 +161,9 @@ class Slice(nn.Module):
 
         self.register_buffer('snd_slice', torch.empty((batch_size, 0),
             dtype=self.snd_data.dtype))
+        self.register_buffer('snd_slice_out', torch.empty((batch_size, 0),
+            dtype=self.snd_data.dtype))
         self.register_buffer('mel_slice', torch.empty((batch_size, 0),
-            dtype=torch.float))
-        self.register_buffer('mask', torch.empty((batch_size, 0),
             dtype=torch.float))
         self.register_buffer('voice_index', torch.empty((batch_size, 0),
             dtype=torch.int))
@@ -165,28 +171,42 @@ class Slice(nn.Module):
     def num_speakers(self):
         return len(set(self.voice_index))
 
-    def init_geometry(self, autoencoder_last_vc):
+    def post_init(self, model, n_sam_per_slice_requested):
         """
         Inputs:
-        autoencoder_last_vc: the last vconv operation in the autoencoder
-
-        Initialize voffset and n_sam_windows arrays
+        Initialize snd_voffset, mel_voffset
         Initialize n_total_win_batch and end_vc values
+        Initialize vcs for setting the geometry of slices
         """
         self.voffset = np.empty((self.n_files), dtype=np.int32)
         self.n_sam_win = np.empty((self.n_files), dtype=np.int32)
 
         # last vconv in the autoencoder
-        self.end_vc = autoencoder_last_vc 
-        voff = 0
-        for i, wav_len in enumerate(self.n_snd_elem):
-            out_b, out_e = vconv.ifield(self.mfcc_vc, self.end_vc, 0, wav_len, wav_len)
-            assert out_b == 0
-            n_sam_win = out_e // self.window_batch_size
-            self.n_sam_windows[i] = n_sam_win
-            self.voffset[i] = voff 
-            voff += n_sam_win 
-        self.n_total_win_batch = voff 
+        self.pre_upsample_vc = model.decoder.pre_upsample_vc
+        self.last_upsample_vc = model.decoder.last_upsample_vc
+        self.last_grcc_vc = model.decoder.last_grcc_vc
+
+        # Calculate actual window_batch_size from requested
+        in_b, in_e = vconv.rfield(self.pre_upsample_vc, self.last_grcc_vc,
+                0, n_sam_per_slice_requested, n_sam_per_slice_requested)
+        assert in_b == 0
+        out_b, out_e = vconv.ifield(self.pre_upsample_vc, self.last_grcc_vc,
+                0, in_e, in_e)
+        assert out_b == 0
+        self.window_batch_size = out_e
+        self.n_total_win_batch = 0
+
+        stat = VirtualOffsets(0, 0, 0)
+        for i, (snd_len, mel_len) in enumerate(zip(self.n_snd_elem, self.n_mel_elem)):
+            self.virtual_offsets[i] = stat
+            n_sam_win = snd_len // self.window_batch_size
+            # we don't know the window batch size for mel, but it is guaranteed
+            # to have the same number of slices due to the model geometry
+            stat.cumul_snd_len += snd_len
+            stat.cumul_mel_len += mel_len
+            stat.cumul_num_slices += n_sam_win
+            self.n_total_win_batch += n_sam_win 
+
 
     def next_slice(self):
         """
@@ -196,24 +216,37 @@ class Slice(nn.Module):
         """
         picks = np.random(0, self.n_total_win_batch, self.batch_size)
         for vwin, b in enumerate(picks):
-            file_i = util.greatest_lower_bound(self.voffset, vwin)
+            file_i = util.greatest_lower_bound(self.snd_voffset, vwin)
             win_i = vwin - self.voffset[file_i]
 
             # Calculate the required input ranges for snd and mel to generate
             # the picked sample window
+            # [sam_b, sam_e) is the range of the desired output
             sam_b = win_i * self.window_batch_size
             sam_e = sam_b + self.window_batch_size
             sam_l = self.n_sam_windows[file_i] * self.window_batch_size
             mel_in_b, mel_in_e = vconv.rfield(
-                    self.mfcc.child, self.end_vc, sam_b, sam_e, sam_l
+                    self.mfcc_vc.child, self.last_grcc_vc, sam_b, sam_e, sam_l
             )
             dec_in_b, dec_in_e = vconv.rfield(
-                    self.mfcc, self.end_vc, sam_b, sam_e, sam_l
+                    self.mfcc_vc, self.last_grcc_vc, sam_b, sam_e, sam_l
+            )
+            # In the following transformation:
+            # wav --[MFCC]-> mel --[Encoder]-> embeddings --[WaveNet Upsampling] -> local_cond
+            # the local_cond vector is one-per-timestep, like the wav input
+            # Due to the window-based geometry of [MFCC], [Encoder], and
+            # [WaveNet Upsampling], the elements of local_cond correspond to wav.
+            # This calculates the sub-range in wav corresponding to local_cond.
+            # 
+            guide_sam_b, guide_sam_e = vconv.shadow(
+                    self.mfcc_vc, self.last_upsample_vc, 
+                    sam_b, sam_e, sam_e
             )
 
             snd_off = self.snd_offset[file_i]
             mel_off = self.mel_offset[file_i]
-            self.snd_slice[b] = self.snd_data[(snd_off + dec_in_b):(snd_off + dec_in_e)]
+            self.snd_dec_input[b] = self.snd_data[(snd_off + dec_in_b):(snd_off + dec_in_e)]
+            self.snd_slice_out[b] = self.snd_data[(snd_off + guide_sam_b):(snd_off + guide_sam_e)]
             self.mel_slice[b] = self.mel_data[(mel_off + mel_in_b):(mel_off + mel_in_e)]
             self.slice_voice_index[b] = self.voice_index[file_i]
 

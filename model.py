@@ -75,7 +75,7 @@ class AutoEncoder(nn.Module):
         self.preprocess = PreProcess(pre_params, n_quant=dec_params['n_quant'])
 
         self.encoder = enc.Encoder(n_in=self.preprocess.mfcc.n_out,
-                parent_vc=self.preprocess.vc, **enc_params)
+                parent_vc=data_mfcc_vc, **enc_params)
 
         bn_type = bn_params['type']
         bn_extra = dict((k, v) for k, v in bn_params.items() if k != 'type')
@@ -120,7 +120,7 @@ class AutoEncoder(nn.Module):
         self._initialize()
         self.load_state_dict(state['state_dict'])
 
-    def set_geometry(self):
+    def post_init(self, data_source):
         """
         Compute the timestep offsets between the window boundaries of the
         encoder input wav, decoder input wav, and supervising wav input to the
@@ -199,7 +199,7 @@ class AutoEncoder(nn.Module):
         B, T, Q: n_batch, n_timesteps, n_quant
         Outputs:
         quant_pred: (B, Q, T) (the prediction from the model)
-        wav_compand_out: (B, T) (the actual data from the same timesteps)
+        snd_batch_out: (B, T) (the actual data from the same timesteps)
         """
         snd_onehot_dec, snd_batch_out = self.preprocess(batch.snd_slice)
 

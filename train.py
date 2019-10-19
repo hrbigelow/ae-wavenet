@@ -56,14 +56,13 @@ def main():
         dec_params['n_speakers'] = data_source.num_speakers()
 
         model = ae.AutoEncoder(
-                pre_params, enc_params, bn_params, dec_params, opts.n_sam_per_slice)
+                pre_params, enc_params, bn_params, dec_params)
         optim = torch.optim.Adam(params=model.parameters(), lr=learning_rates[0])
         state = checkpoint.State(0, model, data_source, optim)
 
     else:
         state = checkpoint.State()
         state.load(opts.ckpt_file)
-        state.model.set_slice_size(opts.n_sam_per_slice)
         print('Restored model, data, and optim from {}'.format(opts.ckpt_file), file=stderr)
         #print('Data state: {}'.format(state.data), file=stderr)
         #print('Model state: {}'.format(state.model.checksum()))
@@ -78,7 +77,11 @@ def main():
     # set this to zero if you want to print out a logging header in resume mode as well
     netmisc.set_print_iter(0)
 
-    state.data.init_geometry(state.model.vc)
+    # Second part of a two-part construction of model and data. This is
+    # necessary since there is a circular dependence between model and data.
+    # This post-initialization is not related to the model state or data state.
+    state.data.post_init(state.model, opts.n_sam_per_slice)
+    state.model.post_init(state.data)
     state.to(device=opts.device)
 
     # Initialize optimizer
