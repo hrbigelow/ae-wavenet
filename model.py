@@ -26,13 +26,6 @@ class PreProcess(nn.Module):
         # A dummy buffer that simply allows querying the current model device 
         self.register_buffer('dummy_buf', torch.empty(0))
 
-    def set_geometry(self, enc_off, dec_off):
-        """
-        """
-        self.l_enc_off, self.r_enc_off = enc_off
-        self.l_dec_off, self.r_dec_off = dec_off 
-
-
     def one_hot(self, wav_compand):
         """
         wav_compand: (B, T)
@@ -42,20 +35,12 @@ class PreProcess(nn.Module):
         wav_one_hot = util.gather_md(self.quant_onehot, 0, wav_compand.long()).permute(1,0,2)
         return wav_one_hot
 
-    def forward(self, snd_batch):
+    def forward(self, in_snd_slice):
         """
-        Inputs:
-        B, M, Q: n_batch, n_mels, n_quant
-        T: n_timesteps, receptive field of decoder 
-        T': n_timesteps, output size of decoder
-        mel_batch: (B, M)   
-        wav_onehot_dec: (B, Q, T) (input to decoder)
-        wav_compand_out: (B, T') (input matching the timestep range of decoder output)
+        Converts the input to a one-hot format
         """
-        snd_batch_dec = snd_batch[:,self.l_enc_off:self.r_enc_off or None]
-        snd_batch_out = snd_batch_dec[:, self.l_dec_off:self.r_dec_off or None]
-        snd_onehot_dec = self.one_hot(snd_batch_dec)
-        return snd_onehot_dec, snd_batch_out
+        in_snd_slice_onehot = self.one_hot(in_snd_slice)
+        return in_snd_slice_onehot
 
 
 class AutoEncoder(nn.Module):
@@ -63,13 +48,13 @@ class AutoEncoder(nn.Module):
     Full Autoencoder model.  The _initialize method allows us to seamlessly initialize
     from __init__ or __setstate__ 
     """
-    def __init__(self, pre_params, enc_params, bn_params, dec_params, sam_per_slice):
-        self.args = [pre_params, enc_params, bn_params, dec_params, sam_per_slice]
+    def __init__(self, pre_params, enc_params, bn_params, dec_params
+        self.args = [pre_params, enc_params, bn_params, dec_params]
         self._initialize()
 
     def _initialize(self):
         super(AutoEncoder, self).__init__() 
-        pre_params, enc_params, bn_params, dec_params, sam_per_slice = self.args
+        pre_params, enc_params, bn_params, dec_params = self.args
 
         # the "preprocessing"
         self.preprocess = PreProcess(pre_params, n_quant=dec_params['n_quant'])
@@ -106,7 +91,6 @@ class AutoEncoder(nn.Module):
                 )
         self.vc = self.decoder.vc
         self.set_geometry()
-        self.set_slice_size(sam_per_slice)
 
     def __getstate__(self):
         state = { 
@@ -133,20 +117,6 @@ class AutoEncoder(nn.Module):
                     self.n_sam_per_slice
                     )
 
-        # timestep offsets between input and output of the encoder
-        enc_off = vconv.offsets(self.preprocess.vc, self.decoder.last_upsample_vc)
-
-        # timestep offsets between wav input and output of decoder 
-        # NOTE: this starts from after the upsampling, because it is concerned
-        # with the wav input, not conditioning vectors
-        dec_off = vconv.offsets(self.decoder.last_upsample_vc.next(), self.decoder.vc)
-        self.preprocess.set_geometry(enc_off, dec_off)
-
-    def set_slice_size(self, n_sam_per_slice_req):
-
-        self.vc.init_nv(n_sam_per_slice_req)
-        self.input_size = self.preprocess.vc.src.nv 
-        self.output_size = self.decoder.vc.dst.nv 
 
     def init_vq_embed(self, data):
         """Initialize the VQ Embedding with samples from the encoder."""

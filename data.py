@@ -85,11 +85,21 @@ def convert(catalog, pfx, n_quant, sample_rate=16000, win_sz=400, hop_sz=160,
         index.update(ind)
         pickle.dump(index, ind_fh)
 
-class VirualOffsets(object):
-    def __init__(self, cumul_snd_offset, cumul_mel_offset, cumul_num_slices):
-        self.cumul_snd_offset = cumul_snd_offset
-        self.cumul_mel_offset = cumul_mel_offset
-        self.cumul_vslices = cumul_num_slices
+
+class SampleGeom(object):
+    """
+    Information about each Sample File 
+    """
+    def __init__(self, out_beg, out_end, n_slices,
+            snd_len, mel_len, snd_voff, mel_voff):
+        self.out_beg = out_beg # timestep offset in the input of first output prediction 
+        self.out_end = out_end # timestep offset in the input of last output prediction
+        self.n_slices = n_slices # number of windowed batches in this sample
+        self.snd_len = snd_len # number of timesteps in this sample 
+        self.mel_len = mel_len # number of mfcc elements
+        self.snd_voff = snd_voff # cumulative values of snd_len
+        self.mel_voff = mel_voff # cumulative values of mel_len
+        
 
 
 class Slice(nn.Module):
@@ -110,8 +120,6 @@ class Slice(nn.Module):
         # index contains arrays voice_index[], n_snd_elem[], n_mel_elem[], wav_path[]
         self.__dict__.update(index)
         self.n_files = len(self.n_snd_elem)
-        self.snd_offset = np.empty(self.n_files, dtype=np.int32)
-        self.mel_offset = np.empty(self.n_files, dtype=np.int32)
 
         self.mfcc_vc = vconv.VirtualConv(
                 filter_info=self.window_size,
@@ -119,17 +127,49 @@ class Slice(nn.Module):
                 parent=None, name='MFCC'
         )
 
-        snd_off = 0
-        for i in range(self.n_files):
-            self.snd_offset[i] = snd_off
-            snd_off += self.n_snd_elem[i]
-        total_snd_elem = snd_off
+    def num_speakers(self):
+        return len(set(self.voice_index))
 
-        mel_off = 0
-        for i in range(self.n_files):
-            self.mel_offset[i] = mel_off
-            mel_off += self.n_mel_elem[i]
-        total_mel_elem = mel_off
+    def post_init(self, model, n_sam_per_slice_requested):
+        """
+        Inputs:
+        Initialize snd_voffset, mel_voffset
+        Initialize n_total_win_batch and end_vc values
+        Initialize vcs for setting the geometry of slices
+        """
+        self.slice_voff = np.empty(self.n_files, dtype=np.int32)
+
+        # last vconv in the autoencoder
+        self.pre_upsample_vc = model.decoder.pre_upsample_vc
+        self.last_upsample_vc = model.decoder.last_upsample_vc
+        self.wavenet_beg_vc = model.decoder.beg_vc
+        self.wavenet_end_vc = model.decoder.last_grcc_vc
+
+        # Calculate actual window_batch_size from requested
+        in_b, in_e = vconv.rfield(self.pre_upsample_vc, self.last_grcc_vc,
+                0, n_sam_per_slice_requested, n_sam_per_slice_requested)
+        assert in_b == 0
+        out_b, out_e = vconv.ifield(self.pre_upsample_vc, self.last_grcc_vc,
+                0, in_e, in_e)
+        assert out_b == 0
+        self.window_batch_size = out_e
+
+        geom = SampleGeom(0, 0, 0, 0, 0, 0, 0)
+        for i, snd_len, mel_len in enumerate(zip(self.n_snd_elem, self.n_mel_elem)):
+            geom.out_beg, geom_out_end = vconv.ifield(
+                self.wavenet_beg_vc, self.wavenet_end_vc, 0, snd_len, snd_len)
+            geom.n_slices = snd_len // self.window_batch_size
+            geom.snd_len = snd_len
+            geom.mel_len = mel_len
+            self.sample.append(geom)
+            geom.snd_voff += geom.snd_len
+            geom.mel_voff += geom.mel_len
+            self.n_win_batch += geom.n_slices
+            # we don't know the window batch size for mel, but it is guaranteed
+            # to have the same number of slices due to the model geometry
+
+        total_snd_elem = sum(map(lambda g: g.snd_len, geom))
+        total_mel_elem = sum(map(lambda g: g.mel_len, geom))
 
         dat_file = ind_pfx + '.dat'
         mel_file = ind_pfx + '.mel'
@@ -156,7 +196,7 @@ class Slice(nn.Module):
             self.register_buffer('mel_data', mel_data)
         else:
             # These still need to be properties, but we won't register them
-            self.snd_data = data
+            self.snd_data = snd_data
             self.mel_data = mel_data
 
         self.register_buffer('snd_slice', torch.empty((batch_size, 0),
@@ -168,45 +208,6 @@ class Slice(nn.Module):
         self.register_buffer('voice_index', torch.empty((batch_size, 0),
             dtype=torch.int))
 
-    def num_speakers(self):
-        return len(set(self.voice_index))
-
-    def post_init(self, model, n_sam_per_slice_requested):
-        """
-        Inputs:
-        Initialize snd_voffset, mel_voffset
-        Initialize n_total_win_batch and end_vc values
-        Initialize vcs for setting the geometry of slices
-        """
-        self.voffset = np.empty((self.n_files), dtype=np.int32)
-        self.n_sam_win = np.empty((self.n_files), dtype=np.int32)
-
-        # last vconv in the autoencoder
-        self.pre_upsample_vc = model.decoder.pre_upsample_vc
-        self.last_upsample_vc = model.decoder.last_upsample_vc
-        self.last_grcc_vc = model.decoder.last_grcc_vc
-
-        # Calculate actual window_batch_size from requested
-        in_b, in_e = vconv.rfield(self.pre_upsample_vc, self.last_grcc_vc,
-                0, n_sam_per_slice_requested, n_sam_per_slice_requested)
-        assert in_b == 0
-        out_b, out_e = vconv.ifield(self.pre_upsample_vc, self.last_grcc_vc,
-                0, in_e, in_e)
-        assert out_b == 0
-        self.window_batch_size = out_e
-        self.n_total_win_batch = 0
-
-        stat = VirtualOffsets(0, 0, 0)
-        for i, (snd_len, mel_len) in enumerate(zip(self.n_snd_elem, self.n_mel_elem)):
-            self.virtual_offsets[i] = stat
-            n_sam_win = snd_len // self.window_batch_size
-            # we don't know the window batch size for mel, but it is guaranteed
-            # to have the same number of slices due to the model geometry
-            stat.cumul_snd_len += snd_len
-            stat.cumul_mel_len += mel_len
-            stat.cumul_num_slices += n_sam_win
-            self.n_total_win_batch += n_sam_win 
-
 
     def next_slice(self):
         """
@@ -214,22 +215,23 @@ class Slice(nn.Module):
         Populates self.snd_slice, self.mel_slice, self.mask, and
         self.slice_voice_index
         """
-        picks = np.random(0, self.n_total_win_batch, self.batch_size)
-        for vwin, b in enumerate(picks):
-            file_i = util.greatest_lower_bound(self.snd_voffset, vwin)
-            win_i = vwin - self.voffset[file_i]
+        picks = np.random(0, self.n_win_batch, self.batch_size)
+        for slice_voff, b in enumerate(picks):
+            file_i = util.greatest_lower_bound(self.slice_voff, slice_voff)
+            slice_i = slice_voff - self.slice_voff[file_i]
 
             # Calculate the required input ranges for snd and mel to generate
             # the picked sample window
             # [sam_b, sam_e) is the range of the desired output
-            sam_b = win_i * self.window_batch_size
+            sam_b = slice_i * self.window_batch_size
             sam_e = sam_b + self.window_batch_size
-            sam_l = self.n_sam_windows[file_i] * self.window_batch_size
-            mel_in_b, mel_in_e = vconv.rfield(
-                    self.mfcc_vc.child, self.last_grcc_vc, sam_b, sam_e, sam_l
+            sam_l = self.n_snd_elem[file_i]
+
+            in_mel_range = vconv.rfield(
+                    self.mfcc_vc, self.wavenet_end_vc, sam_b, sam_e, sam_l
             )
-            dec_in_b, dec_in_e = vconv.rfield(
-                    self.mfcc_vc, self.last_grcc_vc, sam_b, sam_e, sam_l
+            in_snd_range = vconv.rfield(
+                    self.wavenet_beg_vc, self.wavenet_end_vc, sam_b, sam_e, sam_l
             )
             # In the following transformation:
             # wav --[MFCC]-> mel --[Encoder]-> embeddings --[WaveNet Upsampling] -> local_cond
@@ -237,16 +239,15 @@ class Slice(nn.Module):
             # Due to the window-based geometry of [MFCC], [Encoder], and
             # [WaveNet Upsampling], the elements of local_cond correspond to wav.
             # This calculates the sub-range in wav corresponding to local_cond.
-            # 
-            guide_sam_b, guide_sam_e = vconv.shadow(
-                    self.mfcc_vc, self.last_upsample_vc, 
-                    sam_b, sam_e, sam_e
-            )
+             
+            mel_voff = self.sample[file_i].mel_voff
+            snd_voff = self.sample[file_i].snd_voff
 
-            snd_off = self.snd_offset[file_i]
-            mel_off = self.mel_offset[file_i]
-            self.snd_dec_input[b] = self.snd_data[(snd_off + dec_in_b):(snd_off + dec_in_e)]
-            self.snd_slice_out[b] = self.snd_data[(snd_off + guide_sam_b):(snd_off + guide_sam_e)]
-            self.mel_slice[b] = self.mel_data[(mel_off + mel_in_b):(mel_off + mel_in_e)]
+            self.in_mel_slice[b] = self.mel_data[(mel_voff +
+                in_mel_range[0]):(mel_voff + in_mel_range[1])]
+            self.in_snd_slice[b] = self.snd_data[(snd_voff +
+                in_snd_range[0]):(snd_voff + in_snd_range[1])]
+            self.out_snd_slice[b] = self.snd_data[(snd_voff + sam_b):(snd_voff
+                + sam_e)]
             self.slice_voice_index[b] = self.voice_index[file_i]
 

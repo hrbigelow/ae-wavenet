@@ -44,7 +44,6 @@ class ProcessWav(object):
         # C, T: n_mels, n_timesteps
         # Output: C, T
         # This assert doesn't seem to work when we just want to process an entire wav file
-        # assert self.vc.src.nv == wav.shape[0]
         adj = 1 if self.window_sz % 2 == 0 else 0
         adj_l_wing_sz = self.vc.l_wing_sz + adj 
 
@@ -73,6 +72,5 @@ class ProcessWav(object):
         mfcc_delta2 = librosa.feature.delta(mfcc_trim, order=2)
         mfcc_and_derivatives = np.concatenate((mfcc_trim, mfcc_delta, mfcc_delta2), axis=0)
 
-        # assert self.vc.dst.nv == mfcc_and_derivatives.shape[1]
         return mfcc_and_derivatives.astype(wav.dtype)
 
