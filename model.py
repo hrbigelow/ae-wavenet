@@ -17,7 +17,9 @@ import wavenet as dec
 
 # from numpy import vectorize as np_vectorize
 class PreProcess(nn.Module):
-    """Shape tensors by appropriate offsets to feed to Loss function"""
+    """
+    Perform one-hot encoding
+    """
     def __init__(self, pre_params, n_quant):
         super(PreProcess, self).__init__()
         self.n_quant = n_quant
@@ -48,19 +50,20 @@ class AutoEncoder(nn.Module):
     Full Autoencoder model.  The _initialize method allows us to seamlessly initialize
     from __init__ or __setstate__ 
     """
-    def __init__(self, pre_params, enc_params, bn_params, dec_params
-        self.args = [pre_params, enc_params, bn_params, dec_params]
+    def __init__(self, pre_params, enc_params, bn_params, dec_params, 
+            n_mel_chan, mfcc_vc):
+        self.args = [pre_params, enc_params, bn_params, dec_params, n_mel_chan,
+                mfcc_vc]
         self._initialize()
 
     def _initialize(self):
         super(AutoEncoder, self).__init__() 
-        pre_params, enc_params, bn_params, dec_params = self.args
+        pre_params, enc_params, bn_params, dec_params, n_mel_chan, mfcc_vc = self.args
 
         # the "preprocessing"
         self.preprocess = PreProcess(pre_params, n_quant=dec_params['n_quant'])
 
-        self.encoder = enc.Encoder(n_in=self.preprocess.mfcc.n_out,
-                parent_vc=data_mfcc_vc, **enc_params)
+        self.encoder = enc.Encoder(n_in=n_mel_chan, parent_vc=mfcc_vc, **enc_params)
 
         bn_type = bn_params['type']
         bn_extra = dict((k, v) for k, v in bn_params.items() if k != 'type')
@@ -90,7 +93,6 @@ class AutoEncoder(nn.Module):
                 n_lc_in=bn_params['n_out']
                 )
         self.vc = self.decoder.vc
-        self.set_geometry()
 
     def __getstate__(self):
         state = { 
@@ -114,7 +116,7 @@ class AutoEncoder(nn.Module):
             self.objective.post_init(
                     self.decoder.pre_upsample_vc,
                     self.decoder.last_grcc_vc,
-                    self.n_sam_per_slice
+                    data_source.window_batch_size
                     )
 
 

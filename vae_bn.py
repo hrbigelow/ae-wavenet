@@ -68,10 +68,14 @@ class SGVBLoss(nn.Module):
         super(SGVBLoss, self).__init__()
         self.bottleneck = bottleneck
         self.logsoftmax = nn.LogSoftmax(1) # input is (B, Q, N)
-        self.combine = netmisc.LCCombine('LCCombine')
+        self.usage_adjust = netmisc.EmbedLossAdjust('EmbedLossAdjust')
+        # self.combine = netmisc.LCCombine('LCCombine')
 
-    def set_geometry(self, beg_vc, end_vc):
-        self.combine.set_geometry(beg_vc, end_vc)
+    def post_init(self, beg_vc, end_vc, n_sam_per_slice):
+        self.usage_adjust.init_usage_weight(beg_vc, end_vc, n_sam_per_slice)
+
+    # def set_geometry(self, beg_vc, end_vc):
+    #    self.combine.set_geometry(beg_vc, end_vc)
 
     def forward(self, quant_pred, target_wav):
         '''

@@ -5,6 +5,8 @@ import librosa
 import numpy as np
 import torch
 from torch import nn
+import vconv
+import copy
 
 import util
 import mfcc
@@ -100,10 +102,15 @@ class SampleGeom(object):
         self.snd_voff = snd_voff # cumulative values of snd_len
         self.mel_voff = mel_voff # cumulative values of mel_len
         
+    def __repr__(self):
+        return '({}, {}, {}, {}, {}, {}, {})\n'.format(
+                self.out_beg, self.out_end, self.n_slices, self.snd_len,
+                self.mel_len, self.snd_voff, self.mel_voff
+                )
 
 
 class Slice(nn.Module):
-    def __init__(self, ind_pfx, max_gpu_mem_bytes, batch_size, window_batch_size):
+    def __init__(self, ind_pfx, batch_size):
         super(Slice, self).__init__()
         try:
             ind_file = ind_pfx + '.ind'
@@ -115,7 +122,6 @@ class Slice(nn.Module):
             exit(1)
 
         self.batch_size = batch_size
-        self.window_batch_size = window_batch_size
 
         # index contains arrays voice_index[], n_snd_elem[], n_mel_elem[], wav_path[]
         self.__dict__.update(index)
@@ -123,14 +129,16 @@ class Slice(nn.Module):
 
         self.mfcc_vc = vconv.VirtualConv(
                 filter_info=self.window_size,
-                stride=self.hop_sz,
+                stride=self.hop_size,
                 parent=None, name='MFCC'
         )
+
 
     def num_speakers(self):
         return len(set(self.voice_index))
 
-    def post_init(self, model, n_sam_per_slice_requested):
+    def post_init(self, model, index_file_prefix, n_sam_per_slice_requested,
+            max_gpu_mem_bytes):
         """
         Inputs:
         Initialize snd_voffset, mel_voffset
@@ -138,41 +146,41 @@ class Slice(nn.Module):
         Initialize vcs for setting the geometry of slices
         """
         self.slice_voff = np.empty(self.n_files, dtype=np.int32)
+        self.sample = []
 
         # last vconv in the autoencoder
-        self.pre_upsample_vc = model.decoder.pre_upsample_vc
-        self.last_upsample_vc = model.decoder.last_upsample_vc
         self.wavenet_beg_vc = model.decoder.beg_vc
         self.wavenet_end_vc = model.decoder.last_grcc_vc
 
         # Calculate actual window_batch_size from requested
-        in_b, in_e = vconv.rfield(self.pre_upsample_vc, self.last_grcc_vc,
+        in_b, in_e = vconv.rfield(self.mfcc_vc, self.wavenet_end_vc,
                 0, n_sam_per_slice_requested, n_sam_per_slice_requested)
         assert in_b == 0
-        out_b, out_e = vconv.ifield(self.pre_upsample_vc, self.last_grcc_vc,
+        out_b, out_e = vconv.ifield(self.mfcc_vc, self.wavenet_end_vc,
                 0, in_e, in_e)
         assert out_b == 0
         self.window_batch_size = out_e
 
         geom = SampleGeom(0, 0, 0, 0, 0, 0, 0)
-        for i, snd_len, mel_len in enumerate(zip(self.n_snd_elem, self.n_mel_elem)):
-            geom.out_beg, geom_out_end = vconv.ifield(
+        self.n_win_batch = 0
+        for i, (snd_len, mel_len) in enumerate(zip(self.n_snd_elem, self.n_mel_elem)):
+            geom.out_beg, geom.out_end = vconv.ifield(
                 self.wavenet_beg_vc, self.wavenet_end_vc, 0, snd_len, snd_len)
             geom.n_slices = snd_len // self.window_batch_size
             geom.snd_len = snd_len
             geom.mel_len = mel_len
-            self.sample.append(geom)
+            self.sample.append(copy.copy(geom))
             geom.snd_voff += geom.snd_len
             geom.mel_voff += geom.mel_len
             self.n_win_batch += geom.n_slices
             # we don't know the window batch size for mel, but it is guaranteed
             # to have the same number of slices due to the model geometry
 
-        total_snd_elem = sum(map(lambda g: g.snd_len, geom))
-        total_mel_elem = sum(map(lambda g: g.mel_len, geom))
+        total_snd_elem = sum(map(lambda g: g.snd_len, self.sample))
+        total_mel_elem = sum(map(lambda g: g.mel_len, self.sample))
 
-        dat_file = ind_pfx + '.dat'
-        mel_file = ind_pfx + '.mel'
+        dat_file = index_file_prefix + '.dat'
+        mel_file = index_file_prefix + '.mel'
 
         if self.snd_dtype is np.uint8:
             buf = torch.ByteStorage.from_file(dat_file, shared=False, size=total_snd_elem)
@@ -199,13 +207,13 @@ class Slice(nn.Module):
             self.snd_data = snd_data
             self.mel_data = mel_data
 
-        self.register_buffer('snd_slice', torch.empty((batch_size, 0),
+        self.register_buffer('in_snd_slice', torch.empty((self.batch_size, 0),
             dtype=self.snd_data.dtype))
-        self.register_buffer('snd_slice_out', torch.empty((batch_size, 0),
+        self.register_buffer('out_snd_slice', torch.empty((self.batch_size, 0),
             dtype=self.snd_data.dtype))
-        self.register_buffer('mel_slice', torch.empty((batch_size, 0),
+        self.register_buffer('in_mel_slice', torch.empty((self.batch_size, 0),
             dtype=torch.float))
-        self.register_buffer('voice_index', torch.empty((batch_size, 0),
+        self.register_buffer('slice_voice_index', torch.empty((self.batch_size, 0),
             dtype=torch.int))
 
 

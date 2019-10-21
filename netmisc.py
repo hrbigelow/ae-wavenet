@@ -26,7 +26,7 @@ class EmbedLossAdjust(nn.Module):
     is not accounted for.
     """
     def __init__(self, name=None):
-        super(LCCombine, self).__init__()
+        super(EmbedLossAdjust, self).__init__()
         self.name = name
 
     def init_usage_weight(self, beg_vc, end_vc, n_out):

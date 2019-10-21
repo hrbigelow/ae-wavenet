@@ -50,13 +50,14 @@ def main():
 
         # Initialize data
         data_source = data.Slice(
-                opts.index_file_prefix,
-                opts.max_gpu_data_bytes, opts.n_batch)
+                opts.index_file_prefix, opts.n_batch)
 
         dec_params['n_speakers'] = data_source.num_speakers()
 
         model = ae.AutoEncoder(
-                pre_params, enc_params, bn_params, dec_params)
+                pre_params, enc_params, bn_params, dec_params,
+                data_source.n_mel_chan,
+                data_source.mfcc_vc)
         optim = torch.optim.Adam(params=model.parameters(), lr=learning_rates[0])
         state = checkpoint.State(0, model, data_source, optim)
 
@@ -71,8 +72,8 @@ def main():
 
     start_step = state.step
 
-    print('Model input size: {}'.format(state.model.input_size), file=stderr)
-    stderr.flush()
+    # print('Model input size: {}'.format(state.model.input_size), file=stderr)
+    # stderr.flush()
 
     # set this to zero if you want to print out a logging header in resume mode as well
     netmisc.set_print_iter(0)
@@ -80,7 +81,12 @@ def main():
     # Second part of a two-part construction of model and data. This is
     # necessary since there is a circular dependence between model and data.
     # This post-initialization is not related to the model state or data state.
-    state.data.post_init(state.model, opts.n_sam_per_slice)
+    state.data.post_init(
+            state.model,
+            opts.index_file_prefix,
+            opts.n_sam_per_slice,
+            opts.max_gpu_mem_bytes)
+
     state.model.post_init(state.data)
     state.to(device=opts.device)
 

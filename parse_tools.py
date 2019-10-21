@@ -47,7 +47,7 @@ def cold_parser():
             help='INI file specifying training and other hyperparameters')
 
     # Data generation options
-    cold.add_argument('--max-gpu-data-bytes', '-gmm', type=int, metavar='INT',
+    cold.add_argument('--max-gpu-mem-bytes', '-gmm', type=int, metavar='INT',
             default=1e9,
             help='Maximum memory in bytes to allocate on the GPU for the data. '
             'If all data fit on the GPU, will eliminate redundant '
