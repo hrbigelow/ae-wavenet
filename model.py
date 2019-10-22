@@ -114,8 +114,8 @@ class AutoEncoder(nn.Module):
         """
         if self.bn_type in ('vae', 'vqvae'):
             self.objective.post_init(
-                    self.decoder.pre_upsample_vc,
-                    self.decoder.last_grcc_vc,
+                    self.decoder.vc['pre_upsample'],
+                    self.decoder.vc['end_grcc'],
                     data_source.window_batch_size
                     )
 

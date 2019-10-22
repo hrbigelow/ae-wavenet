@@ -7,8 +7,8 @@ import util
 import netmisc
 
 class GatedResidualCondConv(nn.Module):
-    def __init__(self, n_cond, n_res, n_dil, n_skp, stride, dil, filter_sz=2,
-            bias=True, parent_vc=None, name=None):
+    def __init__(self, wavenet_vc, n_cond, n_res, n_dil, n_skp, stride, dil,
+            filter_sz=2, bias=True, parent_vc=None, name=None):
         """
         filter_sz: # elements in the dilated kernels
         n_cond: # channels of local condition vectors
@@ -17,6 +17,7 @@ class GatedResidualCondConv(nn.Module):
         n_skp : # channels output to skip connections
         """
         super(GatedResidualCondConv, self).__init__()
+        self.wavenet_vc = wavenet_vc 
         self.conv_signal = nn.Conv1d(n_res, n_dil, filter_sz, dilation=dil, bias=bias)
         self.conv_gate = nn.Conv1d(n_res, n_dil, filter_sz, dilation=dil, bias=bias)
         self.proj_signal = nn.Conv1d(n_cond, n_dil, kernel_size=1, bias=False)
@@ -31,25 +32,14 @@ class GatedResidualCondConv(nn.Module):
         dil_filter_sz = (filter_sz - 1) * dil + 1
         self.vc = vconv.VirtualConv(filter_info=(dil_filter_sz - 1, 0),
                 parent=parent_vc, name=name)
-        self.beg_vc = None
-        self.end_vc = None
         self.apply(netmisc.xavier_init)
-
-    def init_bound_vcs(self, beg_vc, end_vc):
-        """
-        last_vc is the last GRCC unit in the stack.  This initialization is
-        needed because the destination VirtualConv is not known at initialization
-        time
-        """
-        self.beg_vc = beg_vc
-        self.end_vc = end_vc
         
     def cond_lead(self, win_size):
         """
         distance from start of the overall stack input to
         the start of this convolution
         """
-        shadow_b, __ = vconv.shadow(self.beg_vc, self.vc, 0, win_size, win_size)
+        shadow_b, __ = vconv.shadow(self.wavenet_vc['beg_grcc'], self.vc, 0, win_size, win_size)
         return shadow_b 
 
     def skip_lead(self, win_size):
@@ -63,7 +53,8 @@ class GatedResidualCondConv(nn.Module):
         if self.vc == self.end_vc:
             return 0
 
-        shadow_b, __ = vconv.shadow(self.vc.next(), self.end_vc, 0, win_size, win_size)
+        shadow_b, __ = vconv.shadow(self.vc.next(),
+                self.wavenet_vc['end_grcc'], 0, win_size, win_size)
         return shadow_b 
 
     def forward(self, x, cond):
@@ -257,11 +248,13 @@ class WaveNet(nn.Module):
 
         cur_vc = vconv.VirtualConv(filter_info=post_jitter_filt_sz,
                 stride=1, parent=parent_vc, name=lc_conv_name)
-        self.beg_vc = cur_vc
+
+        self.vc = dict()
+        self.vc['beg'] = cur_vc
         
         # This RF is the first processing of the local conditioning after the
         # Jitter. It is the starting point for the commitment loss aggregation
-        self.pre_upsample_vc = cur_vc
+        self.vc['pre_upsample'] = cur_vc
         self.lc_upsample = nn.Sequential()
 
         # WaveNet is a stand-alone model, so parent_vc is None
@@ -275,7 +268,7 @@ class WaveNet(nn.Module):
 
         # This vc describes the bounds of the input wav corresponding to the
         # local conditioning vectors
-        self.last_upsample_vc = cur_vc
+        self.vc['last_upsample'] = cur_vc
         self.cond = Conditioning(n_speakers, n_global_embed)
         self.base_layer = Conv1dWrap(n_quant, n_res, kernel_size=1, stride=1,
                 dilation=1, bias=self.bias)
@@ -287,26 +280,22 @@ class WaveNet(nn.Module):
             for bl in range(self.n_block_layers):
                 dil = 2**bl
                 name = 'GRCC_{},{}(dil={})'.format(b, bl, dil)
-                grc = GatedResidualCondConv(n_cond, n_res, n_dil, n_skp, 1,
-                        dil, filter_sz, bias, cur_vc, name)
+                grc = GatedResidualCondConv(self.vc, n_cond, n_res, n_dil,
+                        n_skp, 1, dil, filter_sz, bias, cur_vc, name)
                 self.conv_layers.append(grc)
                 cur_vc = grc.vc
-
-        self.last_grcc_vc = cur_vc
 
         # Each module in the stack needs to know the dimensions of
         # the input and output of the overall stack, in order to trim
         # residual connections
-        beg_grcc_vc = self.conv_layers[0].vc
-        end_grcc_vc = self.conv_layers[-1].vc 
-        for mod in self.conv_layers.children():
-            mod.init_bound_vcs(beg_grcc_vc, end_grcc_vc)
+        self.vc['beg_grcc'] = self.conv_layers[0].vc
+        self.vc['end_grcc'] = self.conv_layers[-1].vc 
 
         self.relu = nn.ReLU()
         self.post1 = Conv1dWrap(n_skp, n_post, 1, bias=bias)
         self.post2 = Conv1dWrap(n_post, n_quant, 1, bias=bias)
         self.logsoftmax = nn.LogSoftmax(1) # (B, Q, N)
-        self.vc = cur_vc
+        self.vc['main'] = cur_vc
 
     def forward(self, wav_onehot, lc_sparse, speaker_inds):
         """

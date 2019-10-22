@@ -103,7 +103,7 @@ class SampleGeom(object):
         self.mel_voff = mel_voff # cumulative values of mel_len
         
     def __repr__(self):
-        return '({}, {}, {}, {}, {}, {}, {})\n'.format(
+        return '(o: [{}, {}), ns: {}, sl: {}, ml: {}, soff: {}, moff: {})\n'.format(
                 self.out_beg, self.out_end, self.n_slices, self.snd_len,
                 self.mel_len, self.snd_voff, self.mel_voff
                 )
@@ -149,32 +149,37 @@ class Slice(nn.Module):
         self.sample = []
 
         # last vconv in the autoencoder
-        self.wavenet_beg_vc = model.decoder.beg_vc
-        self.wavenet_end_vc = model.decoder.last_grcc_vc
+        self.wave_beg_vc = model.decoder.vc['beg_grcc']
+        self.wave_end_vc = model.decoder.vc['end_grcc']
 
         # Calculate actual window_batch_size from requested
-        in_b, in_e = vconv.rfield(self.mfcc_vc, self.wavenet_end_vc,
+        in_b, in_e = vconv.rfield(self.mfcc_vc, self.wave_end_vc,
                 0, n_sam_per_slice_requested, n_sam_per_slice_requested)
         assert in_b == 0
-        out_b, out_e = vconv.ifield(self.mfcc_vc, self.wavenet_end_vc,
+        out_b, out_e = vconv.ifield(self.mfcc_vc, self.wave_end_vc,
                 0, in_e, in_e)
         assert out_b == 0
         self.window_batch_size = out_e
 
         geom = SampleGeom(0, 0, 0, 0, 0, 0, 0)
+        slice_voff = 0
         self.n_win_batch = 0
         for i, (snd_len, mel_len) in enumerate(zip(self.n_snd_elem, self.n_mel_elem)):
             geom.out_beg, geom.out_end = vconv.ifield(
-                self.wavenet_beg_vc, self.wavenet_end_vc, 0, snd_len, snd_len)
-            geom.n_slices = snd_len // self.window_batch_size
+                self.wave_beg_vc, self.wave_end_vc, 0, snd_len, snd_len)
+            assert geom.out_beg == 0
+            geom.n_slices = geom.out_end // self.window_batch_size
             geom.snd_len = snd_len
             geom.mel_len = mel_len
             self.sample.append(copy.copy(geom))
             geom.snd_voff += geom.snd_len
             geom.mel_voff += geom.mel_len
-            self.n_win_batch += geom.n_slices
+            self.slice_voff[i] = slice_voff 
+            slice_voff += geom.n_slices
             # we don't know the window batch size for mel, but it is guaranteed
             # to have the same number of slices due to the model geometry
+
+        self.n_win_batch = slice_voff
 
         total_snd_elem = sum(map(lambda g: g.snd_len, self.sample))
         total_mel_elem = sum(map(lambda g: g.mel_len, self.sample))
@@ -223,8 +228,8 @@ class Slice(nn.Module):
         Populates self.snd_slice, self.mel_slice, self.mask, and
         self.slice_voice_index
         """
-        picks = np.random(0, self.n_win_batch, self.batch_size)
-        for slice_voff, b in enumerate(picks):
+        picks = np.random.random_integers(0, self.n_win_batch, self.batch_size)
+        for b, slice_voff in enumerate(picks):
             file_i = util.greatest_lower_bound(self.slice_voff, slice_voff)
             slice_i = slice_voff - self.slice_voff[file_i]
 
@@ -236,10 +241,10 @@ class Slice(nn.Module):
             sam_l = self.n_snd_elem[file_i]
 
             in_mel_range = vconv.rfield(
-                    self.mfcc_vc, self.wavenet_end_vc, sam_b, sam_e, sam_l
+                    self.mfcc_vc, self.wave_end_vc, sam_b, sam_e, sam_l
             )
             in_snd_range = vconv.rfield(
-                    self.wavenet_beg_vc, self.wavenet_end_vc, sam_b, sam_e, sam_l
+                    self.wave_beg_vc, self.wave_end_vc, sam_b, sam_e, sam_l
             )
             # In the following transformation:
             # wav --[MFCC]-> mel --[Encoder]-> embeddings --[WaveNet Upsampling] -> local_cond

@@ -13,6 +13,8 @@ Some terminology
  left/right flanking padding elements applied
  key-covered element:  For a given logical filter position over the input,
  this is the element that is covered by the 'key' filter element.
+
+ 
 """
 
 class VirtualConv(object):
@@ -85,7 +87,7 @@ class VirtualConv(object):
             # index in input of left-covered element
             lb_in_i = lb_in_p_i - self.l_pad
             # final
-            in_i = min(0, lb_in_i)
+            in_i = max(0, lb_in_i)
         else:
             inv_stride = self.stride_ratio.denominator
             # index in SP-input of key-covered element
@@ -123,6 +125,9 @@ class VirtualConv(object):
             in_len = (out_len - 1) * stride + 1 - p + w
             in_i = min(ub_in_i, in_len - 1)
         else:
+            #      #############
+            #   @@@#**#**#**#**#@@@@
+            
             inv_stride = self.stride_ratio.denominator
             # index in SP-input of key-covered element 
             kc_sp_in_i = out_i + self.l_wing_sz
@@ -134,7 +139,8 @@ class VirtualConv(object):
             ub_in_i = ub_s_in_i // inv_stride
             # length calculation
             out_len = out_e + 1
-            in_len = (out_len + w - p - 1) // inv_stride + 1
+            # assumes no pad-adjacent spacing in the input 
+            in_len = math.ceil((out_len + w - p - 1) / inv_stride) + 1
             # final calculation
             in_i = min(ub_in_i, in_len - 1)
         return in_i
@@ -197,7 +203,7 @@ class VirtualConv(object):
             ub_out_i = ub_dense_out_i // stride
             # length calculation
             in_len = in_e + 1
-            out_len = (in_len + p - w) // stride 
+            out_len = (in_len + p - w - 1) // stride + 1
             # truncate the output if it is beyond the maximal length
             out_i = min(ub_out_i, out_len - 1)
         else:
@@ -219,8 +225,9 @@ class VirtualConv(object):
 
 def rfield(source, dest, out_b, out_e, out_len):
     """
-    Calculate the input tensor index range receptive field of the output tensor
-    range [out_b, out_e].  out_len is the length of the actual output.
+    Calculate the input tensor index range [in_b, in_e) receptive field of the
+    output tensor range [out_b, out_e).  out_len is the length of the actual
+    output.
     """
     # We need this check because there is no other convenient way to recognize
     # the empty interval.
@@ -228,20 +235,22 @@ def rfield(source, dest, out_b, out_e, out_len):
         return 0, 0
 
     vc = dest
-    b, e, li = out_b, out_e, out_len - 1
+    b, e, l = out_b, out_e - 1, out_len - 1
     while True:
+        b_p, e_p = b, e
         b = vc._get_rfield_lb(b)
-        e = vc._get_rfield_ub(e, li)
-        li = vc._get_rfield_ub(li, li)
+        e = vc._get_rfield_ub(e, l)
+        l = vc._get_rfield_ub(l, l)
+        print('in: [{}, {}), out: [{}, {}), {}'.format(b_p, e_p + 1, b, e + 1, vc))
         if vc is source:
             break
         vc = vc.parent
-    return b, e
+    return b, e + 1
 
-def ifield(source, dest, in_b, in_e, in_l):
+def ifield(source, dest, in_b, in_e, in_len):
     """
-    Calculates the output tensor index range which is the field of influence
-    for the input range [in_b, in_e].  in_l is the length of the input.
+    Calculates the output tensor index range [out_b, out_e) which is the field of
+    influence for the input range [in_b, in_e).
     """
     # We need this check because there is no other convenient way to recognize
     # the empty interval.
@@ -249,20 +258,26 @@ def ifield(source, dest, in_b, in_e, in_l):
         return 0, 0
 
     vc = source
-    b, e, l = in_b, in_e, in_l
+    b, e, l = in_b, in_e - 1, in_len - 1
     while True:
+        b_p, e_p = b, e
         b = vc._get_ifield_lb(b) 
         e = vc._get_ifield_ub(e, l)
         l = vc._get_ifield_ub(l, l)
+        print('in: [{}, {}), out: [{}, {}), {}'.format(b_p, e_p + 1, b, e + 1, vc))
         if vc is dest:
             break
         vc = vc.child
-    return b, e
+    return b, e + 1
 
-def _shadow(source, dest, in_b, in_e, in_l, lcm_de):
+def _shadow(source, dest, in_b, in_e, in_len, lcm_de):
+    """
+    Finds the shadow range in the input corresponding to the input range [in_b,
+    in_e).
+    """
     vc = source
     sp = lcm_de
-    b, e, l = in_b, in_e, in_l
+    b, e, l = in_b, in_e - 1, in_len - 1 
     pf = 0
     while True:
         b = vc._get_ifield_lb(b, l)
@@ -280,7 +295,7 @@ def _shadow(source, dest, in_b, in_e, in_l, lcm_de):
     reduce_sp = np.lcm.reduce(lcm_de, sp)
     assert pb % reduce_sp == 0
     assert pe % reduce_sp == 0
-    return pb // reduce_sp, pe // reduce_sp
+    return pb // reduce_sp, pe // reduce_sp + 1
 
 def shadow(source, dest, in_b, in_e, in_l):
     """
