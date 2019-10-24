@@ -89,8 +89,9 @@ class VirtualConv(object):
         receptive field of [out_b, out_l].  If no element exists, returns -1
         """
         lw, rw = self.l_wing_sz, self.r_wing_sz
+        lp, rp = self.l_pad, self.r_pad
         w = lw + rw
-        p = self.l_pad + self.r_pad
+        p = lp + rp
         assert p <= w # this is upheld by the constructor logic
 
         if self.stride_ratio >= 1:
@@ -101,207 +102,34 @@ class VirtualConv(object):
             out_dense_e = out_e * stride
             out_dense_l = out_l * stride
 
-            # index in P-input of RF lower bound 
-            lb_in_p_b = out_dense_b + lw - lw
-            # index in P-input of RF upper bounds 
-            ub_in_p_e = out_dense_e + rw - lw
-            ub_in_p_l = out_dense_l + rw - lw
+            # index in P-input of RF bound 
+            p_in_b = out_dense_b - lw + lw
+            p_in_e = out_dense_e + rw + lw
+            p_in_l = out_dense_l + rw + lw
 
-            # index in input of RF lower bound
-            lb_in_b = lb_in_p_b - self.l_pad
-            ub_in_e = ub_in_p_e - self.l_pad
-            ub_in_l = ub_in_p_l - self.l_pad
+            in_b = max(0, p_in_b - lp)
+            in_l = p_in_l - lp - rp
+            in_e = min(p_in_e - lp, in_l)
 
-            # length calculation
-            out_len = out_l + 1
-            in_len = (out_len - 1) * stride + 1 - p + w
-
-            # final
-            in_b = max(0, lb_in_i)
-            in_e = min(ub_in_e, in_len - 1)
-            in_l = min(ub_in_l, in_len - 1)
-        else
+        else:
             inv_stride = self.stride_ratio.denominator
             # index in SP-input of bound 
-            lb_sp_b = out_b + lw
-            ub_sp_e = out_e + lw + rw
-            ub_sp_l = out_l + lw + rw
+            sp_in_b = out_b - lw + lw
+            sp_in_e = out_e + rw + lw
+            sp_in_l = out_l + rw + lw
 
             # index in S-input of bound
-            lb_s_b = lb_sp_b - self.l_pad
-            ub_s_e = ub_sp_e - self.l_pad
-            ub_s_l = ub_sp_l - self.l_pad
+            s_in_b = max(0, sp_in_b - lp)
+            s_in_l = out_l - lw - rw
+            s_in_e = min(sp_in_e - lp, s_in_l)
 
-            # length calculation for bounds correction
-            out_len = out_l + 1
-            # assumes no pad-adjacent spacing in the input 
-            in_len = math.ceil((out_len + w - p - 1) / inv_stride) + 1
-
-            # index in input of bound
-            lb_b = math.ceil(lb_s_b / inv_stride)
-            ub_e = ub_s_e // inv_stride
-            ub_l = ub_s_l // inv_stride
-
-            # final
-            in_b = max(0, lb_b)
-            in_e = min(ub_e, in_len - 1)
-            in_l = min(ub_l, in_len - 1)
+            # project to input
+            in_b = math.ceil(s_in_b / inv_stride)
+            in_e = s_in_e // inv_stride
+            in_l = s_in_l // inv_stride
 
         return in_b, in_e, in_l
 
-
-
-    def _get_rfield_lb(self, out_i):
-        """
-        Get the start of the input range which is the receptive field for the
-        output element out_i.  
-        """
-        if self.stride_ratio >= 1:
-            stride = self.stride_ratio.numerator
-            # index in densified output
-            out_dense_i = out_i * stride
-            # index in P-input of key-covered element
-            kc_in_p_i = out_dense_i + self.l_wing_sz
-            # index in P-input of left-covered element (>= 0)
-            lb_in_p_i = kc_in_p_i - self.l_wing_sz
-            # index in input of left-covered element
-            lb_in_i = lb_in_p_i - self.l_pad
-            # final
-            in_i = max(0, lb_in_i)
-        else:
-            inv_stride = self.stride_ratio.denominator
-            # index in SP-input of key-covered element
-            kc_i = out_i + self.l_wing_sz
-            # index in SP-input of left-covered element
-            lb_filt_i = kc_i - self.l_wing_sz
-            # index in S-input of left-covered element
-            unpad_i = max(0, lb_filt_i - self.l_pad)
-            # index in input of left-covered element
-            in_i = math.ceil(unpad_i / inv_stride)
-        return in_i
-
-    def _get_rfield_ub(self, out_i, out_e):
-        """
-        Get the end element of the input receptive field for the given output
-        elements out_i and out_e in tandem.  out_e is assumed to be the last
-        element in the output, and is needed for correct calculation.
-        """
-        w = self.l_wing_sz + self.r_wing_sz
-        p = self.l_pad + self.r_pad
-        assert p <= w # this is upheld by the constructor logic
-
-        if self.stride_ratio >= 1:
-            stride = self.stride_ratio.numerator
-            # index in densified output
-            out_dense_i = out_i * stride
-            # index in P-input of key-covered element
-            kc_in_p_i = out_dense_i + self.l_wing_sz
-            # index in P-input of right-covered element
-            ub_in_p_i = kc_in_p_i + self.r_wing_sz
-            # index in input of right-covered element
-            ub_in_i = ub_in_p_i - self.l_pad
-            # length calculation
-            out_len = out_e + 1
-            in_len = (out_len - 1) * stride + 1 - p + w
-            in_i = min(ub_in_i, in_len - 1)
-        else:
-            #      #############
-            #   @@@#**#**#**#**#@@@@
-            
-            inv_stride = self.stride_ratio.denominator
-            # index in SP-input of key-covered element 
-            kc_sp_in_i = out_i + self.l_wing_sz
-            # index in SP-input of right-covered element
-            ub_sp_in_i = kc_sp_in_i + self.r_wing_sz
-            # index in S-input of right-covered element (>= 0)
-            ub_s_in_i = ub_sp_in_i - self.l_pad
-            # index in input of value element nearest right-covered element 
-            ub_in_i = ub_s_in_i // inv_stride
-            # length calculation
-            out_len = out_e + 1
-            # assumes no pad-adjacent spacing in the input 
-            in_len = math.ceil((out_len + w - p - 1) / inv_stride) + 1
-            # final calculation
-            in_i = min(ub_in_i, in_len - 1)
-        return in_i
-
-
-    def _get_ifield_lb(self, in_i):
-        """
-        Get the start of the output range which is the "influence field" for
-        the input element in_i.  "influence field" is the inverse of the
-        receptive field
-        """
-        w = self.l_wing_sz + self.r_wing_sz
-
-        if self.stride_ratio >= 1:
-            stride = self.stride_ratio.numerator
-            # index in P-input
-            p_in_i = in_i + self.l_pad
-            # lower-bound ifield in P-input
-            lb_p_in_i = max(0, p_in_i - self.r_wing_sz)
-            # lower-bound ifield in dense output
-            lb_dense_out_i = max(0, lb_p_in_i - self.l_wing_sz)
-            # lower-bound ifield in strided output
-            lb_out_i = math.ceil(lb_dense_out_i / stride)
-            # final
-            out_i = lb_out_i
-        else:
-            inv_stride = self.stride_ratio.denominator
-            # index in S-input
-            s_in_i = in_i * inv_stride
-            # index in SP-input
-            sp_in_i = s_in_i + self.l_pad
-            # index in output using key-covered filter position
-            kc_out_i = sp_in_i - self.l_wing_sz
-            # index of output using right-covered filter position
-            lb_out_i = max(0, kc_out_i - self.r_wing_sz)
-            # final
-            out_i = lb_out_i
-        return out_i
-
-    def _get_ifield_ub(self, in_i, in_e):
-        """
-        Get the end of the output range which is the "influence field" for the
-        input element in_i.  in_e is the last element of the input. The
-        "influence field" is the inverse of the receptive field.  We adopt the
-        convention that any outputs at the end that arise solely from padding
-        and spacing belong to the influence field of the last input element.
-        """
-        p = self.l_pad + self.r_pad
-        w = self.l_wing_sz + self.r_wing_sz
-
-        if self.stride_ratio >= 1:
-            stride = self.stride_ratio.numerator
-            # index in P-input
-            p_in_i = in_i + self.l_pad 
-            # index in P-input of output for left-covered filter position 
-            ub_p_in_i = p_in_i + self.l_wing_sz
-            # index in dense output for left-covered filter position 
-            ub_dense_out_i = ub_p_in_i - self.l_wing_sz
-            # index in strided output of left-covered element
-            ub_out_i = ub_dense_out_i // stride
-            # length calculation
-            in_len = in_e + 1
-            out_len = (in_len + p - w - 1) // stride + 1
-            # truncate the output if it is beyond the maximal length
-            out_i = min(ub_out_i, out_len - 1)
-        else:
-            inv_stride = self.stride_ratio.denominator
-            # index in S-input
-            s_in_i = in_i * inv_stride
-            # index in SP-input
-            sp_in_i = s_in_i + self.l_pad
-            # index in output using key-covered filter position 
-            kc_out_i = sp_in_i - self.l_wing_sz
-            # index in output using left-covered filter position
-            ub_out_i = kc_out_i + self.l_wing_sz
-            # length calculation
-            in_len = in_e + 1
-            out_len = (in_len - 1) * inv_stride + 1 + p - w
-            # final calculation
-            out_i = min(ub_out_i, out_len - 1)
-        return out_i
 
     def _output_range(self, in_b, in_e, in_l):
         """
@@ -322,52 +150,48 @@ class VirtualConv(object):
         [in_b, in_l] or -1 if no such element exists.
         """
         lw, rw = self.l_wing_sz, self.r_wing_sz
+        lp, rp = self.l_pad, self.r_pad
         w = lw + rw
-        p = self.l_pad + self.r_pad
 
         if self.stride_ratio >= 1:
             stride = self.stride_ratio.numerator
-            # right-most index in P-input that contains input[in_e] in its
-            # receptive field
-            p_in_rt_i = self.l_pad + in_e + int(in_e == in_l) * self.r_pad
-            p_in_rt_last_i = self.l_pad + in_l + self.r_pad
-            # index in dense output of upper-bound 
-            ub_dense_i = p_in_rt_i - rw - lw
-            ub_dense_last_i = p_in_rt_last_i - rw - lw
-            # final.  -1 signals that no output exists satisfhying criteria
-            ub_i = max(-1, ub_dense_i // stride)
-            ub_last_i = max(-1, ub_dense_last_i // stride)
-            # left-most index in P-input that contains input[in_b] in its
-            # receptive field
-            p_in_lf_i = in_b - int(in_b == 0) * self.l_pad
-            # filter must fit
-            if p_in_lf_i + lw + rw > in_e:
-                lb_i = -1
-            lb_dense_i = p_in_lf_i + lw - lw
-            lb_i = math.ceil(lb_dense_i / stride)
+            # bounds in P-input
+            p_in_b = in_b + int(in_b != 0) * lp
+            p_in_e = in_e + lp + int(in_e == in_l) * rp
+            p_in_l = in_l + lp + rp
+
+            if p_in_b + lw + rw > p_in_l:
+                out_b = -1
+            else:
+                out_dense_b = p_in_b + lw - lw
+                out_b = math.ceil(out_dense_b / stride)
+            if p_in_e - lw - rw < 0:
+                out_e = -1
+            else:
+                out_dense_e = p_in_e - rw - lw
+                out_e = out_dense_e // stride
+            if p_in_l - lw - rw < 0:
+                out_l = -1
+            else:
+                out_dense_l = p_in_l - lw - rw
+                out_l = out_dense_l // stride
+
         else:
             inv_stride = self.stride_ratio.denominator
-            s_in_rt_i = in_e * inv_stride
-            s_in_rt_last_i = in_l * inv_stride
-            # right-most index in SP-input
-            # can use right-padding for the last element
-            sp_in_rt_i = (s_in_rt_i + self.l_pad + int(in_e == in_l) *
-                    self.r_pad)
-            sp_in_rt_last_i = (s_in_rt_last_i + self.l_pad + self.r_pad)
-            # final
-            ub_i = max(-1, sp_in_rt_i - lw - rw)
-            ub_last_i = max(-1, sp_in_rt_last_i - lw - rw)
-            s_in_lf_i = in_b * inv_stride
-            # index in SP-input of left-most element usable for input[in_b]
-            sp_in_lf_i = s_in_lf_i + int(in_b != 0) * self.l_pad
-            # length
-            sp_in_len = in_l * inv_stride + p + 1
-            if sp_in_lf_i + lw + rw >= sp_in_len:
-                lb_i = -1
-            else:
-                lb_i = sp_in_lf_i + lw - lw
 
-        return lb_i, ub_i, ub_last_i
+            # index in SP-input
+            sp_in_b = in_b * inv_stride + int(in_b != 0) * lp
+            sp_in_e = in_e * inv_stride + lp + int(in_e == in_l) * rp
+            sp_in_l = in_l * inv_stride + lp + rp
+
+            if sp_in_b + lw + rw > sp_in_l:
+                out_b = -1
+            else:
+                out_b = sp_in_b + lw - lw
+            out_e = max(-1, sp_in_e - rw - lw)
+            out_l = max(-1, sp_in_l - rw - lw)
+
+        return out_b, out_e, out_l 
 
 
 
@@ -388,7 +212,7 @@ def recep_field(source, dest, out_b, out_e, out_len):
     while True:
         b_p, e_p = b, e
         b, e, l = vc._recep_field(b, e, l)
-        print('in: [{}, {}), out: [{}, {}), {}'.format(b_p, e_p + 1, b, e + 1, vc))
+        print('recep_field: in: [{}, {}), out: [{}, {}), {}'.format(b, e + 1, b_p, e_p + 1, vc))
         if vc is source:
             break
         vc = vc.parent
@@ -412,36 +236,12 @@ def output_range(source, dest, in_b, in_e, in_len):
     while True:
         b_p, e_p = b, e
         b, e, l = vc._output_range(b, e, l)
-        print('in: [{}, {}), out: [{}, {}), {}'.format(b_p, e_p + 1, b, e + 1, vc))
+        print('output_range: in: [{}, {}), out: [{}, {}), {}'.format(b_p, e_p + 1, b, e + 1, vc))
         if vc is dest:
             break
         vc = vc.child
     return b, e + 1, l + 1
 
-
-
-def ifield(source, dest, in_b, in_e, in_len):
-    """
-    Calculates the output tensor index range [out_b, out_e) which is the field of
-    influence for the input range [in_b, in_e).
-    """
-    # We need this check because there is no other convenient way to recognize
-    # the empty interval.
-    if in_b == in_e:
-        return 0, 0
-
-    vc = source
-    b, e, l = in_b, in_e - 1, in_len - 1
-    while True:
-        b_p, e_p = b, e
-        b = vc._get_ifield_lb(b) 
-        e = vc._get_ifield_ub(e, l)
-        l = vc._get_ifield_ub(l, l)
-        print('in: [{}, {}), out: [{}, {}), {}'.format(b_p, e_p + 1, b, e + 1, vc))
-        if vc is dest:
-            break
-        vc = vc.child
-    return b, e + 1
 
 def _shadow(source, dest, in_b, in_e, in_len, spacing_denom_lcm):
     """

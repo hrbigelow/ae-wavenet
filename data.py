@@ -156,7 +156,8 @@ class Slice(nn.Module):
         req_out_e = n_sam_per_slice_requested
 
         # Calculate actual window_batch_size from requested
-        __, in_e, in_l = vconv.recep_field(vc_rng[0], vc_rng[1], 0, req_out_e, req_out_e)
+        __, in_e, in_l = vconv.recep_field(vc_rng[0], vc_rng[1], 0, req_out_e,
+                100000)
         __, out_e, out_l = vconv.output_range(vc_rng[0], vc_rng[1], 0, in_e, in_e)
 
         self.window_batch_size = out_e

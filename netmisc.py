@@ -34,11 +34,11 @@ class EmbedLossAdjust(nn.Module):
         Initialize the tensor of usage weights for the z terms for a window batch
         of timesteps.
         """
-        total_in_b, total_in_e = vconv.rfield(beg_vc, end_vc, 0, n_out, n_out)
+        total_in_b, total_in_e, __ = vconv.recep_field(beg_vc, end_vc, 0, n_out, n_out)
         assert total_in_b == 0
         self.register_buffer('z_usage', torch.zeros(total_in_e)) 
         for o in range(n_out):
-            in_b, in_e = vconv.rfield(beg_vc, end_vc, o, o+1, n_out)
+            in_b, in_e, __ = vconv.recep_field(beg_vc, end_vc, o, o+1, n_out)
             self.z_usage[in_b:in_e] += 1
         self.z_usage /= torch.sum(self.z_usage)
 
