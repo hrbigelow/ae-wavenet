@@ -152,20 +152,20 @@ class Slice(nn.Module):
         self.wave_beg_vc = model.decoder.vc['beg_grcc']
         self.wave_end_vc = model.decoder.vc['end_grcc']
 
+        vc_rng = self.mfcc_vc, self.wave_end_vc
+        req_out_e = n_sam_per_slice_requested
+
         # Calculate actual window_batch_size from requested
-        in_b, in_e = vconv.rfield(self.mfcc_vc, self.wave_end_vc,
-                0, n_sam_per_slice_requested, n_sam_per_slice_requested)
-        assert in_b == 0
-        out_b, out_e = vconv.ifield(self.mfcc_vc, self.wave_end_vc,
-                0, in_e, in_e)
-        assert out_b == 0
+        __, in_e, in_l = vconv.recep_field(vc_rng[0], vc_rng[1], 0, req_out_e, req_out_e)
+        __, out_e, out_l = vconv.output_range(vc_rng[0], vc_rng[1], 0, in_e, in_e)
+
         self.window_batch_size = out_e
 
         geom = SampleGeom(0, 0, 0, 0, 0, 0, 0)
         slice_voff = 0
         self.n_win_batch = 0
         for i, (snd_len, mel_len) in enumerate(zip(self.n_snd_elem, self.n_mel_elem)):
-            geom.out_beg, geom.out_end = vconv.ifield(
+            geom.out_beg, geom.out_end, __ = vconv.output_range(
                 self.wave_beg_vc, self.wave_end_vc, 0, snd_len, snd_len)
             assert geom.out_beg == 0
             geom.n_slices = geom.out_end // self.window_batch_size
@@ -240,10 +240,10 @@ class Slice(nn.Module):
             sam_e = sam_b + self.window_batch_size
             sam_l = self.n_snd_elem[file_i]
 
-            in_mel_range = vconv.rfield(
+            in_mel_range = vconv.recep_field(
                     self.mfcc_vc, self.wave_end_vc, sam_b, sam_e, sam_l
             )
-            in_snd_range = vconv.rfield(
+            in_snd_range = vconv.recep_field(
                     self.wave_beg_vc, self.wave_end_vc, sam_b, sam_e, sam_l
             )
             # In the following transformation:
@@ -252,6 +252,10 @@ class Slice(nn.Module):
             # Due to the window-based geometry of [MFCC], [Encoder], and
             # [WaveNet Upsampling], the elements of local_cond correspond to wav.
             # This calculates the sub-range in wav corresponding to local_cond.
+            in_snd_shadow = vconv.shadow(
+                    self.wave_beg_vc, self.wave_end_vc, 
+                    in_snd_range[0], in_snd_range[1], in_snd_range[2] 
+                    )
              
             mel_voff = self.sample[file_i].mel_voff
             snd_voff = self.sample[file_i].snd_voff
