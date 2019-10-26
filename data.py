@@ -156,9 +156,13 @@ class Slice(nn.Module):
         req_out_e = n_sam_per_slice_requested
 
         # Calculate actual window_batch_size from requested
+        # The encoder downsamples wave input by a factor of 320.
+        # WaveNet upsamples the conditioning vectors by a factor of 320.
+        
         __, in_e, in_l = vconv.recep_field(vc_rng[0], vc_rng[1], 0, req_out_e,
                 100000)
-        __, out_e, out_l = vconv.output_range(vc_rng[0], vc_rng[1], 0, in_e, in_e)
+        __, out_e, out_l = vconv.output_range(vc_rng[0], vc_rng[1], 0, in_e,
+                100000)
 
         self.window_batch_size = out_e
 

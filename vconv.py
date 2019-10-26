@@ -112,7 +112,7 @@ class VirtualConv(object):
             in_e = min(p_in_e - lp, in_l)
 
         else:
-            inv_stride = self.stride_ratio.denominator
+            inv_st = self.stride_ratio.denominator
             # index in SP-input of bound 
             sp_in_b = out_b - lw + lw
             sp_in_e = out_e + rw + lw
@@ -124,14 +124,120 @@ class VirtualConv(object):
             s_in_e = min(sp_in_e - lp, s_in_l)
 
             # project to input
-            in_b = math.ceil(s_in_b / inv_stride)
-            in_e = s_in_e // inv_stride
-            in_l = s_in_l // inv_stride
+            in_b = math.ceil(s_in_b / inv_st)
+            in_e = s_in_e // inv_st
+            in_l = s_in_l // inv_st
 
         return in_b, in_e, in_l
 
+    def _output_range(self, full_in, sub_in, gs_in):
+        full_in_b, full_in_e = full_in
+        sub_in_b, sub_in_e = sub_in
+        gs_out = gs_in * self.stride_ratio
+        assert gs_out == int(gs_out)
+        gs_out = int(gs_out)
+        empty = (-1, -1), (-1, -1), gs_out
 
-    def _output_range(self, in_b, in_e, in_l):
+        if self.stride_ratio >= 1:
+            lpg = self.l_pad * gs_in
+            rpg = self.r_pad * gs_in
+            lwg = self.l_wing_sz * gs_in
+            rwg = self.r_wing_sz * gs_in
+            full_in_adj_b = full_in_b - lpg 
+            full_in_adj_e = full_in_e + rpg
+            if full_in_adj_e - full_in_adj_b < lwg + rwg:
+                return empty
+            if sub_in_e - sub_in_b < lwg + rwg:
+                return empty
+            full_out_b = full_in_adj_b + lwg
+            full_out_pre_e = full_in_adj_e - rwg
+            full_out_e = full_out_pre_e - (full_out_pre_e - full_out_b) % gs_out
+            sub_out_pre_b = sub_in_b + lwg
+            sub_out_pre_e = sub_in_e - rwg
+            sub_out_b = sub_out_pre_b + (full_out_e - sub_out_pre_b) % gs_out
+            sub_out_e = sub_out_pre_e - (sub_out_pre_e - full_out_b) % gs_out
+
+        else:
+            inv_st = self.stride_ratio.denominator
+            lpg = self.l_pad * gs_out
+            rpg = self.r_pad * gs_out
+            lwg = self.l_wing_sz * gs_out
+            rwg = self.r_wing_sz * gs_out
+            full_in_adj_b = full_in_b - lpg
+            full_in_adj_e = full_in_e + rpg
+            if sub_in_b == full_in_b:
+                sub_in_adj_b = full_in_adj_b
+            else:
+                sub_in_adj_b = sub_in_b - (inv_st - 1) * gs_out
+            if sub_in_e == full_in_e:
+                sub_in_adj_e = full_in_adj_e
+            else:
+                sub_in_adj_e = sub_in_e + (inv_st - 1) * gs_out
+            if full_in_adj_e - full_in_adj_b < lwg + rwg:
+                return empty
+            if sub_in_adj_e - sub_in_adj_b < lwg + rwg:
+                return empty
+            full_out_b = full_in_adj_b + lwg
+            full_out_e = full_in_adj_e - rwg
+            sub_in_b = sub_in_adj_b + lwg
+            sub_in_e = sub_in_adj_e - rwg
+
+        return (full_out_b, full_out_e), (sub_out_b, sub_out_e), gs_out
+
+    def _input_range(self, full_out, sub_out, gs_out):
+        """
+        Return the full and sub input range in physical coordinates.
+        Assume the output ranges full_out and sub_out are in a grid spacing
+        of gs_out.
+        """
+        full_out_b, full_out_e = full_out
+        sub_out_b, sub_out_e = sub_out
+        gs_in = gs_out / self.stride_ratio
+        assert gs_in == int(gs_in)
+        gs_in = int(gs_in)
+        empty = (-1, -1), (-1, -1), gs_out
+
+        if self.stride_ratio >= 1:
+            lwg = self.l_wing_sz * gs_in
+            rwg = self.r_wing_sz * gs_in
+            lpg = self.l_pad * gs_in
+            rpg = self.r_pad * gs_in
+
+            full_in_pre_b = full_out_b - lwg
+            full_in_pre_e = full_out_e + rwg
+            sub_in_pre_b = sub_out_b - lwg
+            sub_in_pre_e = sub_out_e + rwg
+
+            if full_in_pre_e - full_in_pre_b < lwg + rwg:
+                return empty
+            if sub_in_pre_e - sub_in_pre_b < lwg + rwg:
+                return empty
+
+            full_in_b = full_in_pre_b + lpg
+            full_in_e = full_in_pre_e - rpg
+            sub_in_b = max(sub_in_pre_b, full_in_b)
+            sub_in_e = max(sub_in_pre_e, full_in_e)
+
+        else:
+            lwg = self.l_wing_sz * gs_out
+            rwg = self.r_wing_sz * gs_out
+            lpg = self.l_pad * gs_out
+            rpg = self.r_pad * gs_out
+
+            full_in_adj_b = full_out_b - lwg
+            full_in_adj_e = full_out_e + rwg
+            sub_in_adj_b = sub_out_b - lwg
+            sub_in_adj_e = sub_out_e + rwg
+
+            full_in_b = full_in_adj_b + lpg
+            full_in_e = full_in_adj_e - rpg
+            sub_in_b = sub_in_adj_b + (full_in_e - sub_in_adj_b) % gs_in
+            sub_in_e = sub_in_adj_e - (sub_in_adj_e - full_in_b) % gs_in
+
+        return (full_in_b, full_in_e), (sub_in_b, sub_in_e), gs_in
+
+
+    def _output_range_bck(self, in_b, in_e, in_l):
         """
         Virtually computes the convolution result given input range [0, in_l].
         
@@ -177,12 +283,14 @@ class VirtualConv(object):
                 out_l = out_dense_l // stride
 
         else:
-            inv_stride = self.stride_ratio.denominator
+            ist = self.stride_ratio.denominator
 
             # index in SP-input
-            sp_in_b = in_b * inv_stride + int(in_b != 0) * lp
-            sp_in_e = in_e * inv_stride + lp + int(in_e == in_l) * rp
-            sp_in_l = in_l * inv_stride + lp + rp
+            sp_in_b = (in_b * ist + int(in_b != 0) * lp - int(in_b != 0) * (ist
+                - 1))
+            sp_in_e = (in_e * ist + lp + int(in_e == in_l) * rp + int(in_e !=
+                in_l) * (ist - 1))
+            sp_in_l = in_l * ist + lp + rp
 
             if sp_in_b + lw + rw > sp_in_l:
                 out_b = -1
@@ -193,13 +301,63 @@ class VirtualConv(object):
 
         return out_b, out_e, out_l 
 
+def input_range(source, dest, full_out, sub_out, grid_spacing):
+    """
+    Compute the physical coordinate range of the input corresponding
+    to the given full and sub output ranges.  Assume consecutive tensor
+    elements are physically grid_spacing units apart.
+    """
+    vc = dest
+    full = full_out[0], full_out[1] - 1
+    sub = sub_out[0], sub_out[1] - 1
+    gs = grid_spacing
+    while True:
+        full, sub, gs = vc._input_range(full, sub, gs)
+        fmt = 'input_range: full: {}, sub: {}, gs: {}'
+        print(fmt.format(full, sub, gs))
+        if vc is source:
+            break
+        vc = vc.parent
+    return (full[0], full[1] + 1), (sub[0], sub[1] + 1), gs 
+
+
+def output_range(source, dest, full_in, sub_in, grid_spacing):
+    """
+    Compute the physical coordinate range of the output of the chain of
+    convolutions source => dest, assuming the given full and sub input ranges.
+    Assume pairs of consecutive elements in the input are grid_spacing physical
+    distance units apart.
+    """
+    vc = source
+    full = full_in[0], full_in[1] - 1
+    sub = sub_in[0], sub_in[1] - 1
+    gs = grid_spacing
+    while True:
+        full, sub, gs = vc._output_range(full, sub, gs)
+        fmt = 'output_range: full: {}, sub: {}, gs: {}'
+        print(fmt.format(full, sub, gs))
+        if vc is dest:
+            break
+        vc = vc.child
+    return (full[0], full[1] + 1), (sub[0], sub[1] + 1), gs 
+
+
+def to_index(full, sub, gs):
+    """
+    Given a full range, sub range, and grid spacing, calculate
+    the corresponding tensor indices for sub_b, sub_e, full_e
+    """
+    f0 = full[0]
+    return (sub[0] - f0) // gs, (sub[1] - f0) // gs, (full[1] - f0) // gs
+
 
 
 def recep_field(source, dest, out_b, out_e, out_len):
     """
     Calculate the input tensor index range [in_b, in_e) receptive field of the
-    output tensor range [out_b, out_e). out_len is the length of the actual
-    output.
+    output tensor range [out_b, out_e), produced by the chain of connected
+    transformations from source -> ... -> dest. out_len is the length of the
+    actual output.
     Returns in_b, in_e, input_length
     """
     # We need this check because there is no other convenient way to recognize
@@ -210,21 +368,23 @@ def recep_field(source, dest, out_b, out_e, out_len):
     vc = dest
     b, e, l = out_b, out_e - 1, out_len - 1
     while True:
-        b_p, e_p = b, e
+        b_p, e_p, l_p = b, e, l
         b, e, l = vc._recep_field(b, e, l)
-        print('recep_field: in: [{}, {}), out: [{}, {}), {}'.format(b, e + 1, b_p, e_p + 1, vc))
+        fmt = 'recep_field: in: [{}, {}) of {}, out: [{}, {}) of {}, {}'
+        print(fmt.format(b, e + 1, l + 1, b_p, e_p + 1, l_p + 1, vc))
         if vc is source:
             break
         vc = vc.parent
     return b, e + 1, l + 1
 
 
-def output_range(source, dest, in_b, in_e, in_len):
+def output_range_bck(source, dest, in_b, in_e, in_len):
     """
-    Calculates the maximal set of output elements [out_b, out_e) in which
-    each element has a receptive field which is a subset of [in_b, in_e)
-    if in_b == 0 or in_e == in_len, the operation is allowed to make use of
-    left or right padding, respectively.
+    Calculates the maximal set of output elements [out_b, out_e) produced by
+    the chain of transformations source -> ... -> dest, in which each element
+    has a receptive field which is a subset of [in_b, in_e) if in_b == 0 or
+    in_e == in_len, the operation is allowed to make use of left or right
+    padding, respectively.
     Will return [0, 0) if there are no output elements that satisfy the
     criteria.
     """
@@ -234,9 +394,10 @@ def output_range(source, dest, in_b, in_e, in_len):
     vc = source
     b, e, l = in_b, in_e - 1, in_len - 1
     while True:
-        b_p, e_p = b, e
+        b_p, e_p, l_p = b, e, l
         b, e, l = vc._output_range(b, e, l)
-        print('output_range: in: [{}, {}), out: [{}, {}), {}'.format(b_p, e_p + 1, b, e + 1, vc))
+        fmt = 'output_range: in: [{}, {}) of {}, out: [{}, {}) of {}, {}'
+        print(fmt.format(b_p, e_p + 1, l_p + 1, b, e + 1, l + 1, vc))
         if vc is dest:
             break
         vc = vc.child
