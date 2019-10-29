@@ -109,7 +109,17 @@ class SampleGeom(object):
                 )
 
 
+
+class Batch(object):
+    """
+    The current batch of data together with offsets information to
+    be used by the model to process this batch
+    """
+
 class Slice(nn.Module):
+    """
+    Defines the current batch of data
+    """
     def __init__(self, ind_pfx, batch_size):
         super(Slice, self).__init__()
         try:
@@ -137,14 +147,14 @@ class Slice(nn.Module):
     def num_speakers(self):
         return len(set(self.voice_index))
 
-    def post_init(self, model, index_file_prefix, n_sam_per_slice_requested,
-            max_gpu_mem_bytes):
+    def post_init(self, model, index_file_prefix, max_gpu_mem_bytes):
         """
         Inputs:
         Initialize snd_voffset, mel_voffset
         Initialize n_total_win_batch and end_vc values
         Initialize vcs for setting the geometry of slices
         """
+
         self.slice_voff = np.empty(self.n_files, dtype=np.int32)
         self.sample = []
 
@@ -265,6 +275,7 @@ class Slice(nn.Module):
             mel_voff = self.sample[file_i].mel_voff
             snd_voff = self.sample[file_i].snd_voff
 
+            # These should probably be a returned object
             self.in_mel_slice[b] = self.mel_data[(mel_voff +
                 in_mel_range[0]):(mel_voff + in_mel_range[1])]
             self.in_snd_slice[b] = self.snd_data[(snd_voff +
@@ -272,4 +283,5 @@ class Slice(nn.Module):
             self.out_snd_slice[b] = self.snd_data[(snd_voff + sam_b):(snd_voff
                 + sam_e)]
             self.slice_voice_index[b] = self.voice_index[file_i]
+            self.
 

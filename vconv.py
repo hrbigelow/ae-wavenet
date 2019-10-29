@@ -3,19 +3,32 @@ import math
 import numpy as np
 
 """
-Some terminology
- Filter structure is conceptualized as a 'left wing, key element, and right
- wing'.
- 
- S-input: spaced input.  The input tensor with spacing elements applied (for
- inverse strides)
- SP-input: spaced, padded input.  The input tensor with spacing elements and
- left/right flanking padding elements applied
- key-covered element:  For a given logical filter position over the input,
- this is the element that is covered by the 'key' filter element.
-
- 
+See doc/vconv_notes.txt 
 """
+
+class GridRange(object):
+    """
+    Represents a virtual tensor and a subrange, embedded in
+    a global coordinate grid
+    """
+    def __init__(self, full, sub, gs):
+        self.full = full
+        self.sub = sub
+        self.gs = gs
+
+    def sub_length(self):
+        return self.sub[1] // self.gs - self.sub[0] // self.gs
+
+    def full_length(self):
+        return self.full[1] // self.gs - self.full[0] // self.gs
+
+    def __repr__(self):
+        fmt = '[{:8}  [{:8}   {:8})   {:8})  |{:3}|  sub_len: {:8}  full_len: {:8}'
+        return fmt.format(
+                self.full[0], self.sub[0], self.sub[1], self.full[1], self.gs,
+                self.sub_length(), self.full_length()
+                )
+
 
 class VirtualConv(object):
     '''
@@ -28,7 +41,7 @@ class VirtualConv(object):
     output size, and offsets relative to the input.
     '''
     def __init__(self, filter_info, padding=(0, 0), stride=1,
-            is_downsample=True, parent=None, name=None):
+            is_downsample=True, name=None, parent=None):
         self.parent = parent
         self.child = None
         self.l_pad = padding[0]
@@ -58,10 +71,10 @@ class VirtualConv(object):
         # Ensures that the key filter element is always over a non-padding
         # region.
         if (self.l_pad > self.l_wing_sz or self.r_pad > self.r_wing_sz):
-            print(self)
+            # print(self)
             raise RuntimeError('Filter wing sizes cannot be less than the respective '
                     'padding')
-        print(self)
+        # print(self)
         
 
     def __repr__(self):
@@ -72,71 +85,12 @@ class VirtualConv(object):
                 self.l_pad, self.r_pad, self.name)
 
 
-    def _recep_field(self, out_b, out_e, out_l):
-        """
-        Virtually back-computes the convolution that results in output range
-        [out_b, out_l].
-
-        Returns (in_b, in_e, in_l) where:
-
-        in_b: index of the left-most element in the input which is in the
-        receptive field of [out_b, out_e].  If no element exists, returns -1
-
-        in_e: index of the right-most element in the input which is in the
-        receptive field of [out_b, out_e].  If no element exists, returns -1
-
-        in_l: index of the right-most element in the input which is in the
-        receptive field of [out_b, out_l].  If no element exists, returns -1
-        """
-        lw, rw = self.l_wing_sz, self.r_wing_sz
-        lp, rp = self.l_pad, self.r_pad
-        w = lw + rw
-        p = lp + rp
-        assert p <= w # this is upheld by the constructor logic
-
-        if self.stride_ratio >= 1:
-            stride = self.stride_ratio.numerator
-
-            # index in densified output
-            out_dense_b = out_b * stride
-            out_dense_e = out_e * stride
-            out_dense_l = out_l * stride
-
-            # index in P-input of RF bound 
-            p_in_b = out_dense_b - lw + lw
-            p_in_e = out_dense_e + rw + lw
-            p_in_l = out_dense_l + rw + lw
-
-            in_b = max(0, p_in_b - lp)
-            in_l = p_in_l - lp - rp
-            in_e = min(p_in_e - lp, in_l)
-
-        else:
-            inv_st = self.stride_ratio.denominator
-            # index in SP-input of bound 
-            sp_in_b = out_b - lw + lw
-            sp_in_e = out_e + rw + lw
-            sp_in_l = out_l + rw + lw
-
-            # index in S-input of bound
-            s_in_b = max(0, sp_in_b - lp)
-            s_in_l = out_l - lw - rw
-            s_in_e = min(sp_in_e - lp, s_in_l)
-
-            # project to input
-            in_b = math.ceil(s_in_b / inv_st)
-            in_e = s_in_e // inv_st
-            in_l = s_in_l // inv_st
-
-        return in_b, in_e, in_l
-
     def _output_range(self, full_in, sub_in, gs_in):
         full_in_b, full_in_e = full_in
         sub_in_b, sub_in_e = sub_in
         gs_out = gs_in * self.stride_ratio
         assert gs_out == int(gs_out)
         gs_out = int(gs_out)
-        empty = (-1, -1), (-1, -1), gs_out
 
         if self.stride_ratio >= 1:
             lpg = self.l_pad * gs_in
@@ -146,16 +100,20 @@ class VirtualConv(object):
             full_in_adj_b = full_in_b - lpg 
             full_in_adj_e = full_in_e + rpg
             if full_in_adj_e - full_in_adj_b < lwg + rwg:
-                return empty
+                return None
             if sub_in_e - sub_in_b < lwg + rwg:
-                return empty
+                return None
             full_out_b = full_in_adj_b + lwg
             full_out_pre_e = full_in_adj_e - rwg
             full_out_e = full_out_pre_e - (full_out_pre_e - full_out_b) % gs_out
             sub_out_pre_b = sub_in_b + lwg
             sub_out_pre_e = sub_in_e - rwg
+            # Due to stride filtering, this adjustment may produce
+            # an empty or reverse range
             sub_out_b = sub_out_pre_b + (full_out_e - sub_out_pre_b) % gs_out
             sub_out_e = sub_out_pre_e - (sub_out_pre_e - full_out_b) % gs_out
+            if sub_out_e - sub_out_b <= 0:
+                return None
 
         else:
             inv_st = self.stride_ratio.denominator
@@ -174,13 +132,13 @@ class VirtualConv(object):
             else:
                 sub_in_adj_e = sub_in_e + (inv_st - 1) * gs_out
             if full_in_adj_e - full_in_adj_b < lwg + rwg:
-                return empty
+                return None
             if sub_in_adj_e - sub_in_adj_b < lwg + rwg:
-                return empty
+                return None
             full_out_b = full_in_adj_b + lwg
             full_out_e = full_in_adj_e - rwg
-            sub_in_b = sub_in_adj_b + lwg
-            sub_in_e = sub_in_adj_e - rwg
+            sub_out_b = sub_in_adj_b + lwg
+            sub_out_e = sub_in_adj_e - rwg
 
         return (full_out_b, full_out_e), (sub_out_b, sub_out_e), gs_out
 
@@ -195,7 +153,6 @@ class VirtualConv(object):
         gs_in = gs_out / self.stride_ratio
         assert gs_in == int(gs_in)
         gs_in = int(gs_in)
-        empty = (-1, -1), (-1, -1), gs_out
 
         if self.stride_ratio >= 1:
             lwg = self.l_wing_sz * gs_in
@@ -209,14 +166,14 @@ class VirtualConv(object):
             sub_in_pre_e = sub_out_e + rwg
 
             if full_in_pre_e - full_in_pre_b < lwg + rwg:
-                return empty
+                return None
             if sub_in_pre_e - sub_in_pre_b < lwg + rwg:
-                return empty
+                return None
 
             full_in_b = full_in_pre_b + lpg
             full_in_e = full_in_pre_e - rpg
             sub_in_b = max(sub_in_pre_b, full_in_b)
-            sub_in_e = max(sub_in_pre_e, full_in_e)
+            sub_in_e = min(sub_in_pre_e, full_in_e)
 
         else:
             lwg = self.l_wing_sz * gs_out
@@ -231,118 +188,85 @@ class VirtualConv(object):
 
             full_in_b = full_in_adj_b + lpg
             full_in_e = full_in_adj_e - rpg
+            # Due to input spacing, this range may be empty or reversed
             sub_in_b = sub_in_adj_b + (full_in_e - sub_in_adj_b) % gs_in
             sub_in_e = sub_in_adj_e - (sub_in_adj_e - full_in_b) % gs_in
+            if sub_in_e - sub_in_b <= 0:
+                return None
 
         return (full_in_b, full_in_e), (sub_in_b, sub_in_e), gs_in
 
 
-    def _output_range_bck(self, in_b, in_e, in_l):
-        """
-        Virtually computes the convolution result given input range [0, in_l].
-        
-        Returns (out_b, out_e, out_l) where:
-
-        out_b: index of the left-most element containing input[in_b] in its
-        receptive field, and with the entire receptive field a subset of [in_b,
-        in_e], or -1 if no such element exists.
-        
-        out_e: index of the right-most element containing input[in_e] in its
-        receptive field, and with the entire receptive field a subset of [in_b,
-        in_e] or -1 if no such element exists.
-
-        out_l: inex of the right-most element containing input[in_l] in its
-        receptive field, and with the entire receptive field a subset of
-        [in_b, in_l] or -1 if no such element exists.
-        """
-        lw, rw = self.l_wing_sz, self.r_wing_sz
-        lp, rp = self.l_pad, self.r_pad
-        w = lw + rw
-
-        if self.stride_ratio >= 1:
-            stride = self.stride_ratio.numerator
-            # bounds in P-input
-            p_in_b = in_b + int(in_b != 0) * lp
-            p_in_e = in_e + lp + int(in_e == in_l) * rp
-            p_in_l = in_l + lp + rp
-
-            if p_in_b + lw + rw > p_in_l:
-                out_b = -1
-            else:
-                out_dense_b = p_in_b + lw - lw
-                out_b = math.ceil(out_dense_b / stride)
-            if p_in_e - lw - rw < 0:
-                out_e = -1
-            else:
-                out_dense_e = p_in_e - rw - lw
-                out_e = out_dense_e // stride
-            if p_in_l - lw - rw < 0:
-                out_l = -1
-            else:
-                out_dense_l = p_in_l - lw - rw
-                out_l = out_dense_l // stride
-
-        else:
-            ist = self.stride_ratio.denominator
-
-            # index in SP-input
-            sp_in_b = (in_b * ist + int(in_b != 0) * lp - int(in_b != 0) * (ist
-                - 1))
-            sp_in_e = (in_e * ist + lp + int(in_e == in_l) * rp + int(in_e !=
-                in_l) * (ist - 1))
-            sp_in_l = in_l * ist + lp + rp
-
-            if sp_in_b + lw + rw > sp_in_l:
-                out_b = -1
-            else:
-                out_b = sp_in_b + lw - lw
-            out_e = max(-1, sp_in_e - rw - lw)
-            out_l = max(-1, sp_in_l - rw - lw)
-
-        return out_b, out_e, out_l 
-
-def input_range(source, dest, full_out, sub_out, grid_spacing):
+def input_range(source, dest, out):
     """
     Compute the physical coordinate range of the input corresponding
     to the given full and sub output ranges.  Assume consecutive tensor
     elements are physically grid_spacing units apart.
     """
     vc = dest
-    full = full_out[0], full_out[1] - 1
-    sub = sub_out[0], sub_out[1] - 1
-    gs = grid_spacing
+    full = out.full[0], out.full[1] - 1
+    sub = out.sub[0], out.sub[1] - 1
+    gs = out.gs
+
+    # full = full_out[0], full_out[1] - 1
+    # sub = sub_out[0], sub_out[1] - 1
+    # gs = grid_spacing
+    #results = [((full[0], full[1] + 1), (sub[0], sub[1] + 1), gs)]
+
     while True:
-        full, sub, gs = vc._input_range(full, sub, gs)
-        fmt = 'input_range: full: {}, sub: {}, gs: {}'
-        print(fmt.format(full, sub, gs))
+        res = vc._input_range(full, sub, gs)
+        if res is None:
+            raise RuntimeError('empty input range')
+        else:
+            full, sub, gs = res
+        #results.append(((full[0], full[1] + 1), (sub[0], sub[1] + 1), gs))
+        #fmt = 'input_range: full: {}, sub: {}, gs: {}, ind: {}, vc: {}'
+        #print(fmt.format(full, sub, gs, to_index(full, sub, gs), vc))
         if vc is source:
             break
         vc = vc.parent
-    return (full[0], full[1] + 1), (sub[0], sub[1] + 1), gs 
+    # return (full[0], full[1] + 1), (sub[0], sub[1] + 1), gs 
+    return GridRange((full[0], full[1] + 1), (sub[0], sub[1] + 1), gs)
+    #return results
 
 
-def output_range(source, dest, full_in, sub_in, grid_spacing):
+def output_range(source, dest, gin):
     """
     Compute the physical coordinate range of the output of the chain of
     convolutions source => dest, assuming the given full and sub input ranges.
     Assume pairs of consecutive elements in the input are grid_spacing physical
     distance units apart.
+
+    Raises exception if either is an empty range
     """
     vc = source
-    full = full_in[0], full_in[1] - 1
-    sub = sub_in[0], sub_in[1] - 1
-    gs = grid_spacing
+    full = gin.full[0], gin.full[1] - 1
+    sub = gin.sub[0], gin.sub[1] - 1
+    gs = gin.gs
+    # full = full_in[0], full_in[1] - 1
+    # sub = sub_in[0], sub_in[1] - 1
+    # gs = grid_spacing
+    #results = [((full[0], full[1] + 1), (sub[0], sub[1] + 1), gs)]
+
     while True:
-        full, sub, gs = vc._output_range(full, sub, gs)
-        fmt = 'output_range: full: {}, sub: {}, gs: {}'
-        print(fmt.format(full, sub, gs))
+        res = vc._output_range(full, sub, gs)
+        if res is None:
+            raise RuntimeError('empty output range')
+        else:
+            full, sub, gs = res
+
+        #results.append(((full[0], full[1] + 1), (sub[0], sub[1] + 1), gs))
+        #fmt = 'output_range: full: {}, sub: {}, gs: {}, ind: {}, vc: {}'
+        #print(fmt.format(full, sub, gs, to_index(full, sub, gs), vc))
         if vc is dest:
             break
         vc = vc.child
-    return (full[0], full[1] + 1), (sub[0], sub[1] + 1), gs 
+    # return (full[0], full[1] + 1), (sub[0], sub[1] + 1), gs 
+    return GridRange((full[0], full[1] + 1), (sub[0], sub[1] + 1), gs)
+    #return results
 
 
-def to_index(full, sub, gs):
+def to_virtual_index(full, sub, gs):
     """
     Given a full range, sub range, and grid spacing, calculate
     the corresponding tensor indices for sub_b, sub_e, full_e
@@ -351,111 +275,17 @@ def to_index(full, sub, gs):
     return (sub[0] - f0) // gs, (sub[1] - f0) // gs, (full[1] - f0) // gs
 
 
-
-def recep_field(source, dest, out_b, out_e, out_len):
+def tensor_slice(ref_gcoord, target_gcoord):
     """
-    Calculate the input tensor index range [in_b, in_e) receptive field of the
-    output tensor range [out_b, out_e), produced by the chain of connected
-    transformations from source -> ... -> dest. out_len is the length of the
-    actual output.
-    Returns in_b, in_e, input_length
+    Compute the slice of input described by ref_gcoord, which is desired by
+    target_gcoord.
     """
-    # We need this check because there is no other convenient way to recognize
-    # the empty interval.
-    if out_b == out_e:
-        return 0, 0, 0
-
-    vc = dest
-    b, e, l = out_b, out_e - 1, out_len - 1
-    while True:
-        b_p, e_p, l_p = b, e, l
-        b, e, l = vc._recep_field(b, e, l)
-        fmt = 'recep_field: in: [{}, {}) of {}, out: [{}, {}) of {}, {}'
-        print(fmt.format(b, e + 1, l + 1, b_p, e_p + 1, l_p + 1, vc))
-        if vc is source:
-            break
-        vc = vc.parent
-    return b, e + 1, l + 1
-
-
-def output_range_bck(source, dest, in_b, in_e, in_len):
-    """
-    Calculates the maximal set of output elements [out_b, out_e) produced by
-    the chain of transformations source -> ... -> dest, in which each element
-    has a receptive field which is a subset of [in_b, in_e) if in_b == 0 or
-    in_e == in_len, the operation is allowed to make use of left or right
-    padding, respectively.
-    Will return [0, 0) if there are no output elements that satisfy the
-    criteria.
-    """
-    if in_b == in_e:
-        return 0, 0, 0
-
-    vc = source
-    b, e, l = in_b, in_e - 1, in_len - 1
-    while True:
-        b_p, e_p, l_p = b, e, l
-        b, e, l = vc._output_range(b, e, l)
-        fmt = 'output_range: in: [{}, {}) of {}, out: [{}, {}) of {}, {}'
-        print(fmt.format(b_p, e_p + 1, l_p + 1, b, e + 1, l + 1, vc))
-        if vc is dest:
-            break
-        vc = vc.child
-    return b, e + 1, l + 1
-
-
-def _shadow(source, dest, in_b, in_e, in_len, spacing_denom_lcm):
-    """
-    Finds the shadow range in the input corresponding to the input range [in_b,
-    in_e).
-    """
-    vc = source
-    sp = spacing_denom_lcm
-    b, e, l = in_b, in_e - 1, in_len - 1 
-    # position of first element of shadow range 
-    pf = 0
-    while True:
-        b_prev = b
-        e_prev = e
-        b, e, l = vc._output_range(b, e, l)
-        # Current spacing should always be integral
-        assert (sp * vc.stride_ratio).denominator == 1
-        sp_prev = sp
-        sp = int(sp * vc.stride_ratio)
-        pf_prev = pf
-        pf = pf + (vc.l_wing_sz - vc.l_pad) * sp_prev
-        print('sp: ({}, {}), b: ({}, {}), p: ({}, {}), pf: ({}, {}), {}'.format(
-            sp_prev, sp, b_prev, b, e_prev, e, pf_prev, pf, vc))
-        if vc is dest:
-            break
-        vc = vc.child
-    pb = pf + b * sp
-    pe = pf + e * sp
-    reduce_sp = np.gcd(spacing_denom_lcm, sp)
-    assert pb % reduce_sp == 0
-    assert pe % reduce_sp == 0
-    return pb // reduce_sp , pe // reduce_sp + 1
-
-def shadow(source, dest, in_b, in_e, in_l):
-    """
-    Calculate the index range [shadow_in_b, shadow_in_e) of the input
-    corresponding to the physical position range of the output produced by
-    input range [in_b, in_e).  This could be thought of as the "shadow" of the
-    output range on the input.
-    """
-    # Get tightest spacing
-    de = []
-    vc = source
-    spacing = fractions.Fraction(1, 1)
-    while True:
-        spacing *= vc.stride_ratio
-        de.append(spacing.denominator)
-        if vc is dest:
-            break
-        vc = vc.child
-    # the least common multiple of the running product of spacings
-    spacing_denom_lcm = np.lcm.reduce(de)
-    shadow_b, shadow_e = _shadow(source, dest, in_b, in_e, in_l,
-            spacing_denom_lcm)
-    return shadow_b, shadow_e 
+    rsub = ref_gcoord.sub
+    rgs = ref_gcoord.gs
+    tsub = target_gcoord.sub
+    assert rsub[0] <= tsub[0] and tsub[1] <= rsub[1]
+    bp = tsub[0] - rsub[0]
+    ep = tsub[1] - rsub[0]
+    assert bp % rgs == 0 and (ep - 1) % rgs == 0
+    return bp // rgs, (ep - 1) // rgs + 1
 
