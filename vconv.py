@@ -8,8 +8,9 @@ See doc/vconv_notes.txt
 
 class GridRange(object):
     """
-    Represents a virtual tensor and a subrange, embedded in
-    a global coordinate grid
+    Defines virtual tensor and subrange, embedded in a global coordinate grid.
+    The virtual tensor has elements at positions range(full[0], full[1], gs)
+    The subrange has elements at positions range(sub[0], sub[1], gs)
     """
     def __init__(self, full, sub, gs):
         self.full = full
@@ -17,10 +18,22 @@ class GridRange(object):
         self.gs = gs
 
     def sub_length(self):
-        return self.sub[1] // self.gs - self.sub[0] // self.gs
+        return (self.sub[1] - self.sub[0] - 1) // self.gs + 1
 
     def full_length(self):
-        return self.full[1] // self.gs - self.full[0] // self.gs
+        return (self.full[1] - self.full[0] - 1) // self.gs + 1
+
+    def valid(self):
+        g = self.gs 
+        f = self.full
+        s = self.sub
+        return (
+                f[0] <= s[0] and s[0] < s[1] and s[1] <= f[1]
+                and g >= 1
+                and f[0] % g == (f[1] - 1) % g
+                and s[0] % g == (s[1] - 1) % g
+                and f[0] % g == s[0] % g
+                )
 
     def __repr__(self):
         fmt = '[{:8}  [{:8}   {:8})   {:8})  |{:3}|  sub_len: {:8}  full_len: {:8}'
@@ -265,27 +278,38 @@ def output_range(source, dest, gin):
     return GridRange((full[0], full[1] + 1), (sub[0], sub[1] + 1), gs)
     #return results
 
-
-def to_virtual_index(full, sub, gs):
+def tensor_slice(ref_gcoord, subrange_gcoord):
     """
-    Given a full range, sub range, and grid spacing, calculate
-    the corresponding tensor indices for sub_b, sub_e, full_e
-    """
-    f0 = full[0]
-    return (sub[0] - f0) // gs, (sub[1] - f0) // gs, (full[1] - f0) // gs
-
-
-def tensor_slice(ref_gcoord, target_gcoord):
-    """
-    Compute the slice of input described by ref_gcoord, which is desired by
-    target_gcoord.
+    Compute the index slice of the tensor input described by ref_gcoord that is
+    specified by subrange_gcoord.  
     """
     rsub = ref_gcoord.sub
     rgs = ref_gcoord.gs
-    tsub = target_gcoord.sub
+    tsub = subrange_gcoord
     assert rsub[0] <= tsub[0] and tsub[1] <= rsub[1]
     bp = tsub[0] - rsub[0]
     ep = tsub[1] - rsub[0]
     assert bp % rgs == 0 and (ep - 1) % rgs == 0
     return bp // rgs, (ep - 1) // rgs + 1
+
+
+def max_spacing(source, dest, initial_gs):
+    """
+    Calculate the maximum grid spacing achieved between source a destination
+    """
+    gs = initial_gs
+    max_gs = gs 
+    vc = source
+    while True:
+        gs *= vc.stride_ratio
+        assert gs == int(gs)
+        max_gs = max(gs, max_gs)
+        if vc is dest:
+            break
+        vc = vc.child
+    return max_gs
+
+
+        
+
 

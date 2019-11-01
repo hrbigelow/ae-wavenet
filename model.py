@@ -143,9 +143,6 @@ class AutoEncoder(nn.Module):
         """Return checksum of entire set of model parameters"""
         return util.tensor_digest(self.parameters())
         
-    def print_offsets(self):
-        """Show the set of offsets for each section of the model"""
-        self.vc.print_chain()
 
     def forward(self, mels, wav_onehot_dec, voice_inds):
         """
@@ -165,7 +162,7 @@ class AutoEncoder(nn.Module):
         quant = self.decoder(wav_onehot_dec, encoding_bn, voice_inds)
         return quant
 
-    def run(self, batch):
+    def run(self, vbatch):
         """Run the model on one batch, returning the predicted and
         actual output
         B, T, Q: n_batch, n_timesteps, n_quant
@@ -173,11 +170,23 @@ class AutoEncoder(nn.Module):
         quant_pred: (B, Q, T) (the prediction from the model)
         snd_batch_out: (B, T) (the actual data from the same timesteps)
         """
-        snd_onehot_dec, snd_batch_out = self.preprocess(batch.snd_slice)
+        snd_onehot_dec = self.preprocess(vbatch.wav_input,
+                vbatch.loss_wav_slice)
 
-        quant = self.forward(batch.mel_slice, snd_onehot_dec, batch.slice_voice_index)
+        # Slice each wav input
+        wav_batch_out = torch.empty(self.batch_size, vbatch.loss_wav_len()) 
+        for b, (sl_b, sl_e) in enumerate(vbatch.loss_wav_slice):
+            snd_batch_out[b] = snd_onehot_dec[b,sl_b:sl_e]
+
+        quant = self.forward(vbatch.mel_input, snd_onehot_dec,
+                vbatch.voice_index, vbatch.lcond_slice)
         # quant_pred[:,:,0] is a prediction for wav_compand_out[:,1] 
-        return quant[...,:-1], snd_batch_out[:,1:]
+        return quant[...,:-1], wav_batch_out[:,1:]
+
+    def geometry(self):
+        """
+
+        """
 
 class Metrics(object):
     """Manage running the model and saving output and target state"""

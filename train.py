@@ -50,7 +50,7 @@ def main():
 
         # Initialize data
         data_source = data.Slice(
-                opts.index_file_prefix, opts.n_batch)
+                opts.index_file_prefix, opts.n_batch, opts.n_sam_per_slice)
 
         dec_params['n_speakers'] = data_source.num_speakers()
 
@@ -84,7 +84,6 @@ def main():
     state.data.post_init(
             state.model,
             opts.index_file_prefix,
-            opts.n_sam_per_slice,
             opts.max_gpu_mem_bytes)
 
     state.model.post_init(state.data)

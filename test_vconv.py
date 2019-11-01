@@ -220,19 +220,19 @@ def autoenc_test(vcs, in_len, slice_beg):
     mid_act = vconv.output_range(*enc, in_act)
 
     # wav -> wav_mid 
-    wav_mid_sl = vconv.tensor_slice(in_act, mid_req)
+    wav_mid_sl = vconv.tensor_slice(in_act, mid_req.sub)
     # wav_mid_ten = wav_ten[wav_mid_sl]
 
     # lcond -> lcond_sl
-    lcond_sl = vconv.tensor_slice(mid_act, mid_req)
+    lcond_sl = vconv.tensor_slice(mid_act, mid_req.sub)
     # lcond_sl_ten = lcond_ten[lcond_sl]
     
     # wav -> wav_out 
     # +1 since it is predicting the next step
-    wav_out_sl = vconv.tensor_slice(in_act, out_req)
+    wav_out_sl = vconv.tensor_slice(in_act, out_req.sub)
     # wav_out_ten = wav_ten[sl_b+1:sl_e+1]
 
-    mfcc_in_sl = vconv.tensor_slice(full_mfcc, mfcc_act)
+    mfcc_in_sl = vconv.tensor_slice(full_mfcc, mfcc_act.sub)
 
     print('{:10}: {}'.format('full_in', full_in))
     print('{:10}: {}'.format('full_mfcc', full_mfcc))

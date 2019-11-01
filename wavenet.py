@@ -297,7 +297,7 @@ class WaveNet(nn.Module):
         self.logsoftmax = nn.LogSoftmax(1) # (B, Q, N)
         self.vc['main'] = cur_vc
 
-    def forward(self, wav_onehot, lc_sparse, speaker_inds):
+    def forward(self, wav_onehot, lc_sparse, speaker_inds, lcond_slice):
         """
         B: n_batch (# of separate wav streams being processed)
         T1: n_wav_timesteps
@@ -314,7 +314,17 @@ class WaveNet(nn.Module):
         lc_sparse = self.jitter(lc_sparse)
         lc_sparse = self.lc_conv(lc_sparse) 
         lc_dense = self.lc_upsample(lc_sparse)
-        cond = self.cond(lc_dense, speaker_inds)
+
+        # Trimming due to different phases of the input MFCC windows
+        trim_len = lcond_slice[0][1] - lcond_slice[0][0]
+        lc_dense_trim = torch.empty(self.batch_size, trim_len) 
+
+        for b in range(self.batch_size):
+            sl_b, sl_e = lcond_slice[b]
+            assert sl_e - sl_b == wav_onehot.shape(1)
+            lc_dense_trim[b] = lc_dense[sl_b:sl_e]
+
+        cond = self.cond(lc_dense_trim, speaker_inds)
         # "The conditioning signal was passed separately into each layer" - p 5 pp 1.
         # Oddly, they claim the global signal is just passed in as one-hot vectors.
         # But, this means wavenet's parameters would have N_s baked in, and wouldn't
