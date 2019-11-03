@@ -145,6 +145,10 @@ class VQLoss(nn.Module):
         self.l2 = L2Error()
 
     def forward(self, quant_pred, target_wav):
+        """
+        quant_pred: 
+        target_wav: B,  
+        """
         # Loss per embedding vector 
         l2_loss_embeds = self.l2(self.bn.ze, self.bn.emb)
         com_loss_embeds = self.bn.l2norm_min * self.bn.gamma
@@ -152,7 +156,8 @@ class VQLoss(nn.Module):
         # com_loss_embeds = self.bn.l2norm_min.sqrt() * self.bn.gamma
 
         log_pred = self.logsoftmax(quant_pred)
-        log_pred_target = torch.gather(log_pred, 1, target_wav.unsqueeze(1))
+        log_pred_target = torch.gather(log_pred, 1,
+                target_wav.long().unsqueeze(1))
 
         # Loss per timestep
         # !!! We don't need a 'loss per timestep'.  We only need
@@ -183,14 +188,14 @@ class VQLoss(nn.Module):
         # per 320 rec_loss terms, due to upsampling.  We could adjust for that.
         # Implicitly, com_loss is already adjusted by gamma.  Perhaps l2_loss
         # should also be adjusted, but at the moment it is not.
-        total_loss = rec_loss_ts.sum() + l2_loss_adjust.sum() + com_loss_adjust.sum()
+        total_loss = rec_loss_ts.sum() + l2_loss_embeds.sum() + com_loss_embeds.sum()
 
         nh = self.bn.ind_hist / self.bn.ind_hist.sum()
 
         self.metrics = { 
                 'rec': rec_loss_ts.mean(),
-                'l2': l2_loss_adjust.mean(),
-                'com': com_loss_adjust.mean(),
+                'l2': l2_loss_embeds.mean(),
+                'com': com_loss_embeds.mean(),
                 #'ze_rng': self.bn.ze.max() - self.bn.ze.min(),
                 #'emb_rng': self.bn.emb.max() - self.bn.emb.min(),
                 'min_ze': self.bn.ze_norm.min(),

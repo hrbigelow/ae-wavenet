@@ -217,7 +217,7 @@ class VirtualConv(object):
         #    gs_in))
         return (full_in_b, full_in_e), (sub_in_b, sub_in_e), gs_in
 
-    def _output_offsets():
+    def _output_offsets(self):
         """
         Simple local calculation of offsets from input to output
         on the left and right.  Only works with zero padding and
@@ -312,6 +312,7 @@ def output_offsets(source, dest):
         if vc is dest:
             break
         vc = vc.child
+    return lo, ro
 
 
 def tensor_slice(ref_gcoord, subrange_gcoord):

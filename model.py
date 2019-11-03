@@ -117,8 +117,8 @@ class AutoEncoder(nn.Module):
         e = 0
         
         while e != n:
-            data.next_slice()
-            encoding = self.encoder(data.mel_slice)
+            vbatch = data.next_batch()
+            encoding = self.encoder(vbatch.mel_input)
             ze = self.bottleneck.linear(encoding)
             b = ze.size()[0]
             chunk = min(b, n - e)
@@ -158,20 +158,20 @@ class AutoEncoder(nn.Module):
         B, T, Q: n_batch, n_timesteps, n_quant
         Outputs:
         quant_pred: (B, Q, T) (the prediction from the model)
-        snd_batch_out: (B, T) (the actual data from the same timesteps)
+        wav_batch_out: (B, T) (the actual data from the same timesteps)
         """
         wav_onehot_dec = self.preprocess(vbatch.wav_input)
 
         # Slice each wav input
         wav_batch_out = vbatch.wav_input.new_empty(vbatch.batch_size,
-                self.decoder.n_quant, vbatch.loss_wav_len()) 
+                vbatch.loss_wav_len()) 
         for b, (sl_b, sl_e) in enumerate(vbatch.loss_wav_slice):
-            wav_batch_out[b] = wav_onehot_dec[b,:,sl_b:sl_e]
+            wav_batch_out[b] = vbatch.wav_input[b,sl_b:sl_e]
 
         quant = self.forward(vbatch.mel_input, wav_onehot_dec,
                 vbatch.voice_index, vbatch.lcond_slice)
         # quant_pred[:,:,0] is a prediction for wav_compand_out[:,1] 
-        return quant[...,:-1], wav_batch_out[:,1:]
+        return quant[...,:-1], wav_batch_out[...,1:]
 
     def geometry(self):
         """
@@ -205,7 +205,7 @@ class Metrics(object):
     def peak_dist(self):
         """Average distance between the indices of the peaks in pred and
         target"""
-        diffs = torch.argmax(self.quant, dim=1) - self.target 
+        diffs = torch.argmax(self.quant, dim=1) - self.target.long()
         mean = torch.mean(torch.abs(diffs).float())
         return mean
 
@@ -218,7 +218,7 @@ class Metrics(object):
         
     def avg_prob_target(self):
         """Average probability given to target"""
-        target_probs = torch.gather(self.probs, 1, self.target.unsqueeze(1)) 
+        target_probs = torch.gather(self.probs, 1, self.target.long().unsqueeze(1)) 
         mean = torch.mean(target_probs)
         return mean
 

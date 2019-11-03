@@ -23,7 +23,7 @@ class ConvReLURes(nn.Module):
                 print('Stride must be 1 for residually connected convolution',
                         file=sys.stderr)
                 raise ValueError
-            self.residual_offsets = vconv.output_offsets(vc, vc)
+            self.residual_offsets = vconv.output_offsets(self.vc, self.vc)
 
         netmisc.xavier_init(self.conv)
 
@@ -36,7 +36,7 @@ class ConvReLURes(nn.Module):
         # out = self.bn(out)
         out = self.relu(out)
         if self.do_res:
-            out += x[:,:,self.residual_offsets[0]:self_residual_offsets[1] or None]
+            out += x[:,:,self.residual_offsets[0]:self.residual_offsets[1] or None]
         return out
 
 

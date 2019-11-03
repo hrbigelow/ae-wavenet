@@ -33,8 +33,9 @@ class GatedResidualCondConv(nn.Module):
         self.vc = vconv.VirtualConv(filter_info=(dil_filter_sz - 1, 0),
                 parent=parent_vc, name=name)
         self.apply(netmisc.xavier_init)
+
         
-    def cond_lead(self, win_size):
+    def cond_lead(self):
         """
         distance from start of the overall stack input to
         the start of this convolution
@@ -44,19 +45,17 @@ class GatedResidualCondConv(nn.Module):
         assert r_off == 0
         return l_off 
 
-    def skip_lead(self, win_size):
+    def skip_lead(self):
         """
         distance from start of this *output* to start of the final stack
         output.  Note that the skip information is the *output* of self.vc, not
         the input.
         """
-        if self.end_vc is None:
-            raise RuntimeError('Must call init_bound_vcs() first')
-        if self.vc == self.end_vc:
+        if self.vc == self.wavenet_vc['end_grcc']:
             return 0
 
-        l_off, r_off = vconv.output_offsets(self.vc.next(),
-        self.wavenet_vc['end_grcc'])
+        l_off, r_off = vconv.output_offsets(self.vc.child,
+                self.wavenet_vc['end_grcc'])
         assert r_off == 0
         return l_off 
 
@@ -68,9 +67,8 @@ class GatedResidualCondConv(nn.Module):
         cond: (B, C, T) (necessary shape for Conv1d)
         returns: sig: (B, R, T), skp: (B, S, T) 
         """
-        win_size = cond.shape[2]
-        cond_lead = self.cond_lead(win_size)
-        skip_lead = self.skip_lead(win_size)
+        cond_lead = self.cond_lead()
+        skip_lead = self.skip_lead()
 
         filt = self.conv_signal(x) + self.proj_signal(cond[:,:,cond_lead:])
         gate = self.conv_gate(x) + self.proj_gate(cond[:,:,cond_lead:])
@@ -320,12 +318,13 @@ class WaveNet(nn.Module):
 
         # Trimming due to different phases of the input MFCC windows
         trim_len = lcond_slice[0][1] - lcond_slice[0][0]
-        lc_dense_trim = lc_dense.new_empty(self.batch_size, trim_len) 
+        lcd_sz = lc_dense.size()
+        lc_dense_trim = lc_dense.new_empty(lcd_sz[0], lcd_sz[1], trim_len) 
 
-        for b in range(self.batch_size):
+        for b in range(lcd_sz[0]):
             sl_b, sl_e = lcond_slice[b]
-            assert sl_e - sl_b == wav_onehot.shape(1)
-            lc_dense_trim[b] = lc_dense[sl_b:sl_e]
+            assert sl_e - sl_b == wav_onehot.shape[2]
+            lc_dense_trim[b] = lc_dense[b,:,sl_b:sl_e]
 
         cond = self.cond(lc_dense_trim, speaker_inds)
         # "The conditioning signal was passed separately into each layer" - p 5 pp 1.
