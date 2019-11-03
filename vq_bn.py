@@ -141,14 +141,8 @@ class VQLoss(nn.Module):
         self.bn = bottleneck 
         self.logsoftmax = nn.LogSoftmax(1) # input is (B, Q, N)
         # self.combine = netmisc.LCCombine('LCCombine')
-        self.usage_adjust = netmisc.EmbedLossAdjust('EmbedLossAdjust')
+        # self.usage_adjust = netmisc.EmbedLossAdjust('EmbedLossAdjust')
         self.l2 = L2Error()
-
-    def post_init(self, beg_vc, end_vc, n_sam_per_slice):
-        self.usage_adjust.init_usage_weight(beg_vc, end_vc, n_sam_per_slice)
-
-    #def set_geometry(self, beg_vc, end_vc):
-    #    self.combine.set_geometry(beg_vc, end_vc)
 
     def forward(self, quant_pred, target_wav):
         # Loss per embedding vector 
@@ -166,10 +160,6 @@ class VQLoss(nn.Module):
         # code.  (The codes at the two ends of the window will be
         # used less)
         rec_loss_ts = - log_pred_target
-        l2_loss_adjust = self.usage_adjust(l2_loss_embeds)
-        com_loss_adjust = self.usage_adjust(com_loss_embeds)
-        #l2_loss_ts = self.combine(l2_loss_embeds.unsqueeze(1))[...,:-1]
-        #com_loss_ts = self.combine(com_loss_embeds.unsqueeze(1))[...,:-1]
 
         # Use only a subset of the overlapping windows
         #sl = slice(0, 1)

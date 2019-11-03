@@ -86,7 +86,6 @@ def main():
             opts.index_file_prefix,
             opts.max_gpu_mem_bytes)
 
-    state.model.post_init(state.data)
     state.to(device=opts.device)
 
     # Initialize optimizer

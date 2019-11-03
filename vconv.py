@@ -13,8 +13,8 @@ class GridRange(object):
     The subrange has elements at positions range(sub[0], sub[1], gs)
     """
     def __init__(self, full, sub, gs):
-        self.full = full
-        self.sub = sub
+        self.full = list(full)
+        self.sub = list(sub)
         self.gs = gs
 
     def sub_length(self):
@@ -200,13 +200,21 @@ class VirtualConv(object):
             sub_in_adj_e = sub_out_e + rwg
 
             full_in_b = full_in_adj_b + lpg
-            full_in_e = full_in_adj_e - rpg
+            full_in_pre_e = full_in_adj_e - rpg
+            e_mod_adjust = - (full_in_pre_e - full_in_b) % gs_in
+            full_in_e = full_in_pre_e + e_mod_adjust
+
             # Due to input spacing, this range may be empty or reversed
+            assert sub_in_adj_b <= full_in_e
+            assert full_in_b <= sub_in_adj_e
+            assert (full_in_e - full_in_b) % gs_in == 0
             sub_in_b = sub_in_adj_b + (full_in_e - sub_in_adj_b) % gs_in
             sub_in_e = sub_in_adj_e - (sub_in_adj_e - full_in_b) % gs_in
             if sub_in_e - sub_in_b <= 0:
                 return None
 
+        #print('{} {} {}'.format((full_in_b, full_in_e), (sub_in_b, sub_in_e),
+        #    gs_in))
         return (full_in_b, full_in_e), (sub_in_b, sub_in_e), gs_in
 
 
@@ -303,7 +311,7 @@ def max_spacing(source, dest, initial_gs):
     while True:
         gs *= vc.stride_ratio
         assert gs == int(gs)
-        max_gs = max(gs, max_gs)
+        max_gs = max(int(gs), max_gs)
         if vc is dest:
             break
         vc = vc.child

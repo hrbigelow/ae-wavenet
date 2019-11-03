@@ -251,8 +251,58 @@ def autoenc_test(vcs, in_len, slice_beg):
     print('wav_out_sl: {}  len: {}'.format(wav_out_sl, wav_out_sl[1] - wav_out_sl[0]))
 
 
-for s in range(56730, 57073, 30):
-    autoenc_test(vcs, 100000, s)
+encoder = vcs['MFCC'], vcs['LC_Conv']
+encoder_clip = encoder[0].child, encoder[1]
+upsample = vcs['Upsampling_0'], vcs['Upsampling_3']
+half_upsample = vcs['Upsampling_2'], vcs['Upsampling_3']
+decoder = vcs['GRCC_0,0'], vcs['GRCC_1,9']
+autoenc_clip = encoder[0].child, decoder[1] 
+
+def phase_test(vc_range, n_sub_win, winsize):
+    c = Counter()
+    for b in range(n_sub_win):
+        out = vconv.GridRange((0, 90000), (b, b + winsize), 1)
+        input = vconv.input_range(*vc_range, out)
+        c[input.sub_length()] += 1
+        # print(mfcc.sub_length(), end=' ')
+    print(c)
+
+
+#print('Phase test for autoencoder')
+#phase_test(autoenc_clip, 100)
+
+print('Phase test for upsample')
+phase_test(upsample, 20, 2146)
+print()
+
+print('Phase test for half upsample')
+phase_test(half_upsample, 20, 2146)
+print()
+
+print('Phase test for encoder_clip + upsample')
+phase_test((encoder_clip[0], upsample[1]), 6000, 2146)
+print()
+
+print('Phase test for decoder')
+phase_test(decoder, 6000, 100)
+print()
+
+
+def usage_test(vc_range, winsize):
+    c = Counter()
+    for b in range(winsize):
+        out = vconv.GridRange((0, 100000), (b, b + 1), 1)
+        input = vconv.input_range(*vc_range, out)
+        slice = vconv.tensor_slice(input, input.sub)
+        c[slice] += 1
+    print(c)
+
+winsize = 10000
+print('Usage test for window size {}'.format(winsize))
+usage_test((upsample[0], decoder[1]), winsize)
+
+# for s in range(56730, 57073, 30):
+#     autoenc_test(vcs, 100000, s)
 
 
 #for t in (t2, t1):

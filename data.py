@@ -56,17 +56,20 @@ def convert(catalog, pfx, n_quant, sample_rate=16000, win_sz=400, hop_sz=160,
             snd, _ = librosa.load(snd_path, sample_rate)
             snd_mu = util.mu_encode_np(snd, n_quant).astype(snd_dtype)
             # mel: C, T  (n_mels, n_timesteps)
-            # reshape to T, C and flatten
+            # reshape to T, C for ease in slicing timesteps 
+            # then flatten
+            # we must revert the shape of slices back to C, T
             mel = mfcc_proc.func(snd)
             if n_mel_chan is None:
                 n_mel_chan = mel.shape[0]
+            n_mel_elem = mel.shape[1]
 
             mel = mel.transpose((1, 0)).flatten()
             snd_fh.write(snd_mu.data)
             mel_fh.write(mel.data)
             ind['voice_index'].append(speaker_id_map[voice_id])
             ind['n_snd_elem'].append(snd.size)
-            ind['n_mel_elem'].append(mel.size)
+            ind['n_mel_elem'].append(n_mel_elem)
             ind['snd_path'].append(snd_path)
             if len(ind['voice_index']) % 100 == 0:
                 print('Converted {} files of {}.'.format(len(ind['voice_index']),
@@ -94,10 +97,10 @@ def convert(catalog, pfx, n_quant, sample_rate=16000, win_sz=400, hop_sz=160,
 SampleSlice = namedtuple('SampleSlice', [
     'wav_offset',    # Offset into full wav dataset
     'mel_offset',    # Offset into full mel dataset
-    'dec_wav_slice', # wav slice input to decoder
-    'mel_in_slice',  # mel slice input to encoder
-    'loss_wav_slice',# slice of wav decoder input for input to loss function 
-    'lcond_slice'    # slice of lcond tensor to pass on to the decoder
+    'dec_wav_slice', # wav slice input to decoder, relative to wav_offset
+    'mel_in_slice',  # mel slice input to encoder, relative to mel_offset
+    'loss_wav_slice',# slice of wav decoder, relative to dec_wav_slice 
+    'lcond_slice',   # slice of lcond tensor, absolute
     'voice_index'    # index of the speaker for this sample
     ]
     )
@@ -113,21 +116,38 @@ SpokenSample = namedtuple('SpokenSample', [
     )
 
 
-class VirtualBatch(object):
-    def __init__(self, batch_size, max_wav_len, max_mel_len):
+class VirtualBatch(nn.Module):
+    def __init__(self, batch_size, max_wav_len, max_mel_len, mel_chan):
+        super(VirtualBatch, self).__init__()
         self.batch_size = batch_size
-        self.voice_index = torch.empty(batch_size, dtype=torch.long)
+        self.register_buffer('voice_index', torch.empty(batch_size,
+            dtype=torch.long))
         self.lcond_slice = [None] * batch_size 
         self.loss_wav_slice = [None] * batch_size 
-        self.wav_input = torch.empty(batch_size, max_wav_len)
-        self.mel_input = torch.empty(batch_size, max_mel_len) 
+        self.register_buffer('wav_input', torch.empty(batch_size, max_wav_len))
+        self.register_buffer('mel_input', torch.empty(batch_size, mel_chan,
+            max_mel_len)) 
 
-    def add(self, b, sample_slice, wav_tensor_slice, mel_tensor_slice):
-        self.voice_index[b] = sample_slice.voice_index
-        self.lcond_slice[b] = sample_slice.lcond_slice
-        self.loss_wav_slice[b] = sample_slice.loss_wav_slice
-        self.wav_input[b] = wav_tensor_slice
-        self.mel_input[b] = mel_tensor_slice
+    def __repr__(self):
+        fmt = ('voice_index: {}\nlcond_slice: {}\nloss_wav_slice: {}\n' +
+                'wav_input.shape: {}\nmel_input.shape: {}\n')
+        return fmt.format(self.voice_index, self.lcond_slice,
+                self.loss_wav_slice, self.wav_input.shape,
+                self.mel_input.shape)
+
+    def set(self, b, sample_slice, data_source):
+        ss = sample_slice
+        self.voice_index[b] = ss.voice_index
+        wo = ss.wav_offset
+        mo = ss.mel_offset
+        dws = ss.dec_wav_slice
+        mis = ss.mel_in_slice
+        self.lcond_slice[b] = ss.lcond_slice 
+        self.loss_wav_slice[b] = ss.loss_wav_slice 
+        self.wav_input[b] = data_source.snd_data[wo + dws[0]:wo + dws[1]] 
+        self.mel_input[b] = data_source.mel_data[mo + mis[0]:mo +
+                mis[1],:].transpose(1, 0)
+
 
     def valid(self):
         lc_len = self.lcond_len()
@@ -202,12 +222,13 @@ class Slice(nn.Module):
         # last vconv in the autoencoder
         self.wave_beg_vc = model.decoder.vc['beg_grcc']
         self.wave_end_vc = model.decoder.vc['end_grcc']
+        self.last_upsample_vc = model.decoder.vc['last_upsample']
 
-        autoenc = self.mfcc_vc, self.wave_end_vc
-        autoenc_clip = self.mfcc_vc.child, self.wave_end_vc
         enc = self.mfcc_vc.child, self.last_upsample_vc
         dec = self.wave_beg_vc, self.wave_end_vc
-        mfcc = self.mfcc_vc, self.mfcc_vc
+        autoenc_clip = enc[0], dec[1]
+        autoenc = enc[0].parent, dec[1]
+        preproc = self.mfcc_vc, self.mfcc_vc
 
         # Calculate max length of mfcc encoder input and wav decoder input
         w = self.window_batch_size
@@ -215,63 +236,79 @@ class Slice(nn.Module):
         max_mfcc_len = 0
         max_wav_len = 0
         for b in range(max_spacing):
-            out = vconv.GridRange((0, 10000), (b, b + w), 1)
+            out = vconv.GridRange((0, 100000), (b, b + w), 1)
             mfcc = vconv.input_range(*autoenc_clip, out)
+            # print(mfcc.sub_length(), end=' ')
             max_mfcc_len = max(mfcc.sub_length(), max_mfcc_len)
-            wav = vconv.input_range(*dec, out)
-            max_wav_len = max(wav.sub_length(), max_wav_len)
 
         self.max_mel_input_length = max_mfcc_len
-        self.max_wav_input_length = max_wav_len
+
+        # Calculate decoder wav input length
+        slice_out = vconv.GridRange((0, 100000), (0, w), 1)
+        self.max_wav_input_length = vconv.input_range(*dec,
+                slice_out).sub_length()
+        
+        stderr.flush()
+        print('Max Mel input length: {}'.format(self.max_mel_input_length),
+                file=stderr)
 
         # generate all slices
+        print('Generating all slices', file=stderr)
+        stderr.flush()
         self.slices = []
         for file_i, sam in enumerate(self.samples): 
             # all windows right aligned, fitting in this wav data
             wlen = sam.wav_e - sam.wav_b
-            mlen = sam.mel_e - sam.mel_b
             full_wav_in = vconv.GridRange((0, wlen), (0, wlen), 1)
-            full_mel_in = vconv.GridRange((0, wlen), (0, wlen), 1)
+            full_mel_in = vconv.output_range(*preproc, full_wav_in)
             full_out = vconv.output_range(*autoenc, full_wav_in) 
             assert full_out.gs == 1
             slice_out = vconv.GridRange(full_out.full, 
-                    (full_out.sub[1] - w, full_out.sub[1], full_out.gs))
+                    (full_out.sub[1] - w, full_out.sub[1]), full_out.gs)
+
+            print('Processing {}'.format(sam.file_path), file=stderr)
+            stderr.flush()
 
             while True:
+                # We should instead derive the padding some other way, so that
+                # the mfcc_in_pad and wav_in_pad are consistent with each other
                 mfcc_in = vconv.input_range(*autoenc_clip, slice_out)
-                mfcc_in_pad = mfcc_in
-                mfcc_add = max_mfcc_len - mfcc_in.sub_length()
-                mfcc_in_pad.sub[0] -= mfcc_in.gs * mfcc_add
+                assert mfcc_in.sub_length() <= self.max_mel_input_length
+                mfcc_add = (self.max_mel_input_length - mfcc_in.sub_length()) * mfcc_in.gs
+                mfcc_in_pad = vconv.GridRange(mfcc_in.full, (mfcc_in.sub[0] -
+                    mfcc_add, mfcc_in.sub[1]), mfcc_in.gs)
 
+                lcond_pad = vconv.output_range(*enc, mfcc_in_pad)
                 wav_in = vconv.input_range(*dec, slice_out)
-                wav_in_pad = wav_in
-                wav_add = max_wav_len - wav_in.sub_length()
-                wav_in_pad.sub[0] -= wav_in.gs * wav_add
-                if not (mfcc_in_pad.valid() and wav_in_pad.valid()):
+                if not mfcc_in_pad.valid():
                     break
+                #print(wav_in)
 
                 # slice of wav tensor to be input to decoder
-                dec_wav_slice = vconv.tensor_slice(full_wav_in, wav_in_pad.sub)
+                dec_wav_slice = vconv.tensor_slice(full_wav_in, wav_in.sub)
+
+                # slice of internally computed local condition tensor
+                lcond_slice = vconv.tensor_slice(lcond_pad, wav_in.sub)
 
                 # slice of mel tensor to be input to encoder
                 mel_in_slice = vconv.tensor_slice(full_mel_in, mfcc_in_pad.sub)
 
                 # slice of wav buffer to be input to loss function
-                loss_wav_slice = vconv.tensor_slice(full_wav_in, wav_out.sub)
-
-                lcond_pad = vconv.output_range(*enc, mfcc_in_pad)
-                # slice of internally computed local condition tensor
-                # (output by encoder+upsampling) to pass on to decoder
-                lcond_slice = vconv.tensor_slice(lcond_pad, wav_in_pad.sub)
+                loss_wav_slice = vconv.tensor_slice(wav_in, slice_out.sub)
 
                 self.slices.append(
                         SampleSlice(sam.wav_b, sam.mel_b, dec_wav_slice,
-                            mel_in_slice, loss_wav_slice, lcond_slice)
+                            mel_in_slice, loss_wav_slice, lcond_slice,
+                            sam.voice_index)
                         )
+                slice_out.sub[0] -= w
+                slice_out.sub[1] -= w
 
-        # Load dataset into memory
+        print('Loading datasets into memory', file=stderr)
+        stderr.flush()
+
         snd_length = self.samples[-1].wav_e
-        mel_length = self.samples[-1].mel_e 
+        mel_length = self.samples[-1].mel_e * self.n_mel_chan
 
         dat_file = index_file_prefix + '.dat'
         mel_file = index_file_prefix + '.mel'
@@ -287,6 +324,8 @@ class Slice(nn.Module):
             snd_data = torch.IntTensor(buf)
 
         mel_buf = torch.FloatStorage.from_file(mel_file, shared=False, size=mel_length)
+
+        # shape: T, M
         mel_data = torch.FloatTensor(mel_buf).reshape((-1, self.n_mel_chan))
 
         # Store entire dataset in GPU memory if possible 
@@ -303,27 +342,21 @@ class Slice(nn.Module):
             self.snd_data = snd_data
             self.mel_data = mel_data
 
+        self.vbatch = VirtualBatch(self.batch_size, self.max_wav_input_length,
+                self.max_mel_input_length, self.n_mel_chan)
 
-    def next_slice(self):
+
+    def next_batch(self):
         """
         Get a random slice of a file, together with its start position and ID.
         Populates self.snd_slice, self.mel_slice, self.mask, and
         self.slice_voice_index
         """
         picks = np.random.random_integers(0, len(self.slices), self.batch_size)
-        vb = VirtualBatch(self.batch_size, self.max_wav_input_length,
-                self.max_mel_input_length)
 
         for b, s_i in enumerate(picks):
-            sl = self.slices[s_i]
-            wo = sl.wav_offset
-            mo = sl.mel_offset
-            ws = sl.dec_wav_slice
-            ms = sl.mel_in_slice
-            wav_in = self.snd_data[wo + ws[0]:wo + ws[1]]
-            mel_in = self.mel_data[mo + ms[0]:mo + ms[1]]
-            vb.add(b, sl, wav_in, mel_in)
+            self.vbatch.set(b, self.slices[s_i], self)
 
-        assert vb.valid()
-        return vb
+        assert self.vbatch.valid()
+        return self.vbatch
 

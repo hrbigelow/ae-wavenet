@@ -40,6 +40,7 @@ class State(object):
     def to(self, device):
         """Hack to move both model and optimizer to device"""
         self.model.to(device)
+        self.data.to(device)
         ostate = self.optim.state_dict()
         self.optim = torch.optim.Adam(self.model.parameters())
         self.optim.load_state_dict(ostate)

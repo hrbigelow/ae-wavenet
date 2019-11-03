@@ -106,19 +106,6 @@ class AutoEncoder(nn.Module):
         self._initialize()
         self.load_state_dict(state['state_dict'])
 
-    def post_init(self, data_source):
-        """
-        Compute the timestep offsets between the window boundaries of the
-        encoder input wav, decoder input wav, and supervising wav input to the
-        loss function
-        """
-        if self.bn_type in ('vae', 'vqvae'):
-            self.objective.post_init(
-                    self.decoder.vc['pre_upsample'],
-                    self.decoder.vc['end_grcc'],
-                    data_source.window_batch_size
-                    )
-
 
     def init_vq_embed(self, data):
         """Initialize the VQ Embedding with samples from the encoder."""
@@ -144,14 +131,16 @@ class AutoEncoder(nn.Module):
         return util.tensor_digest(self.parameters())
         
 
-    def forward(self, mels, wav_onehot_dec, voice_inds):
+    def forward(self, mels, wav_onehot_dec, voice_inds, lcond_slice):
         """
         B: n_batch
+        M: n_mels
         T: receptive field of autoencoder
         T': receptive field of decoder 
         R: size of local conditioning output of encoder (T - encoder.vc.total())
         N: n_win (# consecutive samples processed in one batch channel)
         Q: n_quant
+        mels: (B, M, T)
         wav_compand: (B, T)
         wav_onehot_dec: (B, T')  
         Outputs: 
@@ -159,7 +148,8 @@ class AutoEncoder(nn.Module):
         """
         encoding = self.encoder(mels)
         encoding_bn = self.bottleneck(encoding)
-        quant = self.decoder(wav_onehot_dec, encoding_bn, voice_inds)
+        quant = self.decoder(wav_onehot_dec, encoding_bn, voice_inds,
+                lcond_slice)
         return quant
 
     def run(self, vbatch):
@@ -170,15 +160,15 @@ class AutoEncoder(nn.Module):
         quant_pred: (B, Q, T) (the prediction from the model)
         snd_batch_out: (B, T) (the actual data from the same timesteps)
         """
-        snd_onehot_dec = self.preprocess(vbatch.wav_input,
-                vbatch.loss_wav_slice)
+        wav_onehot_dec = self.preprocess(vbatch.wav_input)
 
         # Slice each wav input
-        wav_batch_out = torch.empty(self.batch_size, vbatch.loss_wav_len()) 
+        wav_batch_out = vbatch.wav_input.new_empty(vbatch.batch_size,
+                self.decoder.n_quant, vbatch.loss_wav_len()) 
         for b, (sl_b, sl_e) in enumerate(vbatch.loss_wav_slice):
-            snd_batch_out[b] = snd_onehot_dec[b,sl_b:sl_e]
+            wav_batch_out[b] = wav_onehot_dec[b,:,sl_b:sl_e]
 
-        quant = self.forward(vbatch.mel_input, snd_onehot_dec,
+        quant = self.forward(vbatch.mel_input, wav_onehot_dec,
                 vbatch.voice_index, vbatch.lcond_slice)
         # quant_pred[:,:,0] is a prediction for wav_compand_out[:,1] 
         return quant[...,:-1], wav_batch_out[:,1:]
@@ -197,8 +187,8 @@ class Metrics(object):
         self.softmax = torch.nn.Softmax(1) # input to this is (B, Q, N)
 
     def update(self):
-        self.state.data.next_slice()
-        quant_pred_snip, wav_compand_out_snip = self.state.model.run(self.state.data) 
+        data_batch = self.state.data.next_batch()
+        quant_pred_snip, wav_compand_out_snip = self.state.model.run(data_batch) 
         self.quant = quant_pred_snip
         self.target = wav_compand_out_snip
         self.probs = self.softmax(self.quant)

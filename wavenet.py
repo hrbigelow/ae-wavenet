@@ -317,7 +317,7 @@ class WaveNet(nn.Module):
 
         # Trimming due to different phases of the input MFCC windows
         trim_len = lcond_slice[0][1] - lcond_slice[0][0]
-        lc_dense_trim = torch.empty(self.batch_size, trim_len) 
+        lc_dense_trim = lc_dense.new_empty(self.batch_size, trim_len) 
 
         for b in range(self.batch_size):
             sl_b, sl_e = lcond_slice[b]
