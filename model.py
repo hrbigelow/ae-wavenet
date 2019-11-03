@@ -51,14 +51,15 @@ class AutoEncoder(nn.Module):
     from __init__ or __setstate__ 
     """
     def __init__(self, pre_params, enc_params, bn_params, dec_params, 
-            n_mel_chan, mfcc_vc):
+            n_mel_chan, mfcc_vc, training):
         self.args = [pre_params, enc_params, bn_params, dec_params, n_mel_chan,
-                mfcc_vc]
+                mfcc_vc, training]
         self._initialize()
 
     def _initialize(self):
         super(AutoEncoder, self).__init__() 
-        pre_params, enc_params, bn_params, dec_params, n_mel_chan, mfcc_vc = self.args
+        (pre_params, enc_params, bn_params, dec_params, n_mel_chan, mfcc_vc,
+                training) = self.args
 
         # the "preprocessing"
         self.preprocess = PreProcess(pre_params, n_quant=dec_params['n_quant'])
@@ -73,6 +74,11 @@ class AutoEncoder(nn.Module):
         if bn_type == 'vqvae':
             self.bottleneck = vq_bn.VQ(**bn_extra, n_in=enc_params['n_out'])
             self.objective = vq_bn.VQLoss(self.bottleneck)
+
+        elif bn_type == 'vqvae-ema':
+            self.bottleneck = vq_bn.VQEMA(**bn_extra, n_in=enc_params['n_out'],
+                    training=training)
+            self.objective = vq_bn.VQEMALoss(self.bottleneck)
 
         elif bn_type == 'vae':
             # mu and sigma members  

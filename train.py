@@ -57,7 +57,8 @@ def main():
         model = ae.AutoEncoder(
                 pre_params, enc_params, bn_params, dec_params,
                 data_source.n_mel_chan,
-                data_source.mfcc_vc)
+                data_source.mfcc_vc,
+                training=True)
         optim = torch.optim.Adam(params=model.parameters(), lr=learning_rates[0])
         state = checkpoint.State(0, model, data_source, optim)
 

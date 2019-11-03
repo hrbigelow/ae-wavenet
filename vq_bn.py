@@ -81,6 +81,153 @@ class L2Error(nn.Module):
         l2_error = l2norm_min_val
         return l2_error
 
+
+class VQEMA(nn.Module):
+    """
+    Vector Quantization bottleneck using Exponential Moving Average
+    updates of the Codebook vectors.
+    """
+    def __init__(self, n_in, n_out, vq_gamma, vq_ema_gamma, vq_n_embed, training):
+        super(VQEMA, self).__init__()
+        self.training = training
+        self.d = n_out
+        self.gamma = vq_gamma
+        self.ema_gamma = vq_ema_gamma
+        self.ema_gamma_comp = 1.0 - self.ema_gamma
+        self.k = vq_n_embed 
+        self.linear = nn.Conv1d(n_in, self.d, 1, bias=False)
+        self.sg = StopGrad()
+        self.rg = ReplaceGrad()
+        self.ze = None
+        self.register_buffer('emb', torch.empty(self.k, self.d))
+        nn.init.xavier_uniform_(self.emb, gain=1)
+
+        if self.ema_gamma >= 1.0 or self.ema_gamma <= 0:
+            raise RuntimeError('VQEMA must use an EMA-gamma value in (0, 1)')
+
+        if self.training:
+            self.l2norm_min = None
+            self.circ_inds = None
+            self.register_buffer('ind_hist', torch.zeros(self.k))
+            self.register_buffer('ema_numer', torch.empty(self.k, self.d))
+            self.register_buffer('ema_denom', torch.empty(self.k))
+            self.register_buffer('z_sum', torch.empty(self.k, self.d))
+            self.register_buffer('n_sum', torch.empty(self.k))
+            self.register_buffer('n_sum_ones', torch.ones(self.k))
+            nn.init.ones_(self.ema_denom)
+            self.ema_numer[...] = self.emb
+
+        netmisc.xavier_init(self.linear)
+
+        # Shows how many of the embedding vectors have non-zero gradients
+        #self.emb.register_hook(lambda k: print(k.sum(dim=1).unique(sorted=True)))
+
+    def forward(self, z):
+        """
+        B, Q, K, N: n_batch, n_quant_dims, n_quant_vecs, n_timesteps
+        ze: (B, Q, N) 
+        emb: (K, Q)
+        """
+        ze = self.linear(z)
+        self.ze = ze
+        sg_emb = self.sg(self.emb)
+        l2norm_sq = ((ze.unsqueeze(1) - sg_emb.unsqueeze(2)) ** 2).sum(dim=2) # B, K, N
+        self.l2norm_min, l2norm_min_ind = l2norm_sq.min(dim=1) # B, N
+        zq = util.gather_md(sg_emb, 0, l2norm_min_ind).permute(1, 0, 2)
+
+        if self.training:
+            # Diagnostics
+            ni = l2norm_min_ind.nelement() 
+            if self.circ_inds is None:
+                self.write_pos = 0
+                self.circ_inds = ze.new_full((100, ni), -1, dtype=torch.long)
+
+            self.circ_inds[self.write_pos,0:ni] = l2norm_min_ind.flatten(0)
+            self.circ_inds[self.write_pos,ni:] = -1
+            self.write_pos += 1
+            self.write_pos = self.write_pos % 100
+            ones = self.emb.new_ones(ni)
+            util.int_hist(l2norm_min_ind, accu=self.ind_hist)
+            self.uniq = l2norm_min_ind.unique(sorted=False)
+            self.ze_norm = (self.ze ** 2).sum(dim=1).sqrt()
+            self.emb_norm = (self.emb ** 2).sum(dim=1).sqrt()
+
+            # EMA statistics
+            # l2norm_min_ind: B, W
+            # ze: B, W, D
+            # z_sum: K, D
+            # n_sum: K
+            self.z_sum.zero_()
+            self.z_sum.scatter_add_(0,
+                    l2norm_min_ind.flatten(0, 1).unsqueeze(1).repeat(1,self.d),
+                    self.ze.permute(0,2,1).flatten(0, 1))
+            self.n_sum.zero_()
+            self.n_sum.scatter_add_(0,
+                    l2norm_min_ind.flatten(0, 1),
+                    self.n_sum_ones)
+            self.ema_numer = (
+                    self.ema_gamma * self.ema_numer +
+                    self.ema_gamma_comp * self.z_sum) 
+            self.ema_denom = (
+                    self.ema_gamma * self.ema_denom +
+                    self.ema_gamma_comp * self.n_sum)
+
+            # construct the straight-through estimator ('ReplaceGrad')
+            zq, __ = self.rg(zq, self.ze)
+
+        return zq
+
+    def update_codebook(self):
+        """
+        Updates the codebook based on the EMA statistics
+        """
+        self.emb = self.ema_numer / self.ema_denom
+
+
+class VQEMALoss(nn.Module):
+    def __init__(self, bottleneck):
+        super(VQEMALoss, self).__init__()
+        self.bn = bottleneck 
+        self.logsoftmax = nn.LogSoftmax(1) # input is (B, Q, N)
+        self.l2 = L2Error()
+
+    def forward(self, quant_pred, target_wav):
+        """
+        quant_pred: 
+        target_wav: B,  
+        """
+        # Loss per embedding vector 
+        com_loss_embeds = self.bn.l2norm_min * self.bn.gamma
+
+        log_pred = self.logsoftmax(quant_pred)
+        log_pred_target = torch.gather(log_pred, 1,
+                target_wav.long().unsqueeze(1))
+
+        rec_loss_ts = - log_pred_target
+        total_loss = rec_loss_ts.sum() + com_loss_embeds.sum()
+
+        nh = self.bn.ind_hist / self.bn.ind_hist.sum()
+
+        self.metrics = { 
+                'rec': rec_loss_ts.mean(),
+                'com': com_loss_embeds.mean(),
+                'min_ze': self.bn.ze_norm.min(),
+                'max_ze': self.bn.ze_norm.max(),
+                'min_emb': self.bn.emb_norm.min(),
+                'max_emb': self.bn.emb_norm.max(),
+                'hst_ent': util.entropy(self.bn.ind_hist, True),
+                'hst_100': util.entropy(util.int_hist(self.bn.circ_inds, -1), True),
+                'nunq': self.bn.uniq.nelement(),
+                'pk_m': log_pred.max(dim=1)[0].to(torch.float).mean(),
+                'pk_nuq': log_pred.max(dim=1)[1].unique().nelement(),
+                'pk_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
+                }
+        # netmisc.print_metrics(losses, 10000000)
+
+        return total_loss
+
+
+
 class VQ(nn.Module):
     def __init__(self, n_in, n_out, vq_gamma, vq_n_embed):
         super(VQ, self).__init__()
@@ -95,8 +242,9 @@ class VQ(nn.Module):
         self.register_buffer('ind_hist', torch.zeros(self.k))
         self.circ_inds = None
         self.emb = nn.Parameter(data=torch.empty(self.k, self.d))
-        netmisc.xavier_init(self.linear)
         nn.init.xavier_uniform_(self.emb, gain=1)
+
+        netmisc.xavier_init(self.linear)
 
         # Shows how many of the embedding vectors have non-zero gradients
         #self.emb.register_hook(lambda k: print(k.sum(dim=1).unique(sorted=True)))
