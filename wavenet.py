@@ -39,8 +39,10 @@ class GatedResidualCondConv(nn.Module):
         distance from start of the overall stack input to
         the start of this convolution
         """
-        shadow_b, __ = vconv.shadow(self.wavenet_vc['beg_grcc'], self.vc, 0, win_size, win_size)
-        return shadow_b 
+        l_off, r_off = vconv.output_offsets(self.wavenet_vc['beg_grcc'],
+                self.vc)
+        assert r_off == 0
+        return l_off 
 
     def skip_lead(self, win_size):
         """
@@ -53,9 +55,10 @@ class GatedResidualCondConv(nn.Module):
         if self.vc == self.end_vc:
             return 0
 
-        shadow_b, __ = vconv.shadow(self.vc.next(),
-                self.wavenet_vc['end_grcc'], 0, win_size, win_size)
-        return shadow_b 
+        l_off, r_off = vconv.output_offsets(self.vc.next(),
+        self.wavenet_vc['end_grcc'])
+        assert r_off == 0
+        return l_off 
 
     def forward(self, x, cond):
         """

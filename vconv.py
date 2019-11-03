@@ -217,6 +217,21 @@ class VirtualConv(object):
         #    gs_in))
         return (full_in_b, full_in_e), (sub_in_b, sub_in_e), gs_in
 
+    def _output_offsets():
+        """
+        Simple local calculation of offsets from input to output
+        on the left and right.  Only works with zero padding and
+        stride 1
+        """
+        if (self.l_pad != 0 or self.r_pad != 0
+                or self.stride_ratio != 1):
+            raise RuntimeError(
+            'Can only call output_offset with no padding and' +
+            'unit stride')
+        return self.l_wing_sz, -self.r_wing_sz
+
+
+
 
 def input_range(source, dest, out):
     """
@@ -285,6 +300,19 @@ def output_range(source, dest, gin):
     # return (full[0], full[1] + 1), (sub[0], sub[1] + 1), gs 
     return GridRange((full[0], full[1] + 1), (sub[0], sub[1] + 1), gs)
     #return results
+
+
+def output_offsets(source, dest):
+    vc = source
+    lo, ro = 0, 0
+    while True:
+        offsets = vc._output_offsets()
+        lo += offsets[0]
+        ro += offsets[1]
+        if vc is dest:
+            break
+        vc = vc.child
+
 
 def tensor_slice(ref_gcoord, subrange_gcoord):
     """

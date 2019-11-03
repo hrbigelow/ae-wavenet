@@ -8,13 +8,6 @@ class ConvReLURes(nn.Module):
     def __init__(self, n_in_chan, n_out_chan, filter_sz, stride=1, do_res=True,
             parent_vc=None, name=None):
         super(ConvReLURes, self).__init__()
-        self.do_res = do_res
-        if self.do_res:
-            if stride != 1:
-                print('Stride must be 1 for residually connected convolution',
-                        file=sys.stderr)
-                raise ValueError
-
         self.n_in = n_in_chan
         self.n_out = n_out_chan
         self.conv = nn.Conv1d(n_in_chan, n_out_chan, filter_sz, stride, padding=0, bias=False)
@@ -23,6 +16,15 @@ class ConvReLURes(nn.Module):
 
         self.vc = vconv.VirtualConv(filter_info=filter_sz, stride=stride,
                 parent=parent_vc, name=name)
+
+        self.do_res = do_res
+        if self.do_res:
+            if stride != 1:
+                print('Stride must be 1 for residually connected convolution',
+                        file=sys.stderr)
+                raise ValueError
+            self.residual_offsets = vconv.output_offsets(vc, vc)
+
         netmisc.xavier_init(self.conv)
 
     def forward(self, x):
@@ -33,11 +35,8 @@ class ConvReLURes(nn.Module):
         out = self.conv(x)
         # out = self.bn(out)
         out = self.relu(out)
-        if (self.do_res):
-            win_size = x.shape[2] 
-            shadow_b, shadow_e = vconv.shadow(self.vc, self.vc, 0, win_size, win_size) 
-            e_off = win_size - shadow_e
-            out += x[:,:,shadow_b:e_off or None]
+        if self.do_res:
+            out += x[:,:,self.residual_offsets[0]:self_residual_offsets[1] or None]
         return out
 
 
