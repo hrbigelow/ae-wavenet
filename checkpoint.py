@@ -17,6 +17,7 @@ class State(object):
         sinfo = torch.load(ckpt_file)
         self.model = pickle.loads(sinfo['model'])
         self.data = pickle.loads(sinfo['data'])
+        self.model.encoder.set_parent_vc(self.data.mfcc_vc)
         self.optim = torch.optim.Adam(self.model.parameters())
         self.optim.load_state_dict(sinfo['optim'])
         self.step = sinfo['step']

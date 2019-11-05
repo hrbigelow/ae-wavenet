@@ -93,14 +93,16 @@ model = [
         ((512, 0), (0, 0), 1, True, "GRCC_1,9")
         ]
 
-vc = None
-vcs = {}
-for m in model:
-    vc = vconv.VirtualConv(*m, parent=vc)
-    vcs[vc.name] = vc
 
-del(vc)
+def make_vcs():
+    vc = None
+    vcs = {}
+    for m in model:
+        vc = vconv.VirtualConv(*m, parent=vc)
+        vcs[vc.name] = vc
+    return vcs
 
+vcs = make_vcs()
 
 
 def same_or_upsample_test(vc, x):

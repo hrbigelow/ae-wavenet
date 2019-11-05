@@ -47,11 +47,8 @@ def cold_parser():
             help='INI file specifying training and other hyperparameters')
 
     # Data generation options
-    cold.add_argument('--max-gpu-mem-bytes', '-gmm', type=int, metavar='INT',
-            default=1e9,
-            help='Maximum memory in bytes to allocate on the GPU for the data. '
-            'If all data fit on the GPU, will eliminate redundant '
-            'transfering of overlapping data.') 
+    cold.add_argument('--gpu-resident', '-gr', action='store_true',
+            default=True, help='If true, move training data into GPU memory')
 
     # Preprocessing parameters
     cold.add_argument('--pre-sample-rate', '-sr', type=int, metavar='INT', default=16000,
@@ -107,8 +104,10 @@ def cold_parser():
             help='decoder number of global embedding channels')
 
     # positional arguments
-    cold.add_argument('index_file_prefix', type=str, metavar='INDEX_FILE_PREFIX',
-            help='Prefix preprocess.py used to create <prefix>.{ind,dat,mel} files')
+    cold.add_argument('dat_file', type=str, metavar='DAT_FILE',
+            help='File created by preprocess.py')
+    cold.add_argument('slice_file', type=str, metavar='SLICE_FILE',
+            help='File to write sample slices catalog')
     return cold
 
 # Complete parser for resuming from Checkpoint

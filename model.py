@@ -50,21 +50,31 @@ class AutoEncoder(nn.Module):
     Full Autoencoder model.  The _initialize method allows us to seamlessly initialize
     from __init__ or __setstate__ 
     """
-    def __init__(self, pre_params, enc_params, bn_params, dec_params, 
-            n_mel_chan, mfcc_vc, training):
-        self.args = [pre_params, enc_params, bn_params, dec_params, n_mel_chan,
-                mfcc_vc, training]
+    def __init__(self, pre_params, enc_params, bn_params, dec_params,
+            n_mel_chan, training):
+        self.init_args = {
+                'pre_params': pre_params,
+                'enc_params': enc_params,
+                'bn_params': bn_params,
+                'dec_params': dec_params,
+                'n_mel_chan': n_mel_chan,
+                'training': training
+                }
         self._initialize()
 
     def _initialize(self):
         super(AutoEncoder, self).__init__() 
-        (pre_params, enc_params, bn_params, dec_params, n_mel_chan, mfcc_vc,
-                training) = self.args
+        pre_params = self.init_args['pre_params']
+        enc_params = self.init_args['enc_params']
+        bn_params = self.init_args['bn_params']
+        dec_params = self.init_args['dec_params']
+        n_mel_chan = self.init_args['n_mel_chan']
+        training = self.init_args['training']
 
         # the "preprocessing"
         self.preprocess = PreProcess(pre_params, n_quant=dec_params['n_quant'])
 
-        self.encoder = enc.Encoder(n_in=n_mel_chan, parent_vc=mfcc_vc, **enc_params)
+        self.encoder = enc.Encoder(n_in=n_mel_chan, parent_vc=None, **enc_params)
 
         bn_type = bn_params['type']
         bn_extra = dict((k, v) for k, v in bn_params.items() if k != 'type')
@@ -102,13 +112,13 @@ class AutoEncoder(nn.Module):
 
     def __getstate__(self):
         state = { 
-                'args': self.args,
+                'init_args': self.init_args,
                 'state_dict': self.state_dict()
                 }
         return state 
 
     def __setstate__(self, state):
-        self.args = state['args']
+        self.init_args = state['init_args']
         self._initialize()
         self.load_state_dict(state['state_dict'])
 

@@ -1,4 +1,3 @@
-import fractions
 import math
 import numpy as np
 
@@ -60,15 +59,11 @@ class VirtualConv(object):
         self.l_pad = padding[0]
         self.r_pad = padding[1]
         self.name = name
+        self.stride = stride
+        self.is_downsample = is_downsample
 
         if self.parent is not None:
             self.parent.child = self
-
-        # stride_ratio is ratio of output spacing to input spacing
-        if is_downsample:
-            self.stride_ratio = fractions.Fraction(stride, 1)
-        else:
-            self.stride_ratio = fractions.Fraction(1, stride)
 
         if isinstance(filter_info, tuple):
             self.l_wing_sz = filter_info[0]
@@ -92,20 +87,20 @@ class VirtualConv(object):
 
     def __repr__(self):
         fmt = '[{}^{}, {}/{}, {}--{}, "{}"]'
-        return fmt.format(
-                self.l_wing_sz, self.r_wing_sz,
-                self.stride_ratio.numerator, self.stride_ratio.denominator,
-                self.l_pad, self.r_pad, self.name)
+        if self.is_downsample:
+            n, d = self.stride, 1
+        else:
+            n, d = 1, self.stride
 
+        return fmt.format(self.l_wing_sz, self.r_wing_sz, n, d, self.l_pad,
+                self.r_pad, self.name)
 
+    # @profile
     def _output_range(self, full_in, sub_in, gs_in):
         full_in_b, full_in_e = full_in
         sub_in_b, sub_in_e = sub_in
-        gs_out = gs_in * self.stride_ratio
-        assert gs_out == int(gs_out)
-        gs_out = int(gs_out)
-
-        if self.stride_ratio >= 1:
+        if self.is_downsample:
+            gs_out = gs_in * self.stride
             lpg = self.l_pad * gs_in
             rpg = self.r_pad * gs_in
             lwg = self.l_wing_sz * gs_in
@@ -129,7 +124,9 @@ class VirtualConv(object):
                 return None
 
         else:
-            inv_st = self.stride_ratio.denominator
+            inv_st = self.stride
+            assert gs_in % self.stride == 0
+            gs_out = gs_in // self.stride
             lpg = self.l_pad * gs_out
             rpg = self.r_pad * gs_out
             lwg = self.l_wing_sz * gs_out
@@ -155,6 +152,7 @@ class VirtualConv(object):
 
         return (full_out_b, full_out_e), (sub_out_b, sub_out_e), gs_out
 
+    # @profile
     def _input_range(self, full_out, sub_out, gs_out):
         """
         Return the full and sub input range in physical coordinates.
@@ -163,11 +161,10 @@ class VirtualConv(object):
         """
         full_out_b, full_out_e = full_out
         sub_out_b, sub_out_e = sub_out
-        gs_in = gs_out / self.stride_ratio
-        assert gs_in == int(gs_in)
-        gs_in = int(gs_in)
 
-        if self.stride_ratio >= 1:
+        if self.is_downsample:
+            assert gs_out % self.stride == 0
+            gs_in = gs_out // self.stride
             lwg = self.l_wing_sz * gs_in
             rwg = self.r_wing_sz * gs_in
             lpg = self.l_pad * gs_in
@@ -189,6 +186,7 @@ class VirtualConv(object):
             sub_in_e = min(sub_in_pre_e, full_in_e)
 
         else:
+            gs_in = gs_out * self.stride
             lwg = self.l_wing_sz * gs_out
             rwg = self.r_wing_sz * gs_out
             lpg = self.l_pad * gs_out
@@ -223,8 +221,7 @@ class VirtualConv(object):
         on the left and right.  Only works with zero padding and
         stride 1
         """
-        if (self.l_pad != 0 or self.r_pad != 0
-                or self.stride_ratio != 1):
+        if (self.l_pad != 0 or self.r_pad != 0 or self.stride != 1):
             raise RuntimeError(
             'Can only call output_offset with no padding and' +
             'unit stride')
@@ -338,15 +335,14 @@ def max_spacing(source, dest, initial_gs):
     max_gs = gs 
     vc = source
     while True:
-        gs *= vc.stride_ratio
-        assert gs == int(gs)
-        max_gs = max(int(gs), max_gs)
+        if vc.is_downsample:
+            gs *= vc.stride
+        else:
+            assert gs % vc.stride == 0
+            gs //= vc.stride
+        max_gs = max(gs, max_gs)
         if vc is dest:
             break
         vc = vc.child
     return max_gs
-
-
-        
-
 

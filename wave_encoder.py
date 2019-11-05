@@ -64,6 +64,11 @@ class Encoder(nn.Module):
         self.beg_vc = self.net[0].vc
         self.vc = parent_vc 
 
+    def set_parent_vc(self, parent_vc):
+        self.beg_vc.parent = parent_vc
+        parent_vc.child = self.beg_vc
+
+
     def forward(self, mels):
         '''
         B, M, C, T = n_batch, n_mels, n_channels, n_timesteps 

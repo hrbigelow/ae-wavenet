@@ -13,8 +13,8 @@ def make_parser():
             help='File containing lines:\n'
             + '<id1>\t/path/to/sample1.flac\n'
             + '<id2>\t/path/to/sample2.flac\n')
-    p.add_argument('prefix', type=str, metavar='FILE_PREFIX',
-            help='Specify prefix for creating <prefix>.{ind,dat,mel}')
+    p.add_argument('dat_file', type=str, metavar='DAT_FILE',
+            help='Specify prefix for creating {dat_file}')
     return p
 
 def main():
@@ -25,7 +25,9 @@ def main():
     stderr.flush()
 
     catalog = data.parse_catalog(opts.sam_file)
-    data.convert(catalog, opts.prefix, opts.n_quant, opts.sample_rate)
+    data.convert(catalog, opts.dat_file, opts.n_quant, opts.sample_rate)
+    print('Wrote catalog to {}'.format(opts.dat_file),
+            file=stderr)
     return 0
 
 

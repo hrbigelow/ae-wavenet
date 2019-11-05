@@ -42,25 +42,28 @@ def main():
 
     # Construct model
     if mode == 'new':
-        # Initialize model
         pre_params = parse_tools.get_prefixed_items(vars(opts), 'pre_')
         enc_params = parse_tools.get_prefixed_items(vars(opts), 'enc_')
         bn_params = parse_tools.get_prefixed_items(vars(opts), 'bn_')
         dec_params = parse_tools.get_prefixed_items(vars(opts), 'dec_')
 
         # Initialize data
-        data_source = data.Slice(
-                opts.index_file_prefix, opts.n_batch, opts.n_sam_per_slice)
+        data_source = data.Slice(opts.dat_file, opts.slice_file, opts.n_batch,
+                opts.n_sam_per_slice, opts.gpu_resident)
 
+        # Initialize model
         dec_params['n_speakers'] = data_source.num_speakers()
 
-        model = ae.AutoEncoder(
-                pre_params, enc_params, bn_params, dec_params,
-                data_source.n_mel_chan,
-                data_source.mfcc_vc,
-                training=True)
+        model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params,
+                data_source.n_mel_chan, training=True)
+        model.encoder.set_parent_vc(data_source.mfcc_vc)
+
         optim = torch.optim.Adam(params=model.parameters(), lr=learning_rates[0])
         state = checkpoint.State(0, model, data_source, optim)
+
+        print('Generating slices', file=stderr)
+        stderr.flush()
+        state.data.post_init(state.model.decoder.vc)
 
     else:
         state = checkpoint.State()
@@ -78,14 +81,6 @@ def main():
 
     # set this to zero if you want to print out a logging header in resume mode as well
     netmisc.set_print_iter(0)
-
-    # Second part of a two-part construction of model and data. This is
-    # necessary since there is a circular dependence between model and data.
-    # This post-initialization is not related to the model state or data state.
-    state.data.post_init(
-            state.model,
-            opts.index_file_prefix,
-            opts.max_gpu_mem_bytes)
 
     state.to(device=opts.device)
 
