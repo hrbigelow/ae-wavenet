@@ -114,8 +114,14 @@ class VQEMA(nn.Module):
             self.register_buffer('z_sum', torch.empty(self.k, self.d))
             self.register_buffer('n_sum', torch.empty(self.k))
             self.register_buffer('n_sum_ones', torch.ones(self.k))
-            nn.init.ones_(self.ema_denom)
-            self.ema_numer[...] = self.emb
+            #self.ema_numer.detach_()
+            #self.ema_denom.detach_()
+            #self.z_sum.detach_()
+            #self.n_sum.detach_()
+            #self.emb.detach_()
+            #nn.init.ones_(self.ema_denom)
+            self.ema_numer = self.emb * self.ema_gamma_comp
+            self.ema_denom = self.n_sum_ones * self.ema_gamma_comp
 
         netmisc.xavier_init(self.linear)
 
@@ -154,17 +160,19 @@ class VQEMA(nn.Module):
 
             # EMA statistics
             # l2norm_min_ind: B, W
-            # ze: B, W, D
+            # ze: B, D, W
             # z_sum: K, D
             # n_sum: K
             self.z_sum.zero_()
+
             self.z_sum.scatter_add_(0,
-                    l2norm_min_ind.flatten(0, 1).unsqueeze(1).repeat(1,self.d),
-                    self.ze.permute(0,2,1).flatten(0, 1))
+                    l2norm_min_ind.flatten(0, 1).unsqueeze(1).repeat(1, self.d),
+                    self.ze.permute(0,2,1).flatten(0, 1)
+                    )
             self.n_sum.zero_()
             self.n_sum.scatter_add_(0,
-                    l2norm_min_ind.flatten(0, 1),
-                    self.n_sum_ones)
+                     l2norm_min_ind.flatten(0, 1),
+                     self.n_sum_ones)
             self.ema_numer = (
                     self.ema_gamma * self.ema_numer +
                     self.ema_gamma_comp * self.z_sum) 
@@ -173,15 +181,17 @@ class VQEMA(nn.Module):
                     self.ema_gamma_comp * self.n_sum)
 
             # construct the straight-through estimator ('ReplaceGrad')
-            zq, __ = self.rg(zq, self.ze)
+            zq_rg, __ = self.rg(zq, self.ze)
 
-        return zq
+        return zq_rg
 
     def update_codebook(self):
         """
         Updates the codebook based on the EMA statistics
         """
-        self.emb = self.ema_numer / self.ema_denom
+        self.emb = self.ema_numer / self.ema_denom.unsqueeze(1).repeat(1,
+                self.d)
+        self.emb.detach_()
 
 
 class VQEMALoss(nn.Module):
@@ -205,6 +215,8 @@ class VQEMALoss(nn.Module):
 
         rec_loss_ts = - log_pred_target
         total_loss = rec_loss_ts.sum() + com_loss_embeds.sum()
+        # total_loss = rec_loss_ts.sum()
+        # total_loss = com_loss_embeds.sum()
 
         nh = self.bn.ind_hist / self.bn.ind_hist.sum()
 
@@ -258,6 +270,7 @@ class VQ(nn.Module):
         ze = self.linear(z)
 
         self.ze = ze
+        
         sg_emb = self.sg(self.emb)
         l2norm_sq = ((ze.unsqueeze(1) - sg_emb.unsqueeze(2)) ** 2).sum(dim=2) # B, K, N
         self.l2norm_min, l2norm_min_ind = l2norm_sq.min(dim=1) # B, N
@@ -298,7 +311,7 @@ class VQLoss(nn.Module):
         target_wav: B,  
         """
         # Loss per embedding vector 
-        l2_loss_embeds = self.l2(self.bn.ze, self.bn.emb)
+        l2_loss_embeds = self.l2(self.bn.sg(self.bn.ze), self.bn.emb)
         com_loss_embeds = self.bn.l2norm_min * self.bn.gamma
         # l2_loss_embeds = self.l2(self.bn.ze, self.bn.emb).sqrt()
         # com_loss_embeds = self.bn.l2norm_min.sqrt() * self.bn.gamma

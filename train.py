@@ -109,7 +109,11 @@ def main():
             state.model.init_vq_embed(state.data)
 
         metrics.update()
+        # This is where parameter updates happen
         loss = metrics.state.optim.step(metrics.loss)
+        if state.model.bn_type == 'vqvae-ema':
+            state.model.bottleneck.update_codebook()
+
         avg_peak_dist = metrics.peak_dist()
         avg_max = metrics.avg_max()
         avg_prob_target = metrics.avg_prob_target()
