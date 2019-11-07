@@ -20,11 +20,15 @@ def set_print_iter(pos):
 
 
 def print_metrics(metrics, hdr_frequency):
+    """
+    Flexibly prints a polymorphic set of metrics
+    """
     nlstrip = re.compile('\\n\s+')
     sep = ''
     h = ''
     s = ''
     d = dict(metrics)
+    max_width = 7
 
     for k, v in d.items():
         if isinstance(v, torch.Tensor) and v.numel() == 1:
@@ -36,6 +40,9 @@ def print_metrics(metrics, hdr_frequency):
         else:
             fmt = '{}' 
         val = nlstrip.sub(' ', fmt.format(v))
+        if len(val) > max_width:
+            val = '~' + val[-(max_width-1):]
+            
         s += sep + val
         h += sep + '{}'.format(k)
         sep = '\t'

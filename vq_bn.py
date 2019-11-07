@@ -164,7 +164,6 @@ class VQEMA(nn.Module):
             # z_sum: K, D
             # n_sum: K
             self.z_sum.zero_()
-
             self.z_sum.scatter_add_(0,
                     l2norm_min_ind.flatten(0, 1).unsqueeze(1).repeat(1, self.d),
                     self.ze.permute(0,2,1).flatten(0, 1)
@@ -234,7 +233,6 @@ class VQEMALoss(nn.Module):
                 'pk_nuq': log_pred.max(dim=1)[1].unique().nelement(),
                 'pk_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
                 }
-        # netmisc.print_metrics(losses, 10000000)
 
         return total_loss
 
@@ -313,8 +311,6 @@ class VQLoss(nn.Module):
         # Loss per embedding vector 
         l2_loss_embeds = self.l2(self.bn.sg(self.bn.ze), self.bn.emb)
         com_loss_embeds = self.bn.l2norm_min * self.bn.gamma
-        # l2_loss_embeds = self.l2(self.bn.ze, self.bn.emb).sqrt()
-        # com_loss_embeds = self.bn.l2norm_min.sqrt() * self.bn.gamma
 
         log_pred = self.logsoftmax(quant_pred)
         log_pred_target = torch.gather(log_pred, 1,

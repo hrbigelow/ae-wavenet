@@ -138,10 +138,10 @@ def main():
             #fmt = "M\t{:d}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
             #print(fmt.format(state.step, loss, avg_prob_target, avg_peak_dist,
             #    avg_max), file=stderr)
-            if state.model.bn_type == 'vqvae':
+            if state.model.bn_type in ('vqvae', 'vqvae-ema'):
                 current_stats.update(state.model.objective.metrics)
                 
-            netmisc.print_metrics(current_stats, 1000000)
+            netmisc.print_metrics(current_stats, 100)
             stderr.flush()
         
         state.step += 1

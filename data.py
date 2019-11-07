@@ -414,7 +414,7 @@ class Slice(nn.Module):
         Populates self.snd_slice, self.mel_slice, self.mask, and
         self.slice_voice_index
         """
-        picks = np.random.random_integers(0, len(self.slices), self.batch_size)
+        picks = np.random.random_integers(0, len(self.slices) - 1, self.batch_size)
 
         for b, s_i in enumerate(picks):
             self.vbatch.set(b, self.slices[s_i], self)
