@@ -19,8 +19,8 @@ used as a representative.  Currently troubleshooting.
 Resumed work as of Sept, 2019.  Implemented EMA for updates.  Fixed a bug in
 the VQVAE Loss function in vq_bn.py:312
 
-Was: l2_loss_embeds = self.l2(self.bn.ze, self.bn.emb)
-Now: l2_loss_embeds = self.l2(self.bn.sg(self.bn.ze), self.bn.emb)
+* Was: l2_loss_embeds = self.l2(self.bn.ze, self.bn.emb)
+* Now: l2_loss_embeds = self.l2(self.bn.sg(self.bn.ze), self.bn.emb)
 
 Training still exhibits codebook collapse.  This seems due to the phenomenon of
 WaveNet learning to rely exclusively on the autoregressive input and ignore the
