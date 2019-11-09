@@ -125,7 +125,7 @@ class AutoEncoder(nn.Module):
 
     def init_vq_embed(self, data):
         """Initialize the VQ Embedding with samples from the encoder."""
-        if self.bn_type != 'vqvae':
+        if self.bn_type not in ('vqvae', 'vqvae-ema'):
             raise RuntimeError('init_vq_embed only applies to the vqvae model type')
 
         bn = self.bottleneck
@@ -141,6 +141,9 @@ class AutoEncoder(nn.Module):
             with torch.no_grad():
                 bn.emb[e:e+chunk] = ze[0:chunk,:,0]
             e += chunk
+        if self.bn_type == 'vqvae-ema':
+            bn.ema_numer = bn.emb * bn.ema_gamma_comp
+            bn.ema_denom = bn.n_sum_ones * bn.ema_gamma_comp
         
     def checksum(self):
         """Return checksum of entire set of model parameters"""

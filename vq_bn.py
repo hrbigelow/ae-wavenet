@@ -77,8 +77,8 @@ class L2Error(nn.Module):
         """
         sg_ze = self.sg(ze)
         l2norm_sq = ((sg_ze.unsqueeze(1) - emb.unsqueeze(2)) ** 2).sum(dim=2) # B, K, N
-        l2norm_min_val, l2norm_min_ind = l2norm_sq.min(dim=1) # B, N
-        l2_error = l2norm_min_val
+        min_dist, min_ind = l2norm_sq.min(dim=1) # B, N
+        l2_error = min_dist
         return l2_error
 
 
@@ -100,13 +100,13 @@ class VQEMA(nn.Module):
         self.rg = ReplaceGrad()
         self.ze = None
         self.register_buffer('emb', torch.empty(self.k, self.d))
-        nn.init.xavier_uniform_(self.emb, gain=1)
+        nn.init.xavier_uniform_(self.emb, gain=10)
 
         if self.ema_gamma >= 1.0 or self.ema_gamma <= 0:
             raise RuntimeError('VQEMA must use an EMA-gamma value in (0, 1)')
 
         if self.training:
-            self.l2norm_min = None
+            self.min_dist = None
             self.circ_inds = None
             self.register_buffer('ind_hist', torch.zeros(self.k))
             self.register_buffer('ema_numer', torch.empty(self.k, self.d))
@@ -138,39 +138,40 @@ class VQEMA(nn.Module):
         self.ze = ze
         sg_emb = self.sg(self.emb)
         l2norm_sq = ((ze.unsqueeze(1) - sg_emb.unsqueeze(2)) ** 2).sum(dim=2) # B, K, N
-        self.l2norm_min, l2norm_min_ind = l2norm_sq.min(dim=1) # B, N
-        zq = util.gather_md(sg_emb, 0, l2norm_min_ind).permute(1, 0, 2)
+        self.min_dist, min_ind = l2norm_sq.min(dim=1) # B, N
+        zq = util.gather_md(sg_emb, 0, min_ind).permute(1, 0, 2)
 
         if self.training:
             # Diagnostics
-            ni = l2norm_min_ind.nelement() 
+            ni = min_ind.nelement() 
             if self.circ_inds is None:
                 self.write_pos = 0
                 self.circ_inds = ze.new_full((100, ni), -1, dtype=torch.long)
 
-            self.circ_inds[self.write_pos,0:ni] = l2norm_min_ind.flatten(0)
+            self.circ_inds[self.write_pos,0:ni] = min_ind.flatten(0)
             self.circ_inds[self.write_pos,ni:] = -1
             self.write_pos += 1
             self.write_pos = self.write_pos % 100
             ones = self.emb.new_ones(ni)
-            util.int_hist(l2norm_min_ind, accu=self.ind_hist)
-            self.uniq = l2norm_min_ind.unique(sorted=False)
+            util.int_hist(min_ind, accu=self.ind_hist)
+            self.uniq = min_ind.unique(sorted=False)
             self.ze_norm = (self.ze ** 2).sum(dim=1).sqrt()
             self.emb_norm = (self.emb ** 2).sum(dim=1).sqrt()
+            self.min_ind = min_ind
 
             # EMA statistics
-            # l2norm_min_ind: B, W
+            # min_ind: B, W
             # ze: B, D, W
             # z_sum: K, D
             # n_sum: K
             self.z_sum.zero_()
             self.z_sum.scatter_add_(0,
-                    l2norm_min_ind.flatten(0, 1).unsqueeze(1).repeat(1, self.d),
+                    min_ind.flatten(0, 1).unsqueeze(1).repeat(1, self.d),
                     self.ze.permute(0,2,1).flatten(0, 1)
                     )
             self.n_sum.zero_()
             self.n_sum.scatter_add_(0,
-                     l2norm_min_ind.flatten(0, 1),
+                     min_ind.flatten(0, 1),
                      self.n_sum_ones)
             self.ema_numer = (
                     self.ema_gamma * self.ema_numer +
@@ -180,6 +181,20 @@ class VQEMA(nn.Module):
                     self.ema_gamma_comp * self.n_sum)
 
             # construct the straight-through estimator ('ReplaceGrad')
+            # What I need is 
+            cb_update = self.ema_numer / self.ema_denom.unsqueeze(1).repeat(1,
+                    self.d)
+
+            # print('z_sum_norm:', (self.z_sum ** 2).sum(dim=1).sqrt())
+            print('n_sum_norm:', self.n_sum)
+            print('ze_norm:', self.ze_norm)
+            print('min_ind:', self.min_ind)
+            print('emb_norm:', (self.emb ** 2).sum(dim=1).sqrt())
+            print('cb_update_norm:', (cb_update ** 2).sum(dim=1).sqrt())
+            print('ema_numer_norm:',
+                    (self.ema_numer ** 2).sum(dim=1).sqrt().mean())
+            print('ema_denom_norm:',
+                    (self.ema_denom ** 2).sqrt().mean())
             zq_rg, __ = self.rg(zq, self.ze)
 
         return zq_rg
@@ -206,7 +221,7 @@ class VQEMALoss(nn.Module):
         target_wav: B,  
         """
         # Loss per embedding vector 
-        com_loss_embeds = self.bn.l2norm_min * self.bn.gamma
+        com_loss_embeds = self.bn.min_dist * self.bn.gamma
 
         log_pred = self.logsoftmax(quant_pred)
         log_pred_target = torch.gather(log_pred, 1,
@@ -231,7 +246,7 @@ class VQEMALoss(nn.Module):
                 'nunq': self.bn.uniq.nelement(),
                 'pk_m': log_pred.max(dim=1)[0].to(torch.float).mean(),
                 'pk_nuq': log_pred.max(dim=1)[1].unique().nelement(),
-                'pk_sd': log_pred.max(dim=1)[0].to(torch.float).std(),
+                'pk_sd': log_pred.max(dim=1)[0].to(torch.float).std()
                 }
 
         return total_loss
@@ -248,7 +263,7 @@ class VQ(nn.Module):
         self.sg = StopGrad()
         self.rg = ReplaceGrad()
         self.ze = None
-        self.l2norm_min = None
+        self.min_dist = None
         self.register_buffer('ind_hist', torch.zeros(self.k))
         self.circ_inds = None
         self.emb = nn.Parameter(data=torch.empty(self.k, self.d))
@@ -271,24 +286,24 @@ class VQ(nn.Module):
         
         sg_emb = self.sg(self.emb)
         l2norm_sq = ((ze.unsqueeze(1) - sg_emb.unsqueeze(2)) ** 2).sum(dim=2) # B, K, N
-        self.l2norm_min, l2norm_min_ind = l2norm_sq.min(dim=1) # B, N
-        zq = util.gather_md(sg_emb, 0, l2norm_min_ind).permute(1, 0, 2)
+        self.min_dist, min_ind = l2norm_sq.min(dim=1) # B, N
+        zq = util.gather_md(sg_emb, 0, min_ind).permute(1, 0, 2)
         zq_rg, __ = self.rg(zq, self.ze)
 
         # Diagnostics
-        ni = l2norm_min_ind.nelement() 
+        ni = min_ind.nelement() 
         if self.circ_inds is None:
             self.write_pos = 0
             self.circ_inds = ze.new_full((100, ni), -1, dtype=torch.long)
 
-        self.circ_inds[self.write_pos,0:ni] = l2norm_min_ind.flatten(0)
+        self.circ_inds[self.write_pos,0:ni] = min_ind.flatten(0)
         self.circ_inds[self.write_pos,ni:] = -1
         self.write_pos += 1
         self.write_pos = self.write_pos % 100
 
         ones = self.emb.new_ones(ni)
-        util.int_hist(l2norm_min_ind, accu=self.ind_hist)
-        self.uniq = l2norm_min_ind.unique(sorted=False)
+        util.int_hist(min_ind, accu=self.ind_hist)
+        self.uniq = min_ind.unique(sorted=False)
         self.ze_norm = (self.ze ** 2).sum(dim=1).sqrt()
         self.emb_norm = (self.emb ** 2).sum(dim=1).sqrt()
 
@@ -310,7 +325,7 @@ class VQLoss(nn.Module):
         """
         # Loss per embedding vector 
         l2_loss_embeds = self.l2(self.bn.sg(self.bn.ze), self.bn.emb)
-        com_loss_embeds = self.bn.l2norm_min * self.bn.gamma
+        com_loss_embeds = self.bn.min_dist * self.bn.gamma
 
         log_pred = self.logsoftmax(quant_pred)
         log_pred_target = torch.gather(log_pred, 1,

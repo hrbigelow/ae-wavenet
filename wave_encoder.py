@@ -10,8 +10,10 @@ class ConvReLURes(nn.Module):
         super(ConvReLURes, self).__init__()
         self.n_in = n_in_chan
         self.n_out = n_out_chan
-        self.conv = nn.Conv1d(n_in_chan, n_out_chan, filter_sz, stride, padding=0, bias=False)
+        self.conv = nn.Conv1d(n_in_chan, n_out_chan, filter_sz, stride,
+                padding=0, bias=True)
         self.relu = nn.ReLU()
+        self.name = name
         # self.bn = nn.BatchNorm1d(n_out_chan)
 
         self.vc = vconv.VirtualConv(filter_info=filter_sz, stride=stride,
@@ -32,12 +34,14 @@ class ConvReLURes(nn.Module):
         B, C, T = n_batch, n_in_chan, n_win
         x: (B, C, T)
         '''
-        out = self.conv(x)
+        pre = self.conv(x)
         # out = self.bn(out)
-        out = self.relu(out)
+        act = self.relu(pre)
         if self.do_res:
-            out += x[:,:,self.residual_offsets[0]:self.residual_offsets[1] or None]
-        return out
+            act += x[:,:,self.residual_offsets[0]:self.residual_offsets[1] or None]
+        print('encoder layer {}: {}'.format(self.name, act.sum()))
+        #print('bias mean: {}'.format(self.conv.bias.mean()))
+        return act
 
 
 class Encoder(nn.Module):

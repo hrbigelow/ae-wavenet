@@ -125,6 +125,13 @@ SpokenSample = namedtuple('SpokenSample', [
     )
 
 
+OutputRange = namedtuple('OutputRange', [
+    'output_gr',    # grid range of the output slice
+    'sample_index'  # index of the SpokenSample this is from
+    ]
+    )
+
+
 class VirtualBatch(nn.Module):
     def __init__(self, batch_size, max_wav_len, max_mel_len, mel_chan):
         super(VirtualBatch, self).__init__()
@@ -181,11 +188,10 @@ class Slice(nn.Module):
     """
     Defines the current batch of data
     """
-    def __init__(self, dat_file, slice_file, batch_size, window_batch_size,
+    def __init__(self, dat_file, batch_size, window_batch_size,
             gpu_resident):
         self.init_args = {
                 'dat_file': dat_file,
-                'slice_file': slice_file,
                 'batch_size': batch_size,
                 'window_batch_size': window_batch_size,
                 'gpu_resident': gpu_resident
@@ -204,7 +210,6 @@ class Slice(nn.Module):
         """
         super(Slice, self).__init__()
         self.dat_file = self.init_args['dat_file']
-        self.slice_file = self.init_args['slice_file']
         self.batch_size = self.init_args['batch_size']
         self.window_batch_size = self.init_args['window_batch_size']
         self.gpu_resident = self.init_args['gpu_resident']
@@ -233,8 +238,6 @@ class Slice(nn.Module):
     def __setstate__(self, init_args):
         self.init_args = init_args 
         self._initialize()
-        self._initialize_vbatch()
-        self._initialize_slices()
 
 
     def __getstate__(self):
@@ -245,15 +248,15 @@ class Slice(nn.Module):
         return len(set(map(lambda s: s.voice_index, self.samples)))
 
 
-    def init_vbatch(self, virtual_convs):
+    def init_vbatch(self):
         """
         Initializes:
         self.vbatch
         """
         # Calculate max length of mfcc encoder input and wav decoder input
         w = self.window_batch_size
-        beg_grcc_vc = virtual_convs['beg_grcc']
-        end_grcc_vc = virtual_convs['end_grcc']
+        beg_grcc_vc = self.vcs['beg_grcc']
+        end_grcc_vc = self.vcs['end_grcc']
         autoenc = self.mfcc_vc, end_grcc_vc
         autoenc_clip = self.mfcc_vc.child, end_grcc_vc
         dec = beg_grcc_vc, end_grcc_vc 
@@ -285,7 +288,7 @@ class Slice(nn.Module):
                 max_mel_in_len, n_mel_chan)
 
 
-    def init_slices(self, virtual_convs, slice_file):
+    def init_slices(self):
         """
         Initialize:
         self.slices
@@ -294,76 +297,73 @@ class Slice(nn.Module):
         # generate all slices
         win_size = self.window_batch_size
         max_mel_len = self.vbatch.mel_input.shape[2]
-        self.slices = []
-        for sam in self.samples: 
-            print('Processing {}'.format(sam.file_path), file=stderr)
-            stderr.flush()
-            self._add_slices(sam, virtual_convs, max_mel_len, win_size)
+        self.out_range = []
+        for si in range(len(self.samples)): 
+            self._add_out_ranges(si, max_mel_len, win_size)
 
-        self.init_args['slice_file'] = slice_file
-        with open(slice_file, 'wb') as slice_fh: 
-            pickle.dump(self.slices, slice_fh)
 
-    def _initialize_slices(self):
-        slice_file = self.init_args['slice_file']
-        with open(slice_file, 'rb') as slice_fh:
-            self.slices = pickle.load(slice_fh)
 
-        
-
-    def _add_slices(self, sample, vcs, max_mel_len, win_size):
+    def _add_out_ranges(self, si, max_mel_len, win_size):
         """
-        Add slices for this sample
+        Initialize self.out_range
         """
         preproc = self.mfcc_vc, self.mfcc_vc
-        enc = self.mfcc_vc.child, vcs['last_upsample']
-        dec = vcs['beg_grcc'], vcs['end_grcc'] 
-        autoenc = self.mfcc_vc, vcs['end_grcc']
-        autoenc_clip = self.mfcc_vc.child, vcs['end_grcc']
+        autoenc = self.mfcc_vc, self.vcs['end_grcc']
+        autoenc_clip = self.mfcc_vc.child, self.vcs['end_grcc']
 
-        wlen = sample.wav_e - sample.wav_b
+        wlen = self.samples[si].wav_e - self.samples[si].wav_b
         full_wav_in = vconv.GridRange((0, wlen), (0, wlen), 1)
         full_mel_in = vconv.output_range(*preproc, full_wav_in)
         full_out = vconv.output_range(*autoenc, full_wav_in) 
         assert full_out.gs == 1
         slice_out = vconv.GridRange(full_out.full, 
                 (full_out.sub[1] - win_size, full_out.sub[1]), full_out.gs)
-
-        while True:
-            # We should instead derive the padding some other way, so that
-            # the mfcc_in_pad and wav_in_pad are consistent with each other
-            mfcc_in = vconv.input_range(*autoenc_clip, slice_out)
-            assert mfcc_in.sub_length() <= max_mel_len
-            mfcc_add = (max_mel_len - mfcc_in.sub_length()) * mfcc_in.gs
-            mfcc_in_pad = vconv.GridRange(mfcc_in.full, (mfcc_in.sub[0] -
-                mfcc_add, mfcc_in.sub[1]), mfcc_in.gs)
-
-            if not mfcc_in_pad.valid():
-                break
-
-            lcond_pad = vconv.output_range(*enc, mfcc_in_pad)
-            wav_in = vconv.input_range(*dec, slice_out)
-            #print(wav_in)
-
-            # slice of wav tensor to be input to decoder
-            dec_wav_slice = vconv.tensor_slice(full_wav_in, wav_in.sub)
-
-            # slice of internally computed local condition tensor
-            lcond_slice = vconv.tensor_slice(lcond_pad, wav_in.sub)
-
-            # slice of mel tensor to be input to encoder
-            mel_in_slice = vconv.tensor_slice(full_mel_in, mfcc_in_pad.sub)
-
-            # slice of wav buffer to be input to loss function
-            loss_wav_slice = vconv.tensor_slice(wav_in, slice_out.sub)
-
-            self.slices.append(
-                    SampleSlice(sample.wav_b, sample.mel_b, dec_wav_slice,
-                        mel_in_slice, loss_wav_slice, lcond_slice,
-                        sample.voice_index)
-                    )
+        while slice_out.valid():
+            self.out_range.append(OutputRange(slice_out, si))
             slice_out.sub[0] -= win_size
             slice_out.sub[1] -= win_size
+
+
+    def calc_slice(self, oi):
+        """
+        Return a SampleSlice corresponding to self.out_range[oi] 
+        """
+        out_range = self.out_range[oi]
+        slice_out = out_range.output_gr
+        sample = self.samples[out_range.sample_index]
+        wlen = sample.wav_e - sample.wav_b
+        full_wav_in = vconv.GridRange((0, wlen), (0, wlen), 1)
+        full_mel_in = vconv.output_range(*preproc, full_wav_in)
+
+        preproc = self.mfcc_vc, self.mfcc_vc
+        autoenc_clip = self.mfcc_vc.child, vcs['end_grcc']
+        enc = self.mfcc_vc.child, vcs['last_upsample']
+        dec = vcs['beg_grcc'], vcs['end_grcc'] 
+        mfcc_in = vconv.input_range(*autoenc_clip, slice_out)
+        assert mfcc_in.sub_length() <= max_mel_len
+        mfcc_add = (max_mel_len - mfcc_in.sub_length()) * mfcc_in.gs
+        mfcc_in_pad = vconv.GridRange(mfcc_in.full, (mfcc_in.sub[0] -
+            mfcc_add, mfcc_in.sub[1]), mfcc_in.gs)
+
+        assert mfcc_in_pad.valid()
+
+        lcond_pad = vconv.output_range(*enc, mfcc_in_pad)
+        wav_in = vconv.input_range(*dec, slice_out)
+
+        # slice of wav tensor to be input to decoder
+        dec_wav_slice = vconv.tensor_slice(full_wav_in, wav_in.sub)
+
+        # slice of internally computed local condition tensor
+        lcond_slice = vconv.tensor_slice(lcond_pad, wav_in.sub)
+
+        # slice of mel tensor to be input to encoder
+        mel_in_slice = vconv.tensor_slice(full_mel_in, mfcc_in_pad.sub)
+
+        # slice of wav buffer to be input to loss function
+        loss_wav_slice = vconv.tensor_slice(wav_in, slice_out.sub)
+
+        return SampleSlice(sample.wav_b, sample.mel_b, dec_wav_slice,
+                mel_in_slice, loss_wav_slice, lcond_slice, sample.voice_index)
 
 
     def post_init(self, virtual_convs):
@@ -374,8 +374,9 @@ class Slice(nn.Module):
         Depends on information computed from the model, so must be
         called after model construction.
         """
-        self.init_vbatch(virtual_convs)
-        self.init_slices(virtual_convs, self.slice_file)
+        self.vcs = virtual_convs
+        self.init_vbatch()
+        self.init_slices()
 
 
     def _load_sample_data(self, snd_np, mel_np, snd_dtype, n_mel_chan,
@@ -414,10 +415,10 @@ class Slice(nn.Module):
         Populates self.snd_slice, self.mel_slice, self.mask, and
         self.slice_voice_index
         """
-        picks = np.random.random_integers(0, len(self.slices) - 1, self.batch_size)
+        picks = np.random.random_integers(0, len(self.out_range) - 1, self.batch_size)
 
         for b, s_i in enumerate(picks):
-            self.vbatch.set(b, self.slices[s_i], self)
+            self.vbatch.set(b, self.calc_slice(s_i), self)
 
         assert self.vbatch.valid()
         return self.vbatch

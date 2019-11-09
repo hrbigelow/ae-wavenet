@@ -48,7 +48,7 @@ def main():
         dec_params = parse_tools.get_prefixed_items(vars(opts), 'dec_')
 
         # Initialize data
-        data_source = data.Slice(opts.dat_file, opts.slice_file, opts.n_batch,
+        data_source = data.Slice(opts.dat_file, opts.n_batch,
                 opts.n_sam_per_slice, opts.gpu_resident)
 
         # Initialize model
@@ -96,6 +96,10 @@ def main():
     pprint(opts, stderr)
 
     state.init_torch_generator()
+    # It doesn't really work to initialize the codebook from data, because
+    # the data may produce outlier vectors, and the codebook should not have
+    # outlier vectors, since they will dominate if there is a scale mismatch
+    # state.model.init_vq_embed(state.data)
 
     while state.step < opts.max_steps:
         if state.step in learning_rates:
@@ -103,15 +107,16 @@ def main():
         # do 'pip install --upgrade scipy' if you get 'FutureWarning: ...'
         # print('in main loop')
 
-        if state.step in (1, 10, 50, 100, 300, 500) and state.model.bn_type == 'vqvae':
-            print('Reinitializing embed with current distribution', file=stderr)
-            stderr.flush()
-            state.model.init_vq_embed(state.data)
+        #if (state.step in (50, 100, 300, 500) and 
+        #        state.model.bn_type in ('vqvae', 'vqvae-ema')):
+        #    print('Reinitializing embed with current distribution', file=stderr)
+        #    stderr.flush()
+        #    state.model.init_vq_embed(state.data)
 
         metrics.update()
         # This is where parameter updates happen
         loss = metrics.state.optim.step(metrics.loss)
-        if state.model.bn_type == 'vqvae-ema':
+        if state.model.bn_type == 'vqvae-ema' and state.step > 1000:
             state.model.bottleneck.update_codebook()
 
         avg_peak_dist = metrics.peak_dist()

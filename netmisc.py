@@ -40,7 +40,7 @@ def print_metrics(metrics, hdr_frequency):
         else:
             fmt = '{}' 
         val = nlstrip.sub(' ', fmt.format(v))
-        if len(val) > max_width:
+        if len(val) > max_width and not isinstance(v, torch.Tensor):
             val = '~' + val[-(max_width-1):]
             
         s += sep + val

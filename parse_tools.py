@@ -106,8 +106,6 @@ def cold_parser():
     # positional arguments
     cold.add_argument('dat_file', type=str, metavar='DAT_FILE',
             help='File created by preprocess.py')
-    cold.add_argument('slice_file', type=str, metavar='SLICE_FILE',
-            help='File to write sample slices catalog')
     return cold
 
 # Complete parser for resuming from Checkpoint
