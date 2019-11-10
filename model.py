@@ -5,6 +5,7 @@ from pickle import dumps
 import torch
 from torch import nn
 from torch.nn.modules import loss
+from scipy.cluster.vq import kmeans
 
 import ae_bn
 import mfcc
@@ -123,24 +124,30 @@ class AutoEncoder(nn.Module):
         self.load_state_dict(state['state_dict'])
 
 
-    def init_vq_embed(self, data):
+    def init_codebook(self, data_source, n_samples):
         """Initialize the VQ Embedding with samples from the encoder."""
         if self.bn_type not in ('vqvae', 'vqvae-ema'):
             raise RuntimeError('init_vq_embed only applies to the vqvae model type')
 
         bn = self.bottleneck
-        n = bn.emb.size()[0]
         e = 0
+        n_codes = bn.emb.shape[0]
+        k = bn.emb.shape[1]
+        samples = np.empty((n_samples, k), dtype=np.float) 
         
-        while e != n:
-            vbatch = data.next_batch()
-            encoding = self.encoder(vbatch.mel_input)
-            ze = self.bottleneck.linear(encoding)
-            b = ze.size()[0]
-            chunk = min(b, n - e)
-            with torch.no_grad():
-                bn.emb[e:e+chunk] = ze[0:chunk,:,0]
-            e += chunk
+        with torch.no_grad():
+            while e != n_samples:
+                vbatch = data_source.next_batch()
+                encoding = self.encoder(vbatch.mel_input)
+                ze = self.bottleneck.linear(encoding)
+                ze = ze.permute(0, 2, 1).flatten(0, 1)
+                c = min(n_samples - e, ze.shape[0])
+                samples[e:e + c,:] = ze.cpu()[0:c,:]
+                e += c
+
+        km, __ = kmeans(samples, n_codes)
+        bn.emb[...] = torch.from_numpy(km)
+
         if self.bn_type == 'vqvae-ema':
             bn.ema_numer = bn.emb * bn.ema_gamma_comp
             bn.ema_denom = bn.n_sum_ones * bn.ema_gamma_comp

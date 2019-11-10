@@ -164,15 +164,25 @@ class VQEMA(nn.Module):
             # ze: B, D, W
             # z_sum: K, D
             # n_sum: K
-            self.z_sum.zero_()
-            self.z_sum.scatter_add_(0,
-                    min_ind.flatten(0, 1).unsqueeze(1).repeat(1, self.d),
+            # scatter_add has the limitation that the size of the indexing
+            # vector cannot exceed that of the destination (even in the target
+            # indexing dimension, which doesn't make much sense)
+            # In this case, K is the indexing dimension
+            flat_ind = min_ind.flatten(0, 1)
+            z_tmp_shape = [flat_ind.shape[0], self.d]
+            z_sum_tmp = self.z_sum.new_zeros(z_tmp_shape)
+            z_sum_tmp.scatter_add_(0,
+                    flat_ind.unsqueeze(1).repeat(1, self.d),
                     self.ze.permute(0,2,1).flatten(0, 1)
                     )
+            self.z_sum[...] = z_sum_tmp[0:self.k,:]
+
             self.n_sum.zero_()
-            self.n_sum.scatter_add_(0,
-                     min_ind.flatten(0, 1),
-                     self.n_sum_ones)
+            n_tmp_shape = flat_ind.shape
+            n_sum_tmp = self.n_sum.new_zeros(n_tmp_shape)
+            scatter_add_(0, flat_ind, self.n_sum_ones)
+            self.n_sum[...] = n_sum_tmp[0:self.k]
+
             self.ema_numer = (
                     self.ema_gamma * self.ema_numer +
                     self.ema_gamma_comp * self.z_sum) 
@@ -182,19 +192,19 @@ class VQEMA(nn.Module):
 
             # construct the straight-through estimator ('ReplaceGrad')
             # What I need is 
-            cb_update = self.ema_numer / self.ema_denom.unsqueeze(1).repeat(1,
-                    self.d)
+            # cb_update = self.ema_numer / self.ema_denom.unsqueeze(1).repeat(1,
+            #         self.d)
 
             # print('z_sum_norm:', (self.z_sum ** 2).sum(dim=1).sqrt())
-            print('n_sum_norm:', self.n_sum)
-            print('ze_norm:', self.ze_norm)
+            # print('n_sum_norm:', self.n_sum)
             print('min_ind:', self.min_ind)
-            print('emb_norm:', (self.emb ** 2).sum(dim=1).sqrt())
-            print('cb_update_norm:', (cb_update ** 2).sum(dim=1).sqrt())
-            print('ema_numer_norm:',
-                    (self.ema_numer ** 2).sum(dim=1).sqrt().mean())
-            print('ema_denom_norm:',
-                    (self.ema_denom ** 2).sqrt().mean())
+            # print('ze_norm:', self.ze_norm)
+            # print('emb_norm:', (self.emb ** 2).sum(dim=1).sqrt())
+            # print('cb_update_norm:', (cb_update ** 2).sum(dim=1).sqrt())
+            # print('ema_numer_norm:',
+            #         (self.ema_numer ** 2).sum(dim=1).sqrt().mean())
+            # print('ema_denom_norm:',
+            #         (self.ema_denom ** 2).sqrt().mean())
             zq_rg, __ = self.rg(zq, self.ze)
 
         return zq_rg

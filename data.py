@@ -273,8 +273,6 @@ class Slice(nn.Module):
         slice_out = vconv.GridRange((0, 100000), (0, w), 1)
         max_wav_in_len = vconv.input_range(*dec, slice_out).sub_length()
         
-        print('Max Mel input length: {}'.format(max_mel_in_len), file=stderr)
-        stderr.flush()
         self.init_args['max_wav_in_len'] = max_wav_in_len
         self.init_args['max_mel_in_len'] = max_mel_in_len
         self._initialize_vbatch()
@@ -296,14 +294,14 @@ class Slice(nn.Module):
 
         # generate all slices
         win_size = self.window_batch_size
-        max_mel_len = self.vbatch.mel_input.shape[2]
+        self.max_mel_len = self.vbatch.mel_input.shape[2]
         self.out_range = []
         for si in range(len(self.samples)): 
-            self._add_out_ranges(si, max_mel_len, win_size)
+            self._add_out_ranges(si, win_size)
 
 
 
-    def _add_out_ranges(self, si, max_mel_len, win_size):
+    def _add_out_ranges(self, si, win_size):
         """
         Initialize self.out_range
         """
@@ -319,33 +317,40 @@ class Slice(nn.Module):
         slice_out = vconv.GridRange(full_out.full, 
                 (full_out.sub[1] - win_size, full_out.sub[1]), full_out.gs)
         while slice_out.valid():
+            slice_out = vconv.GridRange(slice_out.full,
+                    (slice_out.sub[0] - win_size,
+                    slice_out.sub[1] - win_size),
+                    slice_out.gs)
             self.out_range.append(OutputRange(slice_out, si))
-            slice_out.sub[0] -= win_size
-            slice_out.sub[1] -= win_size
 
 
-    def calc_slice(self, oi):
+    def calc_slice(self):
         """
         Return a SampleSlice corresponding to self.out_range[oi] 
         """
-        out_range = self.out_range[oi]
-        slice_out = out_range.output_gr
-        sample = self.samples[out_range.sample_index]
-        wlen = sample.wav_e - sample.wav_b
+        rg = torch.empty((1), dtype=torch.int64).cpu()
+        while True:
+            pick = rg.random_()[0] % len(self.out_range)
+            out_range = self.out_range[pick]
+            slice_out = out_range.output_gr
+            sample = self.samples[out_range.sample_index]
+            wlen = sample.wav_e - sample.wav_b
+            autoenc_clip = self.mfcc_vc.child, self.vcs['end_grcc']
+            mfcc_in = vconv.input_range(*autoenc_clip, slice_out)
+            assert mfcc_in.sub_length() <= self.max_mel_len
+            mfcc_add = (self.max_mel_len - mfcc_in.sub_length()) * mfcc_in.gs
+            mfcc_in_pad = vconv.GridRange(mfcc_in.full, (mfcc_in.sub[0] -
+                mfcc_add, mfcc_in.sub[1]), mfcc_in.gs)
+
+            if mfcc_in_pad.valid():
+                break
+
+        preproc = self.mfcc_vc, self.mfcc_vc
         full_wav_in = vconv.GridRange((0, wlen), (0, wlen), 1)
         full_mel_in = vconv.output_range(*preproc, full_wav_in)
 
-        preproc = self.mfcc_vc, self.mfcc_vc
-        autoenc_clip = self.mfcc_vc.child, vcs['end_grcc']
-        enc = self.mfcc_vc.child, vcs['last_upsample']
-        dec = vcs['beg_grcc'], vcs['end_grcc'] 
-        mfcc_in = vconv.input_range(*autoenc_clip, slice_out)
-        assert mfcc_in.sub_length() <= max_mel_len
-        mfcc_add = (max_mel_len - mfcc_in.sub_length()) * mfcc_in.gs
-        mfcc_in_pad = vconv.GridRange(mfcc_in.full, (mfcc_in.sub[0] -
-            mfcc_add, mfcc_in.sub[1]), mfcc_in.gs)
-
-        assert mfcc_in_pad.valid()
+        enc = self.mfcc_vc.child, self.vcs['last_upsample']
+        dec = self.vcs['beg_grcc'], self.vcs['end_grcc'] 
 
         lcond_pad = vconv.output_range(*enc, mfcc_in_pad)
         wav_in = vconv.input_range(*dec, slice_out)
@@ -414,11 +419,11 @@ class Slice(nn.Module):
         Get a random slice of a file, together with its start position and ID.
         Populates self.snd_slice, self.mel_slice, self.mask, and
         self.slice_voice_index
+        Random state is from torch.{get,set}_rng_state().  It is on the CPU,
+        not GPU.
         """
-        picks = np.random.random_integers(0, len(self.out_range) - 1, self.batch_size)
-
-        for b, s_i in enumerate(picks):
-            self.vbatch.set(b, self.calc_slice(s_i), self)
+        for b in range(self.batch_size):
+            self.vbatch.set(b, self.calc_slice(), self)
 
         assert self.vbatch.valid()
         return self.vbatch

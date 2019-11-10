@@ -9,6 +9,7 @@ import util
 import parse_tools  
 import checkpoint
 import netmisc
+import grad_analysis as ga
 
 
 def main():
@@ -40,6 +41,9 @@ def main():
     ckpt_path = util.CheckpointPath(opts.ckpt_template)
     learning_rates = dict(zip(opts.learning_rate_steps, opts.learning_rate_rates))
 
+    print('Initializing model and data source...', end='', file=stderr)
+    stderr.flush()
+
     # Construct model
     if mode == 'new':
         pre_params = parse_tools.get_prefixed_items(vars(opts), 'pre_')
@@ -61,18 +65,19 @@ def main():
         optim = torch.optim.Adam(params=model.parameters(), lr=learning_rates[0])
         state = checkpoint.State(0, model, data_source, optim)
 
-        print('Generating slices', file=stderr)
-        stderr.flush()
         state.data.post_init(state.model.decoder.vc)
 
     else:
         state = checkpoint.State()
         state.load(opts.ckpt_file)
-        print('Restored model, data, and optim from {}'.format(opts.ckpt_file), file=stderr)
+        # print('Restored model, data, and optim from {}'.format(opts.ckpt_file), file=stderr)
         #print('Data state: {}'.format(state.data), file=stderr)
         #print('Model state: {}'.format(state.model.checksum()))
         #print('Optim state: {}'.format(state.optim_checksum()))
         stderr.flush()
+
+    print('Done.', file=stderr)
+    stderr.flush()
 
     start_step = state.step
 
@@ -99,7 +104,8 @@ def main():
     # It doesn't really work to initialize the codebook from data, because
     # the data may produce outlier vectors, and the codebook should not have
     # outlier vectors, since they will dominate if there is a scale mismatch
-    # state.model.init_vq_embed(state.data)
+    state.model.init_codebook(state.data, 10000)
+
 
     while state.step < opts.max_steps:
         if state.step in learning_rates:
@@ -116,12 +122,18 @@ def main():
         metrics.update()
         # This is where parameter updates happen
         loss = metrics.state.optim.step(metrics.loss)
-        if state.model.bn_type == 'vqvae-ema' and state.step > 1000:
+        if state.model.bn_type == 'vqvae-ema' and state.step > 1:
             state.model.bottleneck.update_codebook()
 
         avg_peak_dist = metrics.peak_dist()
         avg_max = metrics.avg_max()
         avg_prob_target = metrics.avg_prob_target()
+
+        if state.step % 10 == 0:
+            qv = ga.grad_stats(state.model, 100, [0.01, 0.5, 0.99]) 
+
+        print(qv, file=stderr)
+        stderr.flush()
 
         if False:
             for n, p in list(state.model.encoder.named_parameters()):
