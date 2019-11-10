@@ -106,6 +106,9 @@ def main():
     # outlier vectors, since they will dominate if there is a scale mismatch
     state.model.init_codebook(state.data, 10000)
 
+    def update_model_closure():
+        metrics.update()
+        metrics.loss()
 
     while state.step < opts.max_steps:
         if state.step in learning_rates:
@@ -129,10 +132,11 @@ def main():
         avg_max = metrics.avg_max()
         avg_prob_target = metrics.avg_prob_target()
 
-        if state.step % 10 == 0:
-            qv = ga.grad_stats(state.model, 100, [0.01, 0.5, 0.99]) 
+        if state.step % 100 == 0:
+            qv = ga.grad_stats(state.model, update_model_closure, 50, [0.01, 0.5, 0.99]) 
 
-        print(qv, file=stderr)
+        for par, vals in qv.items():
+            print('grad_sd_qtiles\t{}\t{}'.format(par, '\t'.join(map('{:5.2f}'.format, vals))))
         stderr.flush()
 
         if False:

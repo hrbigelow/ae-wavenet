@@ -168,8 +168,13 @@ class VQEMA(nn.Module):
             # vector cannot exceed that of the destination (even in the target
             # indexing dimension, which doesn't make much sense)
             # In this case, K is the indexing dimension
+            # batch_size * window_batch_size
             flat_ind = min_ind.flatten(0, 1)
-            z_tmp_shape = [flat_ind.shape[0], self.d]
+            idim = max(flat_ind.shape[0], self.k)
+
+            z_tmp_shape = [idim, self.d]
+            n_sum_tmp = self.n_sum.new_zeros(idim)
+
             z_sum_tmp = self.z_sum.new_zeros(z_tmp_shape)
             z_sum_tmp.scatter_add_(0,
                     flat_ind.unsqueeze(1).repeat(1, self.d),
@@ -178,9 +183,7 @@ class VQEMA(nn.Module):
             self.z_sum[...] = z_sum_tmp[0:self.k,:]
 
             self.n_sum.zero_()
-            n_tmp_shape = flat_ind.shape
-            n_sum_tmp = self.n_sum.new_zeros(n_tmp_shape)
-            scatter_add_(0, flat_ind, self.n_sum_ones)
+            n_sum_tmp.scatter_add_(0, flat_ind, self.n_sum_ones)
             self.n_sum[...] = n_sum_tmp[0:self.k]
 
             self.ema_numer = (
@@ -197,7 +200,7 @@ class VQEMA(nn.Module):
 
             # print('z_sum_norm:', (self.z_sum ** 2).sum(dim=1).sqrt())
             # print('n_sum_norm:', self.n_sum)
-            print('min_ind:', self.min_ind)
+            # print('min_ind:', self.min_ind)
             # print('ze_norm:', self.ze_norm)
             # print('emb_norm:', (self.emb ** 2).sum(dim=1).sqrt())
             # print('cb_update_norm:', (cb_update ** 2).sum(dim=1).sqrt())

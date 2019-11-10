@@ -2,6 +2,7 @@ import pickle
 import torch
 from sys import stderr
 import util
+import model as ae
 
 class State(object):
     '''Encapsulates full state of training'''
