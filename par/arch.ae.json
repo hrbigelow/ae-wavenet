@@ -1,0 +1,25 @@
+{
+    "pre_sample_rate": 16000,
+    "pre_win_sz": 400,
+    "pre_hop_sz": 160,
+    "pre_n_mels": 80,
+    "pre_n_mfcc": 13,
+    "enc_n_out": 768,
+    "bn_type": "ae",
+    "bn_n_out": 64,
+    "bn_vq_gamma": 0.25,
+    "dec_jitter_prob": 0.12,
+    "dec_filter_sz": 2,
+    "dec_n_lc_out": 128,
+    "dec_lc_upsample_strides": [5, 4, 4, 4],
+    "dec_lc_upsample_filt_sizes": [25, 16, 16, 16],
+    "dec_n_res": 368,
+    "dec_n_dil": 256,
+    "dec_n_skp": 256,
+    "dec_n_post": 256,
+    "dec_n_quant": 256,
+    "dec_n_blocks": 2,
+    "dec_n_block_layers": 10,
+    "dec_n_global_embed": 10
+}
+
