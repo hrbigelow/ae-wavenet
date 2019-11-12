@@ -104,7 +104,8 @@ def main():
     # It doesn't really work to initialize the codebook from data, because
     # the data may produce outlier vectors, and the codebook should not have
     # outlier vectors, since they will dominate if there is a scale mismatch
-    state.model.init_codebook(state.data, 10000)
+    if state.model.bn_type in ('vqvae', 'vqvae-ema'):
+        state.model.init_codebook(state.data, 10000)
 
     def update_model_closure():
         metrics.update()
@@ -125,19 +126,19 @@ def main():
         metrics.update()
         # This is where parameter updates happen
         loss = metrics.state.optim.step(metrics.loss)
-        if state.model.bn_type == 'vqvae-ema' and state.step > 1:
+        if state.model.bn_type == 'vqvae-ema' and state.step > 10000:
             state.model.bottleneck.update_codebook()
 
         avg_peak_dist = metrics.peak_dist()
         avg_max = metrics.avg_max()
         avg_prob_target = metrics.avg_prob_target()
 
-        if state.step % 100 == 0:
-            qv = ga.grad_stats(state.model, update_model_closure, 50, [0.01, 0.5, 0.99]) 
+        #if state.step % 100 == 0:
+        #    qv = ga.grad_stats(state.model, update_model_closure, 50, [0.01, 0.5, 0.99]) 
+        #    for par, vals in qv.items():
+        #        print('grad_sd_qtiles\t{}\t{}'.format(par, '\t'.join(map('{:5.2f}'.format, vals))))
+        #    stderr.flush()
 
-        for par, vals in qv.items():
-            print('grad_sd_qtiles\t{}\t{}'.format(par, '\t'.join(map('{:5.2f}'.format, vals))))
-        stderr.flush()
 
         if False:
             for n, p in list(state.model.encoder.named_parameters()):
@@ -159,7 +160,7 @@ def main():
             #fmt = "M\t{:d}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
             #print(fmt.format(state.step, loss, avg_prob_target, avg_peak_dist,
             #    avg_max), file=stderr)
-            if state.model.bn_type in ('vqvae', 'vqvae-ema'):
+            if state.model.bn_type in ('vqvae', 'vqvae-ema', 'ae'):
                 current_stats.update(state.model.objective.metrics)
                 
             netmisc.print_metrics(current_stats, 100)

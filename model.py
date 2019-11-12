@@ -12,6 +12,7 @@ import mfcc
 import vconv
 import util
 import vq_bn
+import vqema_bn
 import vae_bn
 import wave_encoder as enc
 import wavenet as dec 
@@ -35,7 +36,8 @@ class PreProcess(nn.Module):
         B, Q, T: n_batch, n_quant, n_timesteps
         returns: (B, Q, T)
         """
-        wav_one_hot = util.gather_md(self.quant_onehot, 0, wav_compand.long()).permute(1,0,2)
+        wav_compand_tmp = wav_compand.long()
+        wav_one_hot = util.gather_md(self.quant_onehot, 0, wav_compand_tmp).permute(1,0,2)
         return wav_one_hot
 
     def forward(self, in_snd_slice):
@@ -87,9 +89,9 @@ class AutoEncoder(nn.Module):
             self.objective = vq_bn.VQLoss(self.bottleneck)
 
         elif bn_type == 'vqvae-ema':
-            self.bottleneck = vq_bn.VQEMA(**bn_extra, n_in=enc_params['n_out'],
+            self.bottleneck = vqema_bn.VQEMA(**bn_extra, n_in=enc_params['n_out'],
                     training=training)
-            self.objective = vq_bn.VQEMALoss(self.bottleneck)
+            self.objective = vqema_bn.VQEMALoss(self.bottleneck)
 
         elif bn_type == 'vae':
             # mu and sigma members  
@@ -97,8 +99,8 @@ class AutoEncoder(nn.Module):
             self.objective = vae_bn.SGVBLoss(self.bottleneck)
 
         elif bn_type == 'ae':
-            self.bottleneck = ae_bn.AE(**bn_extra, n_in=enc_params['n_out'])
-            self.objective = torch.nn.CrossEntropyLoss()
+            self.bottleneck = ae_bn.AE(n_out=bn_extra['n_out'], n_in=enc_params['n_out'])
+            self.objective = ae_bn.AELoss(self.bottleneck, 0.01) 
 
         else:
             raise InvalidArgument('bn_type must be one of "ae", "vae", or "vqvae"')
@@ -174,6 +176,7 @@ class AutoEncoder(nn.Module):
         """
         encoding = self.encoder(mels)
         encoding_bn = self.bottleneck(encoding)
+        self.encoding_bn = encoding_bn
         quant = self.decoder(wav_onehot_dec, encoding_bn, voice_inds,
                 lcond_slice)
         return quant
@@ -187,12 +190,16 @@ class AutoEncoder(nn.Module):
         wav_batch_out: (B, T) (the actual data from the same timesteps)
         """
         wav_onehot_dec = self.preprocess(vbatch.wav_input)
+        # grad = torch.autograd.grad(wav_onehot_dec, vbatch.wav_input).data
 
         # Slice each wav input
         wav_batch_out = vbatch.wav_input.new_empty(vbatch.batch_size,
                 vbatch.loss_wav_len()) 
         for b, (sl_b, sl_e) in enumerate(vbatch.loss_wav_slice):
             wav_batch_out[b] = vbatch.wav_input[b,sl_b:sl_e]
+
+        # self.wav_batch_out = wav_batch_out
+        self.wav_onehot_dec = wav_onehot_dec
 
         quant = self.forward(vbatch.mel_input, wav_onehot_dec,
                 vbatch.voice_index, vbatch.lcond_slice)
@@ -225,7 +232,20 @@ class Metrics(object):
             raise RuntimeError('Must call update() first')
         self.state.optim.zero_grad()
         loss = self.state.model.objective(self.quant, self.target)
+        #inputs = (self.state.data.vbatch.mel_input,
+        #        self.state.model.encoding_bn)
+        inputs = (self.state.model.encoding_bn)
+        # mel_grad, bn_grad = torch.autograd.grad(loss, inputs, retain_graph=True)
+        # bn_grad, = torch.autograd.grad(loss, inputs, retain_graph=True)
+        self.state.model.objective.metrics.update({
+            # 'mel_grad_sd': mel_grad.std(),
+            # 'mel_grad_max': mel_grad.max(),
+            #'bn_grad_sd': bn_grad.std(),
+            # 'bn_grad_max': bn_grad.max()
+            })
+        # loss.backward(create_graph=True, retain_graph=True)
         loss.backward()
+
         return loss
     
     def peak_dist(self):

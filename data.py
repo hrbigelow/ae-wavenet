@@ -144,6 +144,8 @@ class VirtualBatch(nn.Module):
         self.register_buffer('wav_input', torch.empty(batch_size, max_wav_len))
         self.register_buffer('mel_input', torch.empty(batch_size, mel_chan,
             max_mel_len)) 
+        self.wav_input.requires_grad = True
+        self.mel_input.requires_grad = True
 
     def __repr__(self):
         fmt = ('voice_index: {}\nlcond_slice: {}\nloss_wav_slice: {}\n' +
