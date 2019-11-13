@@ -28,7 +28,7 @@ def print_metrics(metrics, hdr_frequency):
     h = ''
     s = ''
     d = dict(metrics)
-    max_width = 7
+    max_width = 9 
 
     for k, v in d.items():
         if isinstance(v, torch.Tensor) and v.numel() == 1:
@@ -36,7 +36,7 @@ def print_metrics(metrics, hdr_frequency):
         if isinstance(v, int):
             fmt = '{:d}'
         elif isinstance(v, float):
-            fmt = '{:.3f}'
+            fmt = '{:.3}' if v < 1e-2 else '{:.3f}'
         else:
             fmt = '{}' 
         val = nlstrip.sub(' ', fmt.format(v))

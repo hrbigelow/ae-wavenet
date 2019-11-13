@@ -52,8 +52,8 @@ def main():
         dec_params = parse_tools.get_prefixed_items(vars(opts), 'dec_')
 
         # Initialize data
-        data_source = data.Slice(opts.dat_file, opts.n_batch,
-                opts.n_sam_per_slice, opts.gpu_resident)
+        data_source = data.Slice(opts.dat_file, opts.n_batch, opts.n_win_batch,
+                opts.gpu_resident)
 
         # Initialize model
         dec_params['n_speakers'] = data_source.num_speakers()

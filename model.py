@@ -100,7 +100,7 @@ class AutoEncoder(nn.Module):
 
         elif bn_type == 'ae':
             self.bottleneck = ae_bn.AE(n_out=bn_extra['n_out'], n_in=enc_params['n_out'])
-            self.objective = ae_bn.AELoss(self.bottleneck, 0.01) 
+            self.objective = ae_bn.AELoss(self.bottleneck, 0.001) 
 
         else:
             raise InvalidArgument('bn_type must be one of "ae", "vae", or "vqvae"')
@@ -232,15 +232,17 @@ class Metrics(object):
             raise RuntimeError('Must call update() first')
         self.state.optim.zero_grad()
         loss = self.state.model.objective(self.quant, self.target)
-        #inputs = (self.state.data.vbatch.mel_input,
-        #        self.state.model.encoding_bn)
-        inputs = (self.state.model.encoding_bn)
-        # mel_grad, bn_grad = torch.autograd.grad(loss, inputs, retain_graph=True)
+        inputs = (self.state.data.vbatch.mel_input,
+                self.state.model.encoding_bn)
+        # inputs = (self.state.model.encoding_bn)
+        mel_grad, bn_grad = torch.autograd.grad(loss, inputs, retain_graph=True)
         # bn_grad, = torch.autograd.grad(loss, inputs, retain_graph=True)
+        # print(mel_grad)
+        # print(bn_grad)
         self.state.model.objective.metrics.update({
-            # 'mel_grad_sd': mel_grad.std(),
+            'mel_grad_sd': mel_grad.std(),
             # 'mel_grad_max': mel_grad.max(),
-            #'bn_grad_sd': bn_grad.std(),
+            'bn_grad_sd': bn_grad.std(),
             # 'bn_grad_max': bn_grad.max()
             })
         # loss.backward(create_graph=True, retain_graph=True)

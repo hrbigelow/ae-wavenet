@@ -14,7 +14,7 @@ def train_parser():
     train = argparse.ArgumentParser(add_help=False)
     train.add_argument('--n-batch', '-nb', type=int, metavar='INT',
             default=16, help='Batch size')
-    train.add_argument('--n-sam-per-slice', '-nw', type=int, metavar='INT',
+    train.add_argument('--n-win-batch', '-nw', type=int, metavar='INT',
             default=100, help='# of consecutive window samples in one slice' )
     train.add_argument('--max-steps', '-ms', type=int, metavar='INT', default=1e20,
             help='Maximum number of training steps')

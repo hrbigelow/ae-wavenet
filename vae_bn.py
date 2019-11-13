@@ -71,12 +71,6 @@ class SGVBLoss(nn.Module):
         # self.usage_adjust = netmisc.EmbedLossAdjust('EmbedLossAdjust')
         # self.combine = netmisc.LCCombine('LCCombine')
 
-    # def post_init(self, beg_vc, end_vc, n_sam_per_slice):
-    #     self.usage_adjust.init_usage_weight(beg_vc, end_vc, n_sam_per_slice)
-
-    # def set_geometry(self, beg_vc, end_vc):
-    #    self.combine.set_geometry(beg_vc, end_vc)
-
     def forward(self, quant_pred, target_wav):
         '''
         Compute SGVB estimator from equation 8 in
