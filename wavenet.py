@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from torch import distributions as dist
 import vconv
+import numpy as np
 from numpy import prod as np_prod
 import util
 import netmisc
@@ -114,9 +115,8 @@ class Jitter(nn.Module):
         """
         super(Jitter, self).__init__()
         p, s = replace_prob, (1 - 2 * replace_prob)
-        tmp = torch.Tensor([p, s, p]).repeat(3, 3, 1)
-        tmp[2][1] = torch.Tensor([0, s/(p+s), p/(p+s)])
-        self.cond2d = [ [ dist.Categorical(tmp[i][j]) for i in range(3)] for j in range(3) ]
+        self.cond2d = np.tile([p, s, p], 9).reshape(3, 3, 3)
+        self.cond2d[2][1] = [0, s/(p+s), p/(p+s)]
         self.mindex = None
         self.adjust = None
 
@@ -127,16 +127,17 @@ class Jitter(nn.Module):
         """
         n_batch = self.mindex.shape[0]
         n_time = self.mindex.shape[1] - 1
-        self.mindex[:,0:2] = 1
-        sz = torch.Size((1,))
+        local = np.ones((n_batch, n_time + 1), dtype=np.int32)
+
         for b in range(n_batch):
             # The Markov sampling process
             for t in range(2, n_time):
-                p2 = self.mindex[b,t-2]
-                p1 = self.mindex[b,t-1]
+                p2 = local[b, t-2]
+                p1 = local[b, t-1]
                 print('p2: {}, p1: {}'.format(p2, p1))
-                self.mindex[b,t] = self.cond2d[p2][p1].sample(sz)
-            self.mindex[b, n_time] = 1
+                local[b, t] = np.random.choice([0,1,2], 1, False,
+                        self.cond2d[p1][p1])
+            local[b, n_time] = 1
 
         # adjusts so that temporary value of mindex[i] = {0, 1, 2} imply {i-1,
         # i, i+1} also, first and last elements of mindex mean 'do not replace
@@ -144,7 +145,8 @@ class Jitter(nn.Module):
         # This prevents attempting to replace the first element of the input
         # with a non-existent 'previous' element, and likewise with the last
         # element.
-        self.mindex[...] += self.adjust 
+        self.mindex[...] = torch.as_tensor(local + self.adjust)
+        # self.mindex[...] += self.adjust 
         print('mindex: {}'.format(self.mindex))
 
 
@@ -156,9 +158,8 @@ class Jitter(nn.Module):
         n_batch = x.shape[0]
         if self.mindex is None:
             n_time = x.shape[2]
+            self.adjust = np.arange(n_time + 1) - 2
             self.mindex = x.new_empty(n_batch, n_time + 1, dtype=torch.long)
-            self.adjust = x.new_empty(n_batch, n_time + 1, dtype=torch.long)
-            self.adjust[...] = torch.arange(n_time + 1).repeat(n_batch, 1) - 2
 
         self.gen_mask()
 
