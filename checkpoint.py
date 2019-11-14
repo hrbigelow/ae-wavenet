@@ -31,6 +31,7 @@ class State(object):
         self.torch_cuda_rng_states = sinfo['cuda_rand_states']
 
     def save(self, ckpt_file):
+        self.to(torch.device('cpu'))
         mstate = pickle.dumps(self.model)
         dstate = pickle.dumps(self.data)
         ostate = self.optim.state_dict()
