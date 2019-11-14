@@ -134,7 +134,6 @@ class Jitter(nn.Module):
             for t in range(2, n_time):
                 p2 = local[b, t-2]
                 p1 = local[b, t-1]
-                print('p2: {}, p1: {}'.format(p2, p1))
                 local[b, t] = np.random.choice([0,1,2], 1, False,
                         self.cond2d[p1][p1])
             local[b, n_time] = 1
@@ -146,8 +145,6 @@ class Jitter(nn.Module):
         # with a non-existent 'previous' element, and likewise with the last
         # element.
         self.mindex[...] = torch.as_tensor(local + self.adjust)
-        # self.mindex[...] += self.adjust 
-        print('mindex: {}'.format(self.mindex))
 
 
     # Will this play well with back-prop?
