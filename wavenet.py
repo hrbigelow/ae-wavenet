@@ -114,9 +114,8 @@ class Jitter(nn.Module):
         """
         super(Jitter, self).__init__()
         p, s = replace_prob, (1 - 2 * replace_prob)
-        tmp = torch.Tensor([p, s, p]).repeat(3, 3, 1)
-        tmp[2][1] = torch.Tensor([0, s/(p+s), p/(p+s)])
-        self.cond2d = [ [ dist.Categorical(tmp[i][j]) for i in range(3)] for j in range(3) ]
+        self.register_buffer('probs', torch.tensor([p,s,p]).repeat(3,3,1))
+        self.probs[2,1,:] = torch.tensor([0, s/(p+s), p/(p+s)])
         self.mindex = None
         self.adjust = None
 
@@ -131,8 +130,9 @@ class Jitter(nn.Module):
         for b in range(n_batch):
             # The Markov sampling process
             for t in range(2, n_time):
+                p2, p1 = self.mindex[b,t-2], self.mindex[b,t-1]
                 self.mindex[b,t] = \
-                        self.cond2d[self.mindex[b,t-2]][self.mindex[b,t-1]].sample()
+                dist.Categorical(self.probs[p2,p1,:]).sample() 
             self.mindex[b, n_time] = 1
 
         # adjusts so that temporary value of mindex[i] = {0, 1, 2} imply {i-1,
