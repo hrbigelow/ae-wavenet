@@ -30,12 +30,21 @@ def main():
         opts = resume_parser.parse_args()  
 
     opts.device = None
-    if not opts.disable_cuda and torch.cuda.is_available():
+    if opts.hardware == 'CPU':
+        opts.device = torch.device('cpu')
+    elif opts.hardware == 'GPU':
+        if not torch.cuda.is_available():
+            raise RuntimeError('GPU requested but not available')
         opts.device = torch.device('cuda')
-        print('Using GPU', file=stderr)
+    elif opts.hardware == 'TPU':
+        import torch_xla.core.xla_model as xm
+        opts.device = xm.xla_device()
     else:
-        opts.device = torch.device('cpu') 
-        print('Using CPU', file=stderr)
+        raise RuntimeError(
+                ('Invalid device {} requested.  ' 
+                + 'Must be one of CPU, GPU or TPU').format(opts.hardware))
+
+    print('Using {}'.format(opts.hardware), file=stderr)
     stderr.flush()
 
     ckpt_path = util.CheckpointPath(opts.ckpt_template)

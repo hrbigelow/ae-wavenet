@@ -22,8 +22,8 @@ def train_parser():
             help='Save a checkpoint after this many steps each time')
     train.add_argument('--progress-interval', '-pi', type=int, default=1, metavar='INT',
             help='Print a progress message at this interval')
-    train.add_argument('--disable-cuda', '-dc', action='store_true', default=False,
-            help='If present, do all computation on CPU')
+    train.add_argument('--hardware', '-hw', type=str, default='GPU',
+            help='Harware target, one of CPU, GPU, or TPU')
     train.add_argument('--learning-rate-steps', '-lrs', type=int, nargs='+',
             metavar='INT', default=[0, 4e6, 6e6, 8e6],
             help='Learning rate starting steps to apply --learning-rate-rates')
