@@ -129,7 +129,7 @@ class Jitter(nn.Module):
         n_time = self.mindex.shape[1] - 1
         self.mindex[:,0:2] = 1
         sz = torch.Size((1,))
-        print('mindex: {}'.format(mindex))
+        print('mindex: {}'.format(self.mindex))
         for b in range(n_batch):
             # The Markov sampling process
             for t in range(2, n_time):
