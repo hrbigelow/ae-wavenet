@@ -338,7 +338,6 @@ class WaveNet(nn.Module):
         skp_sum = None
         for i, l in enumerate(self.conv_layers):
             sig, skp = l(sig, cond)
-            print('sig.device: {}'.format(sig.device))
             if skp_sum is None:
                 skp_sum = skp
             else:
