@@ -134,7 +134,6 @@ class Jitter(nn.Module):
             for t in range(2, n_time):
                 p2 = self.mindex[b,t-2]
                 p1 = self.mindex[b,t-1]
-                print('p2: {}, p1: {}'.format(p2, p1))
                 self.mindex[b,t] = self.cond2d[p2][p1].sample(sz)
             self.mindex[b, n_time] = 1
 
@@ -144,7 +143,7 @@ class Jitter(nn.Module):
         # This prevents attempting to replace the first element of the input
         # with a non-existent 'previous' element, and likewise with the last
         # element.
-        self.mindex += self.adjust 
+        self.mindex[...] += self.adjust 
         print('mindex: {}'.format(self.mindex))
 
 
@@ -158,7 +157,7 @@ class Jitter(nn.Module):
             n_time = x.shape[2]
             self.mindex = x.new_empty(n_batch, n_time + 1, dtype=torch.long)
             self.adjust = x.new_empty(n_batch, n_time + 1, dtype=torch.long)
-            self.adjust[:] = torch.arange(n_time + 1).repeat(n_batch, 1) - 2
+            self.adjust[...] = torch.arange(n_time + 1).repeat(n_batch, 1) - 2
 
         self.gen_mask()
 
