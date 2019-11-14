@@ -135,7 +135,7 @@ class Jitter(nn.Module):
             for t in range(2, n_time):
                 p2 = self.mindex[b,t-2]
                 p1 = self.mindex[b,t-1]
-                print('p2: {}, p1: {}'.format(p2, p1)
+                print('p2: {}, p1: {}'.format(p2, p1))
                 self.mindex[b,t] = self.cond2d[p2][p1].sample(sz)
             self.mindex[b, n_time] = 1
 
