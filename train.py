@@ -135,9 +135,9 @@ def main():
         metrics.update()
         # This is where parameter updates happen
 
-        if self.state.device.type == 'xla':
+        if state.device.type == 'xla':
             import torch_xla.core.xla_model as xm
-            loss = xm.optimizer_step(self.state.optim, barrier=True,
+            loss = xm.optimizer_step(state.optim, barrier=True,
                     optimizer_args=metrics.loss)
         else:
             loss = metrics.state.optim.step(metrics.loss)
