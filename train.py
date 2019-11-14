@@ -191,10 +191,6 @@ def main():
             #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
             stderr.flush()
 
-        if opts.hardware == 'TPU':
-            print(xla_met.metrics_report(), file=stderr)
-            stderr.flush()
-
         state.step += 1
 
 
