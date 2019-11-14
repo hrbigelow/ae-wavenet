@@ -425,10 +425,11 @@ class Slice(nn.Module):
         Random state is from torch.{get,set}_rng_state().  It is on the CPU,
         not GPU.
         """
-        self.vbatch.mel_input.requires_grad = False
+        self.vbatch.mel_input.detach_()
+        self.vbatch.mel_input.requires_grad_(False)
         for b in range(self.batch_size):
             self.vbatch.set(b, self.calc_slice(), self)
-        self.vbatch.mel_input.requires_grad = True
+        self.vbatch.mel_input.requires_grad_(True)
 
         assert self.vbatch.valid()
         return self.vbatch
