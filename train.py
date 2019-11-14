@@ -38,6 +38,7 @@ def main():
         opts.device = torch.device('cuda')
     elif opts.hardware == 'TPU':
         import torch_xla.core.xla_model as xm
+        import torch_xla.debug.metrics as xla_met
         opts.device = xm.xla_device()
     else:
         raise RuntimeError(
@@ -181,16 +182,21 @@ def main():
             netmisc.print_metrics(current_stats, 100)
             stderr.flush()
         
-        state.step += 1
-
         # Checkpointing
-        if ((state.step % opts.save_interval == 0 and state.step != start_step) or
-                (mode == 'new' and state.step == 1)):
+        if ((state.step % opts.save_interval == 0 and state.step !=
+            start_step)):
             ckpt_file = ckpt_path.path(state.step)
             state.save(ckpt_file)
             print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
             #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
             stderr.flush()
+
+        if opts.hardware == 'TPU':
+            print(xla_met.metrics_report(), file=stderr)
+            stderr.flush()
+
+        state.step += 1
+
 
 if __name__ == '__main__':
     main()
