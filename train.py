@@ -138,7 +138,7 @@ def main():
         if state.model.bn_type == 'vqvae-ema' and state.step > 10000:
             state.model.bottleneck.update_codebook()
 
-        avg_peak_dist = metrics.peak_dist()
+        # avg_peak_dist = metrics.peak_dist()
         avg_max = metrics.avg_max()
         avg_prob_target = metrics.avg_prob_target()
 
@@ -164,7 +164,7 @@ def main():
                     'step': state.step,
                     'loss': loss,
                     'tprb_m': avg_prob_target,
-                    'pk_d_m': avg_peak_dist
+                    # 'pk_d_m': avg_peak_dist
                     }
             #fmt = "M\t{:d}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
             #print(fmt.format(state.step, loss, avg_prob_target, avg_peak_dist,
