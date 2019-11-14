@@ -138,7 +138,7 @@ def main():
         if state.device.type == 'xla':
             import torch_xla.core.xla_model as xm
             loss = xm.optimizer_step(state.optim, barrier=True,
-                    optimizer_args=metrics.loss)
+                    optimizer_args={'closure': metrics.loss})
         else:
             loss = metrics.state.optim.step(metrics.loss)
 
