@@ -129,7 +129,6 @@ class Jitter(nn.Module):
         n_time = self.mindex.shape[1] - 1
         self.mindex[:,0:2] = 1
         sz = torch.Size((1,))
-        print('mindex: {}'.format(self.mindex))
         for b in range(n_batch):
             # The Markov sampling process
             for t in range(2, n_time):
@@ -146,6 +145,7 @@ class Jitter(nn.Module):
         # with a non-existent 'previous' element, and likewise with the last
         # element.
         self.mindex += self.adjust 
+        print('mindex: {}'.format(self.mindex))
 
 
     # Will this play well with back-prop?
@@ -157,8 +157,8 @@ class Jitter(nn.Module):
         if self.mindex is None:
             n_time = x.shape[2]
             self.mindex = x.new_empty(n_batch, n_time + 1, dtype=torch.long)
-            self.adjust = torch.arange(n_time + 1, dtype=torch.long,
-                    device=x.device).repeat(n_batch, 1) - 2
+            self.adjust = x.new_empty(n_batch, n_time + 1, dtype=torch.long)
+            self.adjust[:] = torch.arange(n_time + 1).repeat(n_batch, 1) - 2
 
         self.gen_mask()
 
