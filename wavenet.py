@@ -131,9 +131,9 @@ class Jitter(nn.Module):
             # The Markov sampling process
             for t in range(2, n_time):
                 p2, p1 = self.mindex[b,t-2], self.mindex[b,t-1]
-                print(self.probs[p2,p1,:])
+                print(self.probs[p2,p1,:].shape)
                 self.mindex[b,t] = \
-                dist.Categorical(self.probs[p2,p1,:]).sample() 
+                dist.Categorical(probs=self.probs[p2,p1,:]).sample(torch.Size((1,))) 
             self.mindex[b, n_time] = 1
 
         # adjusts so that temporary value of mindex[i] = {0, 1, 2} imply {i-1,
