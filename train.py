@@ -134,7 +134,14 @@ def main():
 
         metrics.update()
         # This is where parameter updates happen
-        loss = metrics.state.optim.step(metrics.loss)
+
+        if self.state.device.type == 'xla':
+            import torch_xla.core.xla_model as xm
+            loss = xm.optimizer_step(self.state.optim, barrier=True,
+                    optimizer_args=metrics.loss)
+        else:
+            loss = metrics.state.optim.step(metrics.loss)
+
         if state.model.bn_type == 'vqvae-ema' and state.step > 10000:
             state.model.bottleneck.update_codebook()
 

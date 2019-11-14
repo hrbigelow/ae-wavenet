@@ -11,6 +11,7 @@ class State(object):
         self.data = data 
         self.optim = optim
         self.step = step
+        self.device = None
         self.torch_rng_state = torch.get_rng_state()
         if torch.cuda.is_available():
             self.torch_cuda_rng_states = torch.cuda.get_rng_state_all()
@@ -51,6 +52,7 @@ class State(object):
         ostate = self.optim.state_dict()
         self.optim = torch.optim.Adam(self.model.parameters())
         self.optim.load_state_dict(ostate)
+        self.device = device
 
     def optim_checksum(self):
         return util.digest(self.optim.state_dict())
