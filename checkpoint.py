@@ -12,7 +12,10 @@ class State(object):
         self.optim = optim
         self.step = step
         self.torch_rng_state = torch.get_rng_state()
-        self.torch_cuda_rng_states = torch.cuda.get_rng_state_all()
+        if torch.cuda.is_available():
+            self.torch_cuda_rng_states = torch.cuda.get_rng_state_all()
+        else:
+            self.torch_cuda_rng_states = None
 
     def load(self, ckpt_file):
         sinfo = torch.load(ckpt_file)
@@ -36,7 +39,8 @@ class State(object):
                 'data': dstate,
                 'optim': ostate,
                 'rand_state': torch.get_rng_state(),
-                'cuda_rand_states': torch.cuda.get_rng_state_all()
+                'cuda_rand_states': (torch.cuda.get_rng_state_all() if
+                    torch.cuda.is_available() else None)
                 }
         torch.save(state, ckpt_file)
 
@@ -57,12 +61,13 @@ class State(object):
         #print('saved generator state: {}'.format(
         #    util.tensor_digest(self.torch_cuda_rng_states)))
         #torch.cuda.set_rng_state_all(self.torch_cuda_rng_states)
-        torch.cuda.set_rng_state(self.torch_cuda_rng_states[0])
-        ndiff = torch.cuda.get_rng_state().ne(self.torch_cuda_rng_states[0]).sum()
-        if ndiff != 0:
-            print(('Warning: restored and checkpointed '
-            'GPU state differs in {} positions').format(ndiff), file=stderr)
-            stderr.flush()
+        if torch.cuda.is_available():
+            torch.cuda.set_rng_state(self.torch_cuda_rng_states[0])
+            ndiff = torch.cuda.get_rng_state().ne(self.torch_cuda_rng_states[0]).sum()
+            if ndiff != 0:
+                print(('Warning: restored and checkpointed '
+                'GPU state differs in {} positions').format(ndiff), file=stderr)
+                stderr.flush()
 
     def update_learning_rate(self, learning_rate):
         sd = self.optim.state_dict()
