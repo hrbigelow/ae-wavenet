@@ -54,7 +54,8 @@ class Encoder(nn.Module):
         stack_in_chan = [n_in, n_out, n_out, n_out, n_out, n_out, n_out, n_out, n_out]
         stack_filter_sz = [3, 3, 4, 3, 3, 1, 1, 1, 1]
         stack_strides = [1, 1, 2, 1, 1, 1, 1, 1, 1]
-        stack_residual = [False, True, False, True, True, True, True, True, True]
+        # stack_residual = [False, True, False, True, True, True, True, True, True]
+        stack_residual = [True] * 9
         stack_info = zip(stack_in_chan, stack_filter_sz, stack_strides, stack_residual)
 
         self.net = nn.Sequential()
