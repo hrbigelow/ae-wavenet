@@ -332,8 +332,12 @@ class Slice(nn.Module):
         Return a SampleSlice corresponding to self.out_range[oi] 
         """
         rg = torch.empty((1), dtype=torch.int64).cpu()
+        picks = [98234, 198234, 239484, 59834]
+        i = 0
         while True:
-            pick = rg.random_()[0] % len(self.out_range)
+            # pick = rg.random_()[0] % len(self.out_range)
+            pick = picks[i]
+            i += 1
             out_range = self.out_range[pick]
             slice_out = out_range.output_gr
             sample = self.samples[out_range.sample_index]
