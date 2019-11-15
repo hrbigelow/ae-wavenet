@@ -165,8 +165,8 @@ class VirtualBatch(nn.Module):
 
         self.lcond_slice[b] = ss.lcond_slice 
         self.loss_wav_slice[b] = ss.loss_wav_slice 
-        self.wav_input[b] = data_source.snd_data[wo + dws[0]:wo + dws[1]] 
-        self.mel_input[b] = data_source.mel_data[mo + mis[0]:mo +
+        self.wav_input[b,...] = data_source.snd_data[wo + dws[0]:wo + dws[1]] 
+        self.mel_input[b,...] = data_source.mel_data[mo + mis[0]:mo +
                 mis[1],:].transpose(1, 0)
 
 
