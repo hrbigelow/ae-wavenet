@@ -3,6 +3,7 @@ from torch import nn
 import vconv
 import numpy as np
 import netmisc
+from sys import stderr
 
 class ConvReLURes(nn.Module):
     def __init__(self, n_in_chan, n_out_chan, filter_sz, stride=1, do_res=True,
@@ -23,7 +24,7 @@ class ConvReLURes(nn.Module):
         if self.do_res:
             if stride != 1:
                 print('Stride must be 1 for residually connected convolution',
-                        file=sys.stderr)
+                        file=stderr)
                 raise ValueError
             self.residual_offsets = vconv.output_offsets(self.vc, self.vc)
 
