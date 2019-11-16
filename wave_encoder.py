@@ -41,9 +41,9 @@ class ConvReLURes(nn.Module):
         if self.do_res:
             act[...] += x[:,:,self.residual_offsets[0]:self.residual_offsets[1] or None]
             # act += x[:,:,self.residual_offsets[0]:self.residual_offsets[1] or None]
-        act_sum = act.sum()
-        if act_sum.eq(0.0):
-            print('encoder layer {}: {}'.format(self.name, act_sum))
+        #act_sum = act.sum()
+        #if act_sum.eq(0.0):
+        #    print('encoder layer {}: {}'.format(self.name, act_sum))
         #print('bias mean: {}'.format(self.conv.bias.mean()))
         return act
 
