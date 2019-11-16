@@ -157,7 +157,7 @@ class VirtualBatch(nn.Module):
 
     def set(self, b, sample_slice, data_source):
         ss = sample_slice
-        self.voice_index[b] = ss.voice_index
+        # self.voice_index[b] = ss.voice_index
         wo = ss.wav_offset
         mo = ss.mel_offset
         dws = ss.dec_wav_slice
