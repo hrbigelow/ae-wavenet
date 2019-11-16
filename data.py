@@ -165,9 +165,11 @@ class VirtualBatch(nn.Module):
 
         self.lcond_slice[b] = ss.lcond_slice 
         self.loss_wav_slice[b] = ss.loss_wav_slice 
-        self.wav_input[b,...] = data_source.snd_data[wo + dws[0]:wo + dws[1]] 
-        self.mel_input[b,...] = data_source.mel_data[mo + mis[0]:mo +
-                mis[1],:].transpose(1, 0)
+        #self.wav_input[b,...] = data_source.snd_data[wo + dws[0]:wo + dws[1]] 
+        #self.mel_input[b,...] = data_source.mel_data[mo + mis[0]:mo +
+        #        mis[1],:].transpose(1, 0)
+        self.wav_input[b,...] = data_source.snd_data[64283:64327]
+        self.mel_data[b,...] = data_source.mel_data[0:39]
 
 
     def valid(self):
@@ -332,12 +334,8 @@ class Slice(nn.Module):
         Return a SampleSlice corresponding to self.out_range[oi] 
         """
         rg = torch.empty((1), dtype=torch.int64).cpu()
-        picks = [98234, 198234, 239484, 59834]
-        i = 0
         while True:
-            # pick = rg.random_()[0] % len(self.out_range)
-            pick = picks[i]
-            i += 1
+            pick = rg.random_()[0] % len(self.out_range)
             out_range = self.out_range[pick]
             slice_out = out_range.output_gr
             sample = self.samples[out_range.sample_index]
