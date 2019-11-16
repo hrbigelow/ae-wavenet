@@ -168,8 +168,10 @@ class VirtualBatch(nn.Module):
         #self.wav_input[b,...] = data_source.snd_data[wo + dws[0]:wo + dws[1]] 
         #self.mel_input[b,...] = data_source.mel_data[mo + mis[0]:mo +
         #        mis[1],:].transpose(1, 0)
-        self.wav_input[b,...] = data_source.snd_data[64283:64327]
-        self.mel_data[b,...] = data_source.mel_data[0:39]
+
+        self.wav_input[b,...] = data_source.snd_data[3184397:3186543]
+        self.mel_input[b,...] = \
+                data_source.mel_data[19855:19899,:].transpose(1, 0)
 
 
     def valid(self):
