@@ -322,11 +322,18 @@ class WaveNet(nn.Module):
         trim_len = lcond_slice[0][1] - lcond_slice[0][0]
         lcd_sz = lc_dense.size()
         lc_dense_trim = lc_dense.new_empty(lcd_sz[0], lcd_sz[1], trim_len) 
+        # lc_dense_trim2 = lc_dense.new_empty(lcd_sz[0], lcd_sz[1], trim_len) 
 
         for b in range(lcd_sz[0]):
             sl_b, sl_e = lcond_slice[b]
             assert sl_e - sl_b == wav_onehot.shape[2]
-            lc_dense_trim[b] = lc_dense[b,:,sl_b:sl_e]
+            indices = torch.arange(sl_b, sl_e).to(lc_dense.device)
+            lc_dense_trim[b] = torch.index_select(lc_dense[b], 1, indices)
+
+        #for b in range(lcd_sz[0]):
+        #    sl_b, sl_e = lcond_slice[b]
+        #    assert sl_e - sl_b == wav_onehot.shape[2]
+        #    lc_dense_trim2[b] = lc_dense[b,:,sl_b:sl_e]
 
         cond = self.cond(lc_dense_trim, speaker_inds)
         # "The conditioning signal was passed separately into each layer" - p 5 pp 1.
