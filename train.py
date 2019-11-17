@@ -181,6 +181,11 @@ def main():
                 
             netmisc.print_metrics(current_stats, 100)
             stderr.flush()
+        else:
+            print('step {} (skipped reporting)'.format(state.step),
+                    file=stderr)
+            stderr.flush()
+
         
         # Checkpointing
         if ((state.step % opts.save_interval == 0 and state.step !=
