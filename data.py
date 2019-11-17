@@ -157,7 +157,7 @@ class VirtualBatch(nn.Module):
 
     def set(self, b, sample_slice, data_source):
         ss = sample_slice
-        # self.voice_index[b] = ss.voice_index
+        self.voice_index[b] = ss.voice_index
         wo = ss.wav_offset
         mo = ss.mel_offset
         dws = ss.dec_wav_slice
@@ -165,11 +165,11 @@ class VirtualBatch(nn.Module):
 
         self.lcond_slice[b] = ss.lcond_slice 
         self.loss_wav_slice[b] = ss.loss_wav_slice 
-        #self.wav_input[b,...] = data_source.snd_data[wo + dws[0]:wo + dws[1]] 
-        #self.mel_input[b,...] = data_source.mel_data[mo + mis[0]:mo +
-        #        mis[1],:].transpose(1, 0)
+        self.wav_input[b,...] = data_source.snd_data[wo + dws[0]:wo + dws[1]] 
+        self.mel_input[b,...] = data_source.mel_data[mo + mis[0]:mo +
+                mis[1],:].transpose(1, 0)
 
-        self.wav_input[b,...] = data_source.snd_data[3184397:3186543]
+        #self.wav_input[b,...] = data_source.snd_data[3184397:3186543]
         #self.mel_input[b,...] = \
         #        data_source.mel_data[19855:19899,:].transpose(1, 0)
 
