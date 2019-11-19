@@ -35,8 +35,27 @@ class GatedResidualCondConv(nn.Module):
                 parent=parent_vc, name=name)
         self.apply(netmisc.xavier_init)
 
-        
-    def cond_lead(self):
+    def post_init(self):
+        """
+        Initialize offset tensors
+        """
+        cond_lead, r_off = vconv.output_offsets(self.wavenet_vc['beg_grcc'],
+                self.vc)
+        assert r_off == 0
+        self.register_buffer('cond_lead', torch.tensor(cond_lead))
+
+        if self.vc == self.wavenet_vc['end_grcc']:
+            skip_lead = 0
+        else:
+            skip_lead, r_off = vconv.output_offsets(self.vc.child,
+                    self.wavenet_vc['end_grcc'])
+            assert r_off == 0
+
+        self.register_buffer('skip_lead', torch.tensor(skip_lead))
+        self.register_buffer('left_wing_size', torch.tensor(self.vc.l_wing_sz))
+
+
+    def cond_lead_fn(self):
         """
         distance from start of the overall stack input to
         the start of this convolution
@@ -46,7 +65,7 @@ class GatedResidualCondConv(nn.Module):
         assert r_off == 0
         return l_off 
 
-    def skip_lead(self):
+    def skip_lead_fn(self):
         """
         distance from start of this *output* to start of the final stack
         output.  Note that the skip information is the *output* of self.vc, not
@@ -68,15 +87,15 @@ class GatedResidualCondConv(nn.Module):
         cond: (B, C, T) (necessary shape for Conv1d)
         returns: sig: (B, R, T), skp: (B, S, T) 
         """
-        cond_lead = self.cond_lead()
-        skip_lead = self.skip_lead()
+        #cond_lead = self.cond_lead()
+        #skip_lead = self.skip_lead()
 
-        filt = self.conv_signal(x) + self.proj_signal(cond[:,:,cond_lead:])
-        gate = self.conv_gate(x) + self.proj_gate(cond[:,:,cond_lead:])
+        filt = self.conv_signal(x) + self.proj_signal(cond[:,:,self.cond_lead:])
+        gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.cond_lead:])
         z = torch.tanh(filt) * torch.sigmoid(gate)
         sig = self.dil_res(z)
-        skp = self.dil_skp(z[:,:,skip_lead:])
-        sig += x[:,:,self.vc.l_wing_sz:]
+        skp = self.dil_skp(z[:,:,self.skip_lead:])
+        sig += x[:,:,self.left_wing_size:]
         return sig, skp 
 
 
@@ -300,6 +319,11 @@ class WaveNet(nn.Module):
         self.logsoftmax = nn.LogSoftmax(1) # (B, Q, N)
         self.vc['main'] = cur_vc
 
+    def post_init(self):
+        for grc in self.conv_layers:
+            grc.post_init()
+
+
     def forward(self, wav_onehot, lc_sparse, speaker_inds, lcond_slice):
         """
         B: n_batch (# of separate wav streams being processed)
@@ -319,21 +343,11 @@ class WaveNet(nn.Module):
         lc_dense = self.lc_upsample(lc_sparse)
 
         # Trimming due to different phases of the input MFCC windows
-        trim_len = lcond_slice[0][1] - lcond_slice[0][0]
-        lcd_sz = lc_dense.size()
-        lc_dense_trim = lc_dense.new_empty(lcd_sz[0], lcd_sz[1], trim_len) 
-        # lc_dense_trim2 = lc_dense.new_empty(lcd_sz[0], lcd_sz[1], trim_len) 
+        B, D, W1 = lc_dense.size()
+        W2 = lcond_slice.size()[1] 
 
-        for b in range(lcd_sz[0]):
-            sl_b, sl_e = lcond_slice[b]
-            assert sl_e - sl_b == wav_onehot.shape[2]
-            indices = torch.arange(sl_b, sl_e).to(lc_dense.device)
-            lc_dense_trim[b] = torch.index_select(lc_dense[b], 1, indices)
-
-        #for b in range(lcd_sz[0]):
-        #    sl_b, sl_e = lcond_slice[b]
-        #    assert sl_e - sl_b == wav_onehot.shape[2]
-        #    lc_dense_trim2[b] = lc_dense[b,:,sl_b:sl_e]
+        lc_dense_trim = torch.take(lc_dense,
+                lcond_slice.unsqueeze(1).expand(B, D, W2))
 
         cond = self.cond(lc_dense_trim, speaker_inds)
         # "The conditioning signal was passed separately into each layer" - p 5 pp 1.

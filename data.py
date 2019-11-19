@@ -133,20 +133,20 @@ OutputRange = namedtuple('OutputRange', [
 
 
 class VirtualBatch(nn.Module):
-    def __init__(self, batch_size, max_wav_len, max_mel_len, mel_chan):
+    def __init__(self, batch_size, max_wav_len, max_mel_len, max_lcond_len,
+            mel_chan):
         super(VirtualBatch, self).__init__()
         self.batch_size = batch_size
         self.n_mel_chan = mel_chan
+        self.max_lcond_len = max_lcond_len
         self.register_buffer('voice_index', torch.empty(batch_size,
             dtype=torch.long))
-        self.lcond_slice = [None] * batch_size 
+        self.register_buffer('lcond_slice',
+                torch.empty(batch_size, max_wav_len, dtype=torch.long))
         self.loss_wav_slice = [None] * batch_size 
         self.register_buffer('wav_input', torch.empty(batch_size, max_wav_len))
         self.register_buffer('mel_input', torch.empty(batch_size, mel_chan,
             max_mel_len)) 
-        # self.wav_input.requires_grad = True
-        # self.mel_input.requires_grad = True
-        # self.mel_input.retain_grad()
 
     def __repr__(self):
         fmt = ('voice_index: {}\nlcond_slice: {}\nloss_wav_slice: {}\n' +
@@ -157,35 +157,34 @@ class VirtualBatch(nn.Module):
 
     def set(self, b, sample_slice, data_source):
         ss = sample_slice
-        # self.voice_index[b] = ss.voice_index
+        self.voice_index[b] = ss.voice_index
         wo = ss.wav_offset
         mo = ss.mel_offset
         dws = ss.dec_wav_slice
         mis = ss.mel_in_slice
 
-        self.lcond_slice[b] = ss.lcond_slice 
+        offset = b * self.max_lcond_len
+        self.lcond_slice[b,:] = torch.arange(offset + ss.lcond_slice[0],
+                offset + ss.lcond_slice[1])
         self.loss_wav_slice[b] = ss.loss_wav_slice 
-        # self.wav_input[b,...] = data_source.snd_data[wo + dws[0]:wo + dws[1]] 
-        # self.mel_input[b,...] = data_source.mel_data[mo + mis[0]:mo +
-        #         mis[1],:].transpose(1, 0)
+        self.wav_input[b,...] = data_source.snd_data[wo + dws[0]:wo + dws[1]] 
+        self.mel_input[b,...] = data_source.mel_data[mo + mis[0]:mo +
+                mis[1],:].transpose(1, 0)
 
-        self.wav_input[b,...] = data_source.snd_data[3184397:3186543]
-        self.mel_input[b,...] = \
-                data_source.mel_data[19855:19899,:].transpose(1, 0)
+        # self.wav_input[b,...] = data_source.snd_data[3184397:3186543]
+        # self.mel_input[b,...] = \
+        #         data_source.mel_data[19855:19899,:].transpose(1, 0)
 
 
     def valid(self):
-        lc_len = self.lcond_len()
         lw_len = self.loss_wav_len()
         return (
                 all(map(lambda lw: lw[1] - lw[0] == lw_len,
-                    self.loss_wav_slice)) and 
-                all(map(lambda lc: lc[1] - lc[0] == lc_len,
-                    self.lcond_slice))
+                    self.loss_wav_slice))
                 )
 
     def lcond_len(self):
-        return self.lcond_slice[0][1] - self.lcond_slice[0][0]
+        return self.lcond_slice.size()[1]
 
     def loss_wav_len(self):
         return self.loss_wav_slice[0][1] - self.loss_wav_slice[0][0]
@@ -266,31 +265,39 @@ class Slice(nn.Module):
         end_grcc_vc = self.vcs['end_grcc']
         autoenc = self.mfcc_vc, end_grcc_vc
         autoenc_clip = self.mfcc_vc.child, end_grcc_vc
+        enc = self.mfcc_vc.child, self.vcs['last_upsample']
         dec = beg_grcc_vc, end_grcc_vc 
 
         max_spacing = vconv.max_spacing(*autoenc, 1)
         max_mel_in_len = 0
+        max_lcond_len = 0
         for b in range(max_spacing):
             out = vconv.GridRange((0, 100000), (b, b + w), 1)
             mfcc = vconv.input_range(*autoenc_clip, out)
             # print(mfcc.sub_length(), end=' ')
             max_mel_in_len = max(mfcc.sub_length(), max_mel_in_len)
-
+            max_mel_in_gr = vconv.GridRange((0, 1000000), (b, b +
+                    max_mel_in_len * mfcc.gs), mfcc.gs)
+            lcond_gr = vconv.output_range(*enc, max_mel_in_gr)
+            max_lcond_len = max(max_lcond_len, lcond_gr.sub_length())
+        
         # Calculate decoder wav input length
         slice_out = vconv.GridRange((0, 100000), (0, w), 1)
         max_wav_in_len = vconv.input_range(*dec, slice_out).sub_length()
         
         self.init_args['max_wav_in_len'] = max_wav_in_len
         self.init_args['max_mel_in_len'] = max_mel_in_len
+        self.init_args['max_lcond_len'] = max_lcond_len
         self._initialize_vbatch()
 
 
     def _initialize_vbatch(self):
         max_wav_in_len = self.init_args['max_wav_in_len']
         max_mel_in_len = self.init_args['max_mel_in_len']
+        max_lcond_len = self.init_args['max_lcond_len']
         n_mel_chan = self.mel_data.shape[1]
         self.vbatch = VirtualBatch(self.batch_size, max_wav_in_len,
-                max_mel_in_len, n_mel_chan)
+                max_mel_in_len, max_lcond_len, n_mel_chan)
 
 
     def init_slices(self):
@@ -298,14 +305,12 @@ class Slice(nn.Module):
         Initialize:
         self.slices
         """
-
         # generate all slices
         win_size = self.window_batch_size
         self.max_mel_len = self.vbatch.mel_input.shape[2]
         self.out_range = []
         for si in range(len(self.samples)): 
             self._add_out_ranges(si, win_size)
-
 
 
     def _add_out_ranges(self, si, win_size):

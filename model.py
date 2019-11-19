@@ -112,6 +112,8 @@ class AutoEncoder(nn.Module):
                 n_lc_in=bn_params['n_out']
                 )
         self.vc = self.decoder.vc
+        self.decoder.post_init()
+
 
     def __getstate__(self):
         state = { 
@@ -182,7 +184,8 @@ class AutoEncoder(nn.Module):
         return quant
 
     def run(self, vbatch):
-        """Run the model on one batch, returning the predicted and
+        """
+        Run the model on one batch, returning the predicted and
         actual output
         B, T, Q: n_batch, n_timesteps, n_quant
         Outputs:
