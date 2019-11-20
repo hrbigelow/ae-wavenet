@@ -275,7 +275,7 @@ class Metrics(object):
             import torch_xla.core.xla_model as xm
             import torch_xla.distributed.parallel_loader as pl
             self.device = xm.xla_device()
-            self.data_loader = pl.ParallelLoader(self_state.data_loader, [self.device])
+            self.data_loader = pl.ParallelLoader(self.state.data_loader, [self.device])
             self.optim_step_fn = (lambda : xm.optimizer_step(self.state.optim,
                     optimizer_args={'closure': self.loss_fn}))
 
