@@ -4,6 +4,7 @@ import pickle
 import librosa
 import numpy as np
 import torch
+import torch.utils.data
 from torch import nn
 import vconv
 import copy
@@ -132,21 +133,16 @@ OutputRange = namedtuple('OutputRange', [
     )
 
 
-class VirtualBatch(nn.Module):
-    def __init__(self, batch_size, max_wav_len, max_mel_len, max_lcond_len,
-            mel_chan):
+class VirtualBatch(object):
+    def __init__(self, batch_size, max_wav_len, max_mel_len, mel_chan):
         super(VirtualBatch, self).__init__()
         self.batch_size = batch_size
-        self.n_mel_chan = mel_chan
-        self.max_lcond_len = max_lcond_len
-        self.register_buffer('voice_index', torch.empty(batch_size,
-            dtype=torch.long))
-        self.register_buffer('lcond_slice',
-                torch.empty(batch_size, max_wav_len, dtype=torch.long))
+        self.voice_index = torch.empty(batch_size, dtype=torch.long)
+        self.lcond_slice = torch.empty(batch_size, max_wav_len,
+                dtype=torch.long)
         self.loss_wav_slice = [None] * batch_size 
-        self.register_buffer('wav_input', torch.empty(batch_size, max_wav_len))
-        self.register_buffer('mel_input', torch.empty(batch_size, mel_chan,
-            max_mel_len)) 
+        self.wav_input = torch.empty(batch_size, max_wav_len)
+        self.mel_input = torch.empty(batch_size, mel_chan, max_mel_len) 
 
     def __repr__(self):
         fmt = ('voice_index: {}\nlcond_slice: {}\nloss_wav_slice: {}\n' +
@@ -155,14 +151,17 @@ class VirtualBatch(nn.Module):
                 self.loss_wav_slice, self.wav_input.shape,
                 self.mel_input.shape)
 
-    def set(self, b, sample_slice, data_source):
+    def set_one(self, b, sample_slice, data_source):
+        """
+        sets the data for one sample in the batch
+        """
         ss = sample_slice
-        self.voice_index[b] = ss.voice_index
         wo = ss.wav_offset
         mo = ss.mel_offset
         dws = ss.dec_wav_slice
         mis = ss.mel_in_slice
 
+        self.voice_index[b] = ss.voice_index
         offset = b * self.max_lcond_len
         self.lcond_slice[b,:] = torch.arange(offset + ss.lcond_slice[0],
                 offset + ss.lcond_slice[1])
@@ -174,6 +173,12 @@ class VirtualBatch(nn.Module):
         # self.wav_input[b,...] = data_source.snd_data[3184397:3186543]
         # self.mel_input[b,...] = \
         #         data_source.mel_data[19855:19899,:].transpose(1, 0)
+
+    def to(device):
+        self.voice_index.to(device)
+        self.lcond_slice.to(device)
+        self.wav_input.to(device)
+        self.mel_input.to(device)
 
 
     def valid(self):
@@ -190,17 +195,16 @@ class VirtualBatch(nn.Module):
         return self.loss_wav_slice[0][1] - self.loss_wav_slice[0][0]
 
 
-class Slice(nn.Module):
+class Slice(torch.utils.data.Dataset):
     """
-    Defines the current batch of data
+    Defines the current batch of data in iterator style.
+    Use with automatic batching disabled, and collate_fn = lambda x: x
     """
-    def __init__(self, dat_file, batch_size, window_batch_size,
-            gpu_resident):
+    def __init__(self, dat_file, batch_size, window_batch_size):
         self.init_args = {
                 'dat_file': dat_file,
                 'batch_size': batch_size,
-                'window_batch_size': window_batch_size,
-                'gpu_resident': gpu_resident
+                'window_batch_size': window_batch_size
                 }
         self._initialize()
 
@@ -218,7 +222,6 @@ class Slice(nn.Module):
         self.dat_file = self.init_args['dat_file']
         self.batch_size = self.init_args['batch_size']
         self.window_batch_size = self.init_args['window_batch_size']
-        self.gpu_resident = self.init_args['gpu_resident']
 
         try:
             with open(self.dat_file, 'rb') as dat_fh:
@@ -234,7 +237,7 @@ class Slice(nn.Module):
         self.n_mel_chan = mfcc_pars['n_mel_chan']
 
         self._load_sample_data(dat['snd_data'], dat['mel_data'],
-                dat['snd_dtype'], self.n_mel_chan, self.gpu_resident)
+                dat['snd_dtype'], self.n_mel_chan)
 
         self.mfcc_vc = vconv.VirtualConv(
                 filter_info=mfcc_pars['window_size'], stride=mfcc_pars['hop_size'],
@@ -254,10 +257,12 @@ class Slice(nn.Module):
         return len(set(map(lambda s: s.voice_index, self.samples)))
 
 
-    def init_vbatch(self):
+    def init_geometry(self):
         """
         Initializes:
-        self.vbatch
+        self.max_wav_len
+        self.max_mel_len
+        self.max_lcond_len
         """
         # Calculate max length of mfcc encoder input and wav decoder input
         w = self.window_batch_size
@@ -269,36 +274,24 @@ class Slice(nn.Module):
         dec = beg_grcc_vc, end_grcc_vc 
 
         max_spacing = vconv.max_spacing(*autoenc, 1)
-        max_mel_in_len = 0
+        max_mel_len = 0
         max_lcond_len = 0
         for b in range(max_spacing):
             out = vconv.GridRange((0, 100000), (b, b + w), 1)
             mfcc = vconv.input_range(*autoenc_clip, out)
             # print(mfcc.sub_length(), end=' ')
-            max_mel_in_len = max(mfcc.sub_length(), max_mel_in_len)
+            max_mel_len = max(mfcc.sub_length(), max_mel_len)
             max_mel_in_gr = vconv.GridRange((0, 1000000), (b, b +
-                    max_mel_in_len * mfcc.gs), mfcc.gs)
+                    max_mel_len * mfcc.gs), mfcc.gs)
             lcond_gr = vconv.output_range(*enc, max_mel_in_gr)
             max_lcond_len = max(max_lcond_len, lcond_gr.sub_length())
         
         # Calculate decoder wav input length
         slice_out = vconv.GridRange((0, 100000), (0, w), 1)
-        max_wav_in_len = vconv.input_range(*dec, slice_out).sub_length()
+        self.max_wav_len = vconv.input_range(*dec, slice_out).sub_length()
+        self.max_mel_len = max_mel_len
+        self.max_lcond_len = max_lcond_len
         
-        self.init_args['max_wav_in_len'] = max_wav_in_len
-        self.init_args['max_mel_in_len'] = max_mel_in_len
-        self.init_args['max_lcond_len'] = max_lcond_len
-        self._initialize_vbatch()
-
-
-    def _initialize_vbatch(self):
-        max_wav_in_len = self.init_args['max_wav_in_len']
-        max_mel_in_len = self.init_args['max_mel_in_len']
-        max_lcond_len = self.init_args['max_lcond_len']
-        n_mel_chan = self.mel_data.shape[1]
-        self.vbatch = VirtualBatch(self.batch_size, max_wav_in_len,
-                max_mel_in_len, max_lcond_len, n_mel_chan)
-
 
     def init_slices(self):
         """
@@ -307,7 +300,6 @@ class Slice(nn.Module):
         """
         # generate all slices
         win_size = self.window_batch_size
-        self.max_mel_len = self.vbatch.mel_input.shape[2]
         self.out_range = []
         for si in range(len(self.samples)): 
             self._add_out_ranges(si, win_size)
@@ -392,12 +384,11 @@ class Slice(nn.Module):
         called after model construction.
         """
         self.vcs = virtual_convs
-        self.init_vbatch()
+        self.init_geometry()
         self.init_slices()
 
 
-    def _load_sample_data(self, snd_np, mel_np, snd_dtype, n_mel_chan,
-            gpu_resident):
+    def _load_sample_data(self, snd_np, mel_np, snd_dtype, n_mel_chan):
         """
         Populates self.snd_data and self.mel_data
         """
@@ -411,22 +402,10 @@ class Slice(nn.Module):
         # shape: T, M
         mel_data = torch.FloatTensor(mel_np).reshape((-1, n_mel_chan))
 
-        # Store entire dataset in GPU memory if possible 
-        total_bytes = (
-                snd_data.nelement() * snd_data.element_size() +
-                mel_data.nelement() * mel_data.element_size()
-                )
-        if gpu_resident:
-            self.register_buffer('snd_data', snd_data)
-            self.register_buffer('mel_data', mel_data)
-        else:
-            # These still need to be properties, but we won't register them
-            self.snd_data = snd_data
-            self.mel_data = mel_data
+        self.snd_data = snd_data
+        self.mel_data = mel_data
 
-
-
-    def next_batch(self):
+    def __next__(self):
         """
         Get a random slice of a file, together with its start position and ID.
         Populates self.snd_slice, self.mel_slice, self.mask, and
@@ -434,12 +413,24 @@ class Slice(nn.Module):
         Random state is from torch.{get,set}_rng_state().  It is on the CPU,
         not GPU.
         """
-        self.vbatch.mel_input.detach_()
-        self.vbatch.mel_input.requires_grad_(False)
-        for b in range(self.batch_size):
-            self.vbatch.set(b, self.calc_slice(), self)
-        self.vbatch.mel_input.requires_grad_(True)
+        vb = VirtualBatch(self.batch_size, self.max_wav_len, self.max_mel_len,
+                self.n_mel_chan)
+        vb.mel_input.detach_()
+        vb.mel_input.requires_grad_(False)
+        for b in range(vb.batch_size):
+            vb.set(b, self.calc_slice(), self)
+        vb.mel_input.requires_grad_(True)
 
-        assert self.vbatch.valid()
-        return self.vbatch
+        assert vb.valid()
+        return vb 
+
+
+class WavLoader(torch.utils.data.DataLoader):
+    def __init__(self, wav_dataset):
+        super(WavLoader, self).__init__(
+                dataset=wav_dataset,
+                batch_sampler=None,
+                collate_fn=lambda x: x
+                )
+
 

@@ -1,4 +1,5 @@
 # Full Autoencoder model
+from sys import stderr
 from hashlib import md5
 import numpy as np
 from pickle import dumps
@@ -7,8 +8,12 @@ from torch import nn
 from torch.nn.modules import loss
 from scipy.cluster.vq import kmeans
 
+import model as ae
+import checkpoint
 import ae_bn
+import data
 import mfcc
+import parse_tools  
 import vconv
 import util
 import vq_bn
@@ -129,7 +134,9 @@ class AutoEncoder(nn.Module):
 
 
     def init_codebook(self, data_source, n_samples):
-        """Initialize the VQ Embedding with samples from the encoder."""
+        """
+        Initialize the VQ Embedding with samples from the encoder
+        """
         if self.bn_type not in ('vqvae', 'vqvae-ema'):
             raise RuntimeError('init_vq_embed only applies to the vqvae model type')
 
@@ -141,7 +148,7 @@ class AutoEncoder(nn.Module):
         
         with torch.no_grad():
             while e != n_samples:
-                vbatch = data_source.next_batch()
+                vbatch = next(data_source)
                 encoding = self.encoder(vbatch.mel_input)
                 ze = self.bottleneck.linear(encoding)
                 ze = ze.permute(0, 2, 1).flatten(0, 1)
@@ -215,31 +222,118 @@ class AutoEncoder(nn.Module):
         """
 
 class Metrics(object):
-    """Manage running the model and saving output and target state"""
-    def __init__(self, state):
-        self.state = state
+    """
+    Manage running the model and saving output and target state
+    """
+
+    def __init__(self, mode, opts):
+        print('Initializing model and data source...', end='', file=stderr)
+        stderr.flush()
+        self.learning_rates = dict(zip(opts.learning_rate_steps,
+            opts.learning_rate_rates))
+        self.opts = opts
+
+        if mode == 'new':
+            pre_params = parse_tools.get_prefixed_items(vars(opts), 'pre_')
+            enc_params = parse_tools.get_prefixed_items(vars(opts), 'enc_')
+            bn_params = parse_tools.get_prefixed_items(vars(opts), 'bn_')
+            dec_params = parse_tools.get_prefixed_items(vars(opts), 'dec_')
+
+            # Initialize data
+            dataset = data.Slice(opts.dat_file, opts.n_batch, opts.n_win_batch)
+            dec_params['n_speakers'] = dataset.num_speakers()
+            model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params,
+                    dataset.n_mel_chan, training=True)
+            model.encoder.set_parent_vc(dataset.mfcc_vc)
+            dataset.post_init(model.decoder.vc)
+            optim = torch.optim.Adam(params=model.parameters(), lr=self.learning_rates[0])
+            self.state = checkpoint.State(0, model, dataset, optim)
+
+        else:
+            self.state = checkpoint.State()
+            self.state.load(opts.ckpt_file)
+            # print('Restored model, data, and optim from {}'.format(opts.ckpt_file), file=stderr)
+            #print('Data state: {}'.format(state.data), file=stderr)
+            #print('Model state: {}'.format(state.model.checksum()))
+            #print('Optim state: {}'.format(state.optim_checksum()))
+            stderr.flush()
+
+        self.ckpt_path = util.CheckpointPath(self.opts.ckpt_template)
         self.quant = None
         self.target = None
         self.softmax = torch.nn.Softmax(1) # input to this is (B, Q, N)
 
+        if self.opts.hwtype == 'GPU':
+            self.device = torch.device('cuda')
+            self.data_loader = self.state.data_loader
+            self.optim_step_fn = (lambda: self.state.optim.step(self.loss_fn))
+        else:
+            import torch_xla.core.xla_model as xm
+            import torch_xla.distributed.parallel_loader as pl
+            self.device = xm.xla_device()
+            self.data_loader = pl.ParallelLoader(self_state.data_loader, [self.device])
+            self.optim_step_fn = (lambda : xm.optimizer_step(self.state.optim,
+                    optimizer_args={'closure': self.loss_fn}))
+
+        self.state.init_torch_generator()
+        print('Done.', file=stderr)
+        stderr.flush()
+
+
+    def train(self, index):
+        ss = self.state 
+        ss.to(self.device)
+        if state.model.bn_type in ('vqvae', 'vqvae-ema'):
+            state.model.init_codebook(self.data_loader, 10000)
+
+        while ss.step < self.opts.max_steps:
+            if ss.step in self.learning_rates:
+                ss.update_learning_rate(self.learning_rates[ss.step])
+            loss = self.update()
+            if ss.model.bn_type == 'vqvae-ema' and ss.step == 10000:
+                ss.model.bottleneck.update_codebook()
+
+            if ss.step % self.opts.progress_interval == 0:
+                current_stats = {
+                        'step': ss.step,
+                        'loss': loss,
+                        'tprb_m': self.avg_prob_target(),
+                        # 'pk_d_m': avg_peak_dist
+                        }
+                if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae'):
+                    current_stats.update(ss.model.objective.metrics)
+                netmisc.print_metrics(current_stats, 100)
+                stderr.flush()
+
+            if ((ss.step % self.opts.save_interval == 0 and ss.step !=
+                self.opts.start_step)):
+                self.save_checkpoint()
+
+    def save_checkpoint(self):
+        ckpt_file = self.ckpt_path.path(self.state.step)
+        self.state.save(ckpt_file)
+        print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
+        #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
+        stderr.flush()
+
     def update(self):
-        data_batch = self.state.data.next_batch()
-        quant_pred_snip, wav_compand_out_snip = self.state.model.run(data_batch) 
+        batch = next(self.data_loader)
+        quant_pred_snip, wav_compand_out_snip = self.state.model.run(batch) 
         self.quant = quant_pred_snip
         self.target = wav_compand_out_snip
         self.probs = self.softmax(self.quant)
+        self.mel_input = batch.mel_input
+        self.optim_step_fn()
+        
 
-    def loss(self):
+    def loss_fn(self):
         """This is the closure needed for the optimizer"""
         if self.quant is None or self.target is None:
             raise RuntimeError('Must call update() first')
         self.state.optim.zero_grad()
         loss = self.state.model.objective(self.quant, self.target)
-        inputs = (self.state.data.vbatch.mel_input,
-                self.state.model.encoding_bn)
-        # inputs = (self.state.model.encoding_bn)
+        inputs = (self.mel_input, self.state.model.encoding_bn)
         mel_grad, bn_grad = torch.autograd.grad(loss, inputs, retain_graph=True)
-        # bn_grad, = torch.autograd.grad(loss, inputs, retain_graph=True)
         # print(mel_grad)
         # print(bn_grad)
         self.state.model.objective.metrics.update({
@@ -273,3 +367,66 @@ class Metrics(object):
         mean = torch.mean(target_probs)
         return mean
 
+
+
+#    def train_old(self):
+#        """
+#        Run the main training logic
+#        """
+#        ss = self.state
+#        ss.to(device=ss.device)
+#        self.data_loader = ss.data_loader
+#
+#        while ss.step < self.max_steps:
+#            if ss.step in learning_rates:
+#                ss.update_learning_rate(learning_rates[ss.step])
+#            # do 'pip install --upgrade scipy' if you get 'FutureWarning: ...'
+#            # print('in main loop')
+#
+#            #if (ss.step in (50, 100, 300, 500) and 
+#            #        ss.model.bn_type in ('vqvae', 'vqvae-ema')):
+#            #    print('Reinitializing embed with current distribution', file=stderr)
+#            #    stderr.flush()
+#            #    ss.model.init_vq_embed(ss.data)
+#
+#            loss = metrics.update()
+#            if ss.model.bn_type == 'vqvae-ema' and ss.step > 10000:
+#                ss.model.bottleneck.update_codebook()
+#
+#            # avg_peak_dist = metrics.peak_dist()
+#            avg_max = self.avg_max()
+#            avg_prob_target = self.avg_prob_target()
+#
+#            if False:
+#                for n, p in list(ss.model.encoder.named_parameters()):
+#                    g = p.grad
+#                    if g is None:
+#                        print('{:60s}\tNone'.format(n), file=stderr)
+#                    else:
+#                        fmt='{:s}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}'
+#                        print(fmt.format(n, g.max(), g.min(), g.mean(), g.std()), file=stderr)
+#
+#            # Progress reporting
+#            if ss.step % opts.progress_interval == 0:
+#                current_stats = {
+#                        'step': ss.step,
+#                        'loss': loss,
+#                        'tprb_m': avg_prob_target,
+#                        # 'pk_d_m': avg_peak_dist
+#                        }
+#                #fmt = "M\t{:d}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
+#                #print(fmt.format(ss.step, loss, avg_prob_target, avg_peak_dist,
+#                #    avg_max), file=stderr)
+#                if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae'):
+#                    current_stats.update(ss.model.objective.metrics)
+#                    
+#                netmisc.print_metrics(current_stats, 100)
+#                stderr.flush()
+#            
+#            # Checkpointing
+#            if ((ss.step % self.opts.save_interval == 0 and ss.step !=
+#                self.opts.start_step)):
+#                self.save_checkpoint()
+#
+#            ss.step += 1
+#

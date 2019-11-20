@@ -3,12 +3,13 @@ import torch
 from sys import stderr
 import util
 import model as ae
+import data
 
 class State(object):
     '''Encapsulates full state of training'''
-    def __init__(self, step=0, model=None, data=None, optim=None):
+    def __init__(self, step=0, model=None, dataset=None, optim=None):
         self.model = model 
-        self.data = data 
+        self.data_loader = data.WavLoader(dataset)
         self.optim = optim
         self.step = step
         self.device = None
@@ -21,9 +22,10 @@ class State(object):
     def load(self, ckpt_file):
         sinfo = torch.load(ckpt_file)
         self.model = pickle.loads(sinfo['model'])
-        self.data = pickle.loads(sinfo['data'])
-        self.model.encoder.set_parent_vc(self.data.mfcc_vc)
-        self.data.post_init(self.model.decoder.vc)
+        dataset = pickle.loads(sinfo['dataset'])
+        self.model.encoder.set_parent_vc(dataset.mfcc_vc)
+        dataset.post_init(self.model.decoder.vc)
+        self.data_loader = data.WavLoader(dataset)
         self.optim = torch.optim.Adam(self.model.parameters())
         self.optim.load_state_dict(sinfo['optim'])
         self.step = sinfo['step']
@@ -34,12 +36,12 @@ class State(object):
         cur_device = self.device
         self.to(torch.device('cpu'))
         mstate = pickle.dumps(self.model)
-        dstate = pickle.dumps(self.data)
+        dstate = pickle.dumps(self.data_source.dataset)
         ostate = self.optim.state_dict()
         state = {
                 'step': self.step,
                 'model': mstate,
-                'data': dstate,
+                'dataset': dstate,
                 'optim': ostate,
                 'rand_state': torch.get_rng_state(),
                 'cuda_rand_states': (torch.cuda.get_rng_state_all() if
@@ -51,7 +53,6 @@ class State(object):
     def to(self, device):
         """Hack to move both model and optimizer to device"""
         self.model.to(device)
-        self.data.to(device)
         ostate = self.optim.state_dict()
         self.optim = torch.optim.Adam(self.model.parameters())
         self.optim.load_state_dict(ostate)

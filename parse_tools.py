@@ -22,7 +22,7 @@ def train_parser():
             help='Save a checkpoint after this many steps each time')
     train.add_argument('--progress-interval', '-pi', type=int, default=1, metavar='INT',
             help='Print a progress message at this interval')
-    train.add_argument('--hardware', '-hw', type=str, default='GPU',
+    train.add_argument('--hwtype', '-hw', type=str, default='GPU',
             help='Harware target, one of CPU, GPU, or TPU')
     train.add_argument('--learning-rate-steps', '-lrs', type=int, nargs='+',
             metavar='INT', default=[0, 4e6, 6e6, 8e6],
@@ -45,10 +45,6 @@ def cold_parser():
             help='INI file specifying architectural parameters')
     cold.add_argument('--train-file', '-tf', type=str, metavar='TRAIN_FILE',
             help='INI file specifying training and other hyperparameters')
-
-    # Data generation options
-    cold.add_argument('--gpu-resident', '-gr', action='store_true',
-            default=True, help='If true, move training data into GPU memory')
 
     # Preprocessing parameters
     cold.add_argument('--pre-sample-rate', '-sr', type=int, metavar='INT', default=16000,
