@@ -16,6 +16,7 @@ import mfcc
 import parse_tools  
 import vconv
 import util
+import netmisc
 import vq_bn
 import vqema_bn
 import vae_bn
@@ -248,10 +249,12 @@ class Metrics(object):
             dataset.post_init(model.decoder.vc)
             optim = torch.optim.Adam(params=model.parameters(), lr=self.learning_rates[0])
             self.state = checkpoint.State(0, model, dataset, optim)
+            self.start_step = self.state.step
 
         else:
             self.state = checkpoint.State()
             self.state.load(opts.ckpt_file)
+            self.start_step = self.state.step
             # print('Restored model, data, and optim from {}'.format(opts.ckpt_file), file=stderr)
             #print('Data state: {}'.format(state.data), file=stderr)
             #print('Model state: {}'.format(state.model.checksum()))
@@ -266,6 +269,7 @@ class Metrics(object):
         if self.opts.hwtype == 'GPU':
             self.device = torch.device('cuda')
             self.data_loader = self.state.data_loader
+            self.data_loader.set_target_device(self.device)
             self.optim_step_fn = (lambda: self.state.optim.step(self.loss_fn))
         else:
             import torch_xla.core.xla_model as xm
@@ -276,6 +280,7 @@ class Metrics(object):
                     optimizer_args={'closure': self.loss_fn}))
 
         self.state.init_torch_generator()
+        self.data_iter = iter(self.data_loader)
         print('Done.', file=stderr)
         stderr.flush()
 
@@ -283,8 +288,8 @@ class Metrics(object):
     def train(self, index):
         ss = self.state 
         ss.to(self.device)
-        if state.model.bn_type in ('vqvae', 'vqvae-ema'):
-            state.model.init_codebook(self.data_loader, 10000)
+        if ss.model.bn_type in ('vqvae', 'vqvae-ema'):
+            ss.model.init_codebook(self.data_iter, 10000)
 
         while ss.step < self.opts.max_steps:
             if ss.step in self.learning_rates:
@@ -306,8 +311,9 @@ class Metrics(object):
                 stderr.flush()
 
             if ((ss.step % self.opts.save_interval == 0 and ss.step !=
-                self.opts.start_step)):
+                self.start_step)):
                 self.save_checkpoint()
+            ss.step += 1
 
     def save_checkpoint(self):
         ckpt_file = self.ckpt_path.path(self.state.step)
@@ -317,13 +323,13 @@ class Metrics(object):
         stderr.flush()
 
     def update(self):
-        batch = next(self.data_loader)
+        batch = next(self.data_iter)[0]
         quant_pred_snip, wav_compand_out_snip = self.state.model.run(batch) 
         self.quant = quant_pred_snip
         self.target = wav_compand_out_snip
         self.probs = self.softmax(self.quant)
         self.mel_input = batch.mel_input
-        self.optim_step_fn()
+        return self.optim_step_fn()
         
 
     def loss_fn(self):
@@ -344,7 +350,6 @@ class Metrics(object):
             })
         # loss.backward(create_graph=True, retain_graph=True)
         loss.backward()
-
         return loss
     
     def peak_dist(self):
@@ -425,7 +430,7 @@ class Metrics(object):
 #            
 #            # Checkpointing
 #            if ((ss.step % self.opts.save_interval == 0 and ss.step !=
-#                self.opts.start_step)):
+#                self.start_step)):
 #                self.save_checkpoint()
 #
 #            ss.step += 1

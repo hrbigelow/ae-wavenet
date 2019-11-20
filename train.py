@@ -25,17 +25,17 @@ def main():
         resume_parser = parse_tools.resume_parser()
         opts = resume_parser.parse_args()  
 
-    if opts.hardware == 'GPU':
+    if opts.hwtype == 'GPU':
         if not torch.cuda.is_available():
             raise RuntimeError('GPU requested but not available')
-    elif opts.hardware == 'TPU':
+    elif opts.hwtype == 'TPU':
         import torch_xla.distributed.xla_multiprocessing as xmp
     else:
         raise RuntimeError(
                 ('Invalid device {} requested.  ' 
-                + 'Must be GPU or TPU').format(opts.hardware))
+                + 'Must be GPU or TPU').format(opts.hwtype))
 
-    print('Using {}'.format(opts.hardware), file=stderr)
+    print('Using {}'.format(opts.hwtype), file=stderr)
     stderr.flush()
 
     # Start training

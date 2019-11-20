@@ -162,7 +162,7 @@ class VirtualBatch(object):
         mis = ss.mel_in_slice
 
         self.voice_index[b] = ss.voice_index
-        offset = b * self.max_lcond_len
+        offset = b * data_source.max_lcond_len
         self.lcond_slice[b,:] = torch.arange(offset + ss.lcond_slice[0],
                 offset + ss.lcond_slice[1])
         self.loss_wav_slice[b] = ss.loss_wav_slice 
@@ -174,11 +174,11 @@ class VirtualBatch(object):
         # self.mel_input[b,...] = \
         #         data_source.mel_data[19855:19899,:].transpose(1, 0)
 
-    def to(device):
-        self.voice_index.to(device)
-        self.lcond_slice.to(device)
-        self.wav_input.to(device)
-        self.mel_input.to(device)
+    def to(self, device):
+        self.voice_index = self.voice_index.to(device)
+        self.lcond_slice = self.lcond_slice.to(device)
+        self.wav_input = self.wav_input.to(device)
+        self.mel_input = self.mel_input.to(device)
 
 
     def valid(self):
@@ -195,7 +195,7 @@ class VirtualBatch(object):
         return self.loss_wav_slice[0][1] - self.loss_wav_slice[0][0]
 
 
-class Slice(torch.utils.data.Dataset):
+class Slice(torch.utils.data.IterableDataset):
     """
     Defines the current batch of data in iterator style.
     Use with automatic batching disabled, and collate_fn = lambda x: x
@@ -219,6 +219,7 @@ class Slice(torch.utils.data.Dataset):
         self.mel_data
         """
         super(Slice, self).__init__()
+        self.target_device = None
         self.dat_file = self.init_args['dat_file']
         self.batch_size = self.init_args['batch_size']
         self.window_batch_size = self.init_args['window_batch_size']
@@ -405,6 +406,12 @@ class Slice(torch.utils.data.Dataset):
         self.snd_data = snd_data
         self.mel_data = mel_data
 
+    def set_target_device(self, target_device):
+        self.target_device = target_device
+
+    def __iter__(self):
+        return self
+
     def __next__(self):
         """
         Get a random slice of a file, together with its start position and ID.
@@ -418,19 +425,32 @@ class Slice(torch.utils.data.Dataset):
         vb.mel_input.detach_()
         vb.mel_input.requires_grad_(False)
         for b in range(vb.batch_size):
-            vb.set(b, self.calc_slice(), self)
+            vb.set_one(b, self.calc_slice(), self)
         vb.mel_input.requires_grad_(True)
 
         assert vb.valid()
+        if self.target_device:
+            vb.to(self.target_device)
+
         return vb 
 
 
 class WavLoader(torch.utils.data.DataLoader):
-    def __init__(self, wav_dataset):
+    """
+    Data loader which may be wrapped by a
+    torch_xla.distributed.parallel_loader.
+    This loader returns batches of tensors on cpu, optionally
+    pushing them to target_device if provided
+    """
+    def __init__(self, wav_dataset, target_device=None):
+        self.target_device = target_device
         super(WavLoader, self).__init__(
                 dataset=wav_dataset,
                 batch_sampler=None,
                 collate_fn=lambda x: x
                 )
+
+    def set_target_device(self, target_device):
+        self.dataset.set_target_device(target_device)
 
 
