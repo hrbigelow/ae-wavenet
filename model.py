@@ -249,6 +249,7 @@ class Metrics(object):
         self.opts = opts
 
         if mode == 'new':
+            torch.manual_seed(opts.random_seed)
             pre_params = parse_tools.get_prefixed_items(vars(opts), 'pre_')
             enc_params = parse_tools.get_prefixed_items(vars(opts), 'enc_')
             bn_params = parse_tools.get_prefixed_items(vars(opts), 'bn_')
@@ -324,7 +325,7 @@ class Metrics(object):
                         }
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae'):
                     current_stats.update(ss.model.objective.metrics)
-                netmisc.print_metrics(current_stats, 100)
+                netmisc.print_metrics(current_stats, index, 100)
                 stderr.flush()
 
             if ((ss.step % self.opts.save_interval == 0 and ss.step !=

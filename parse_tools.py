@@ -31,6 +31,9 @@ def train_parser():
             metavar='FLOAT', default=[4e-4, 2e-4, 1e-4, 5e-5],
             help='Each of these learning rates will be applied at the '
             'corresponding value for --learning-rate-steps')
+    train.add_argument('--random-seed', '-rnd', type=int, metavar='INT',
+            default=2507,
+            help='Random seed for weights initialization etc')
     train.add_argument('ckpt_template', type=str, metavar='CHECKPOINT_TEMPLATE',
             help="Full or relative path, including a filename template, containing "
             "a single %%, which will be replaced by the step number.")
