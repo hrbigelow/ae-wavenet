@@ -28,7 +28,7 @@ def main():
     if opts.hwtype == 'GPU':
         if not torch.cuda.is_available():
             raise RuntimeError('GPU requested but not available')
-    elif opts.hwtype == 'TPU':
+    elif opts.hwtype in ('TPU', 'TPU-single'):
         import torch_xla.distributed.xla_multiprocessing as xmp
     else:
         raise RuntimeError(
@@ -47,12 +47,13 @@ def main():
 
     if opts.hwtype == 'GPU':
         ae.Metrics(mode, opts).train(0)
-    else:
+    elif opts.hwtype == 'TPU':
         def _mp_fn(index, mode, opts):
             m = ae.Metrics(mode, opts)
             m.train(index)
-
         xmp.spawn(_mp_fn, args=(mode, opts), nprocs=1, start_method='fork')
+    elif opts.hwtype == 'TPU-single':
+        ae.Metrics(mode, opts).train(0)
 
 
 if __name__ == '__main__':
