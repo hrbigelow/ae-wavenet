@@ -217,10 +217,25 @@ class AutoEncoder(nn.Module):
         # quant_pred[:,:,0] is a prediction for wav_compand_out[:,1] 
         return quant[...,:-1], wav_batch_out[...,1:]
 
-    def geometry(self):
-        """
 
-        """
+class GPULoaderIter(object):
+    def __init__(self, data_iter):
+        self.data_iter = data_iter
+
+    def __next__(self):
+        return self.data_iter.__next__()[0]
+
+
+class TPULoaderIter(object):
+    def __init__(self, loader, device):
+        self.loader = loader
+        self.device = device
+
+    def __next__(self):
+        return self.loader.per_device_loader(self.device)
+
+
+
 
 class Metrics(object):
     """
@@ -271,16 +286,17 @@ class Metrics(object):
             self.data_loader = self.state.data_loader
             self.data_loader.set_target_device(self.device)
             self.optim_step_fn = (lambda: self.state.optim.step(self.loss_fn))
+            self.data_iter = GPULoaderIter(iter(self.data_loader))
         else:
             import torch_xla.core.xla_model as xm
             import torch_xla.distributed.parallel_loader as pl
             self.device = xm.xla_device()
             self.data_loader = pl.ParallelLoader(self.state.data_loader, [self.device])
+            self.data_iter = TPULoaderIter(self.data_loader, self.device)
             self.optim_step_fn = (lambda : xm.optimizer_step(self.state.optim,
                     optimizer_args={'closure': self.loss_fn}))
 
         self.state.init_torch_generator()
-        self.data_iter = iter(self.data_loader)
         print('Done.', file=stderr)
         stderr.flush()
 
@@ -323,7 +339,7 @@ class Metrics(object):
         stderr.flush()
 
     def update(self):
-        batch = next(self.data_iter)[0]
+        batch = next(self.data_iter)
         quant_pred_snip, wav_compand_out_snip = self.state.model.run(batch) 
         self.quant = quant_pred_snip
         self.target = wav_compand_out_snip
