@@ -442,12 +442,16 @@ class WavLoader(torch.utils.data.DataLoader):
     This loader returns batches of tensors on cpu, optionally
     pushing them to target_device if provided
     """
+    @staticmethod
+    def ident(x):
+        return x
+
     def __init__(self, wav_dataset, target_device=None):
         self.target_device = target_device
         super(WavLoader, self).__init__(
                 dataset=wav_dataset,
                 batch_sampler=None,
-                collate_fn=lambda x: x
+                collate_fn=self.ident
                 )
 
     def set_target_device(self, target_device):
