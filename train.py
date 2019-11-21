@@ -50,7 +50,7 @@ def main():
     else:
         def _mp_fn(index, mode, opts):
             m = ae.Metrics(mode, opts)
-            m.train()
+            m.train(index)
 
         xmp.spawn(_mp_fn, args=(mode, opts), nprocs=8, start_method='fork')
 
