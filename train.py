@@ -52,7 +52,7 @@ def main():
             m = ae.Metrics(mode, opts)
             m.train(index)
 
-        xmp.spawn(_mp_fn, args=(mode, opts), nprocs=8, start_method='fork')
+        xmp.spawn(_mp_fn, args=(mode, opts), nprocs=1, start_method='fork')
 
 
 if __name__ == '__main__':
