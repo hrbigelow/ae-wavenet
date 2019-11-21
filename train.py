@@ -48,7 +48,11 @@ def main():
     if opts.hwtype == 'GPU':
         ae.Metrics(mode, opts).train(0)
     else:
-        xmp.spawn(ae.Metrics(mode, opts).train, args=(), nprocs=8, start_method='fork')
+        def _mp_fn(index, mode, opts):
+            m = ae.Metrics(mode, opts)
+            m.train()
+
+        xmp.spawn(_mp_fn, args=(mode, opts), nprocs=8, start_method='fork')
 
 
 if __name__ == '__main__':
