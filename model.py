@@ -312,7 +312,8 @@ class Metrics(object):
         while ss.step < self.opts.max_steps:
             if ss.step in self.learning_rates:
                 ss.update_learning_rate(self.learning_rates[ss.step])
-            loss = self.update()
+            loss = self.optim_step_fn()
+
             if ss.model.bn_type == 'vqvae-ema' and ss.step == 10000:
                 ss.model.bottleneck.update_codebook()
 
@@ -340,20 +341,22 @@ class Metrics(object):
         #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
         stderr.flush()
 
-    def update(self):
+    def run_batch(self):
+        """
+        run the next batch through the model, populating quantities for the
+        loss.
+        """
         batch = next(self.data_iter)
         quant_pred_snip, wav_compand_out_snip = self.state.model.run(batch) 
         self.quant = quant_pred_snip
         self.target = wav_compand_out_snip
         self.probs = self.softmax(self.quant)
         self.mel_input = batch.mel_input
-        return self.optim_step_fn()
         
 
     def loss_fn(self):
         """This is the closure needed for the optimizer"""
-        if self.quant is None or self.target is None:
-            raise RuntimeError('Must call update() first')
+        self.run_batch()
         self.state.optim.zero_grad()
         loss = self.state.model.objective(self.quant, self.target)
         inputs = (self.mel_input, self.state.model.encoding_bn)
