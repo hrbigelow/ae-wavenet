@@ -227,12 +227,11 @@ class GPULoaderIter(object):
 
 
 class TPULoaderIter(object):
-    def __init__(self, loader, device):
-        self.loader = loader
-        self.device = device
+    def __init__(self, parallel_loader, device):
+        self.per_dev_loader = parallel_loader.per_device_loader(device)
 
     def __next__(self):
-        return self.loader.per_device_loader(self.device)
+        return self.per_dev_loader.__next__()
 
 
 
