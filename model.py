@@ -356,14 +356,14 @@ class Metrics(object):
             raise RuntimeError('Must call update() first')
         self.state.optim.zero_grad()
         loss = self.state.model.objective(self.quant, self.target)
-        # inputs = (self.mel_input, self.state.model.encoding_bn)
-        # mel_grad, bn_grad = torch.autograd.grad(loss, inputs, retain_graph=True)
-        inputs = (self.state.model.encoding_bn)
-        (bn_grad,) = torch.autograd.grad(loss, inputs, retain_graph=True)
+        inputs = (self.mel_input, self.state.model.encoding_bn)
+        mel_grad, bn_grad = torch.autograd.grad(loss, inputs, retain_graph=True)
+        # inputs = (self.state.model.encoding_bn)
+        # (bn_grad,) = torch.autograd.grad(loss, inputs, retain_graph=True)
         # print(mel_grad)
         # print(bn_grad)
         self.state.model.objective.metrics.update({
-            # 'mel_grad_sd': mel_grad.std(),
+            'mel_grad_sd': mel_grad.std(),
             # 'mel_grad_max': mel_grad.max(),
             'bn_grad_sd': bn_grad.std(),
             # 'bn_grad_max': bn_grad.max()
