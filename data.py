@@ -5,6 +5,7 @@ import librosa
 import numpy as np
 import torch
 import torch.utils.data
+import jitter
 from torch import nn
 import vconv
 import copy
@@ -134,10 +135,13 @@ OutputRange = namedtuple('OutputRange', [
 
 
 class VirtualBatch(object):
-    def __init__(self, batch_size, max_wav_len, max_mel_len, mel_chan):
+    def __init__(self, batch_size, max_wav_len, max_mel_len, max_embed_len,
+            mel_chan):
         super(VirtualBatch, self).__init__()
         self.batch_size = batch_size
         self.voice_index = torch.empty(batch_size, dtype=torch.long)
+        self.jitter_index = torch.empty(batch_size, max_embed_len,
+                dtype=torch.long)
         self.lcond_slice = torch.empty(batch_size, max_wav_len,
                 dtype=torch.long)
         self.loss_wav_slice = [None] * batch_size 
@@ -145,11 +149,17 @@ class VirtualBatch(object):
         self.mel_input = torch.empty(batch_size, mel_chan, max_mel_len) 
 
     def __repr__(self):
-        fmt = ('voice_index: {}\nlcond_slice: {}\nloss_wav_slice: {}\n' +
-                'wav_input.shape: {}\nmel_input.shape: {}\n')
-        return fmt.format(self.voice_index, self.lcond_slice,
-                self.loss_wav_slice, self.wav_input.shape,
-                self.mel_input.shape)
+        fmt = (
+            'voice_index: {}\n' + 
+            'jitter_index: {}\n' + 
+            'lcond_slice: {}\n' +
+            'loss_wav_slice: {}\n' +
+            'wav_input.shape: {}\n' + 
+            'mel_input.shape: {}\n'
+        )
+        return fmt.format(self.voice_index, self.jitter_index,
+            self.lcond_slice, self.loss_wav_slice, self.wav_input.shape,
+            self.mel_input.shape)
 
     def set_one(self, b, sample_slice, data_source):
         """
@@ -160,8 +170,11 @@ class VirtualBatch(object):
         mo = ss.mel_offset
         dws = ss.dec_wav_slice
         mis = ss.mel_in_slice
+        nz = data_source.max_embed_len
 
         self.voice_index[b] = ss.voice_index
+        self.jitter_index[b,:] = \
+                torch.tensor(data_source.jitter.gen_indices(nz) + b * nz) 
         offset = b * data_source.max_lcond_len
         self.lcond_slice[b,:] = torch.arange(offset + ss.lcond_slice[0],
                 offset + ss.lcond_slice[1])
@@ -176,6 +189,7 @@ class VirtualBatch(object):
 
     def to(self, device):
         self.voice_index = self.voice_index.to(device)
+        self.jitter_index = self.jitter_index.to(device)
         self.lcond_slice = self.lcond_slice.to(device)
         self.wav_input = self.wav_input.to(device)
         self.mel_input = self.mel_input.to(device)
@@ -200,11 +214,12 @@ class Slice(torch.utils.data.IterableDataset):
     Defines the current batch of data in iterator style.
     Use with automatic batching disabled, and collate_fn = lambda x: x
     """
-    def __init__(self, dat_file, batch_size, window_batch_size):
+    def __init__(self, dat_file, batch_size, window_batch_size, jitter_prob):
         self.init_args = {
                 'dat_file': dat_file,
                 'batch_size': batch_size,
-                'window_batch_size': window_batch_size
+                'window_batch_size': window_batch_size,
+                'jitter_prob': jitter_prob
                 }
         self._initialize()
 
@@ -214,6 +229,7 @@ class Slice(torch.utils.data.IterableDataset):
         Sets
         self.batch_size
         self.window_batch_size
+        self.jitter_prob
         self.mfcc_vc
         self.snd_data
         self.mel_data
@@ -223,6 +239,7 @@ class Slice(torch.utils.data.IterableDataset):
         self.dat_file = self.init_args['dat_file']
         self.batch_size = self.init_args['batch_size']
         self.window_batch_size = self.init_args['window_batch_size']
+        self.jitter_prob = self.init_args['jitter_prob']
 
         try:
             with open(self.dat_file, 'rb') as dat_fh:
@@ -244,6 +261,7 @@ class Slice(torch.utils.data.IterableDataset):
                 filter_info=mfcc_pars['window_size'], stride=mfcc_pars['hop_size'],
                 parent=None, name='MFCC'
         )
+        self.jitter = jitter.Jitter(self.jitter_prob) 
 
     def __setstate__(self, init_args):
         self.init_args = init_args 
@@ -263,19 +281,22 @@ class Slice(torch.utils.data.IterableDataset):
         Initializes:
         self.max_wav_len
         self.max_mel_len
+        self.max_embed_len
         self.max_lcond_len
         """
         # Calculate max length of mfcc encoder input and wav decoder input
         w = self.window_batch_size
-        beg_grcc_vc = self.vcs['beg_grcc']
-        end_grcc_vc = self.vcs['end_grcc']
+        beg_grcc_vc = self.decoder_vcs['beg_grcc']
+        end_grcc_vc = self.decoder_vcs['end_grcc']
         autoenc = self.mfcc_vc, end_grcc_vc
-        autoenc_clip = self.mfcc_vc.child, end_grcc_vc
-        enc = self.mfcc_vc.child, self.vcs['last_upsample']
+        autoenc_clip = self.encoder_vcs['beg'], end_grcc_vc
+        enc_plus = self.encoder_vcs['beg'], self.decoder_vcs['last_upsample']
+        enc = self.encoder_vcs['beg'], self.encoder_vcs['end']
         dec = beg_grcc_vc, end_grcc_vc 
 
         max_spacing = vconv.max_spacing(*autoenc, 1)
         max_mel_len = 0
+        max_embed_len = 0
         max_lcond_len = 0
         for b in range(max_spacing):
             out = vconv.GridRange((0, 100000), (b, b + w), 1)
@@ -284,13 +305,16 @@ class Slice(torch.utils.data.IterableDataset):
             max_mel_len = max(mfcc.sub_length(), max_mel_len)
             max_mel_in_gr = vconv.GridRange((0, 1000000), (b, b +
                     max_mel_len * mfcc.gs), mfcc.gs)
-            lcond_gr = vconv.output_range(*enc, max_mel_in_gr)
+            embed_gr = vconv.output_range(*enc, max_mel_in_gr)
+            lcond_gr = vconv.output_range(*enc_plus, max_mel_in_gr)
             max_lcond_len = max(max_lcond_len, lcond_gr.sub_length())
+            max_embed_len = max(max_embed_len, embed_gr.sub_length())
         
         # Calculate decoder wav input length
         slice_out = vconv.GridRange((0, 100000), (0, w), 1)
         self.max_wav_len = vconv.input_range(*dec, slice_out).sub_length()
         self.max_mel_len = max_mel_len
+        self.max_embed_len = max_embed_len
         self.max_lcond_len = max_lcond_len
         
 
@@ -311,8 +335,8 @@ class Slice(torch.utils.data.IterableDataset):
         Initialize self.out_range
         """
         preproc = self.mfcc_vc, self.mfcc_vc
-        autoenc = self.mfcc_vc, self.vcs['end_grcc']
-        autoenc_clip = self.mfcc_vc.child, self.vcs['end_grcc']
+        autoenc = self.mfcc_vc, self.decoder_vcs['end_grcc']
+        autoenc_clip = self.encoder_vcs['beg'], self.decoder_vcs['end_grcc']
 
         wlen = self.samples[si].wav_e - self.samples[si].wav_b
         full_wav_in = vconv.GridRange((0, wlen), (0, wlen), 1)
@@ -334,13 +358,13 @@ class Slice(torch.utils.data.IterableDataset):
         Return a SampleSlice corresponding to self.out_range[oi] 
         """
         rg = torch.empty((1), dtype=torch.int64).cpu()
+        autoenc_clip = self.encoder_vcs['beg'], self.decoder_vcs['end_grcc']
         while True:
             pick = rg.random_()[0] % len(self.out_range)
             out_range = self.out_range[pick]
             slice_out = out_range.output_gr
             sample = self.samples[out_range.sample_index]
             wlen = sample.wav_e - sample.wav_b
-            autoenc_clip = self.mfcc_vc.child, self.vcs['end_grcc']
             mfcc_in = vconv.input_range(*autoenc_clip, slice_out)
             assert mfcc_in.sub_length() <= self.max_mel_len
             mfcc_add = (self.max_mel_len - mfcc_in.sub_length()) * mfcc_in.gs
@@ -354,10 +378,10 @@ class Slice(torch.utils.data.IterableDataset):
         full_wav_in = vconv.GridRange((0, wlen), (0, wlen), 1)
         full_mel_in = vconv.output_range(*preproc, full_wav_in)
 
-        enc = self.mfcc_vc.child, self.vcs['last_upsample']
-        dec = self.vcs['beg_grcc'], self.vcs['end_grcc'] 
+        enc_plus = self.encoder_vcs['beg'], self.decoder_vcs['last_upsample']
+        dec = self.decoder_vcs['beg_grcc'], self.decoder_vcs['end_grcc'] 
 
-        lcond_pad = vconv.output_range(*enc, mfcc_in_pad)
+        lcond_pad = vconv.output_range(*enc_plus, mfcc_in_pad)
         wav_in = vconv.input_range(*dec, slice_out)
 
         # slice of wav tensor to be input to decoder
@@ -376,15 +400,15 @@ class Slice(torch.utils.data.IterableDataset):
                 mel_in_slice, loss_wav_slice, lcond_slice, sample.voice_index)
 
 
-    def post_init(self, virtual_convs):
+    def post_init(self, encoder_vcs, decoder_vcs):
         """
         Initializes:
-        self.vbatch
         self.slices
         Depends on information computed from the model, so must be
         called after model construction.
         """
-        self.vcs = virtual_convs
+        self.encoder_vcs = encoder_vcs
+        self.decoder_vcs = decoder_vcs
         self.init_geometry()
         self.init_slices()
 
@@ -421,7 +445,7 @@ class Slice(torch.utils.data.IterableDataset):
         not GPU.
         """
         vb = VirtualBatch(self.batch_size, self.max_wav_len, self.max_mel_len,
-                self.n_mel_chan)
+                self.max_embed_len, self.n_mel_chan)
         vb.mel_input.detach_()
         vb.mel_input.requires_grad_(False)
         for b in range(vb.batch_size):

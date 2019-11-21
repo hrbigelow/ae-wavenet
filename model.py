@@ -114,7 +114,7 @@ class AutoEncoder(nn.Module):
         self.bn_type = bn_type
         self.decoder = dec.WaveNet(
                 **dec_params,
-                parent_vc=self.encoder.vc,
+                parent_vc=self.encoder.vc['end'],
                 n_lc_in=bn_params['n_out']
                 )
         self.vc = self.decoder.vc
@@ -169,7 +169,7 @@ class AutoEncoder(nn.Module):
         return util.tensor_digest(self.parameters())
         
 
-    def forward(self, mels, wav_onehot_dec, voice_inds, lcond_slice):
+    def forward(self, mels, wav_onehot_dec, voice_inds, jitter_index, lcond_slice):
         """
         B: n_batch
         M: n_mels
@@ -188,7 +188,7 @@ class AutoEncoder(nn.Module):
         encoding_bn = self.bottleneck(encoding)
         self.encoding_bn = encoding_bn
         quant = self.decoder(wav_onehot_dec, encoding_bn, voice_inds,
-                lcond_slice)
+                jitter_index, lcond_slice)
         return quant
 
     def run(self, vbatch):
@@ -213,7 +213,7 @@ class AutoEncoder(nn.Module):
         self.wav_onehot_dec = wav_onehot_dec
 
         quant = self.forward(vbatch.mel_input, wav_onehot_dec,
-                vbatch.voice_index, vbatch.lcond_slice)
+                vbatch.voice_index, vbatch.jitter_index, vbatch.lcond_slice)
         # quant_pred[:,:,0] is a prediction for wav_compand_out[:,1] 
         return quant[...,:-1], wav_batch_out[...,1:]
 
@@ -255,12 +255,14 @@ class Metrics(object):
             dec_params = parse_tools.get_prefixed_items(vars(opts), 'dec_')
 
             # Initialize data
-            dataset = data.Slice(opts.dat_file, opts.n_batch, opts.n_win_batch)
+            dataset = data.Slice(opts.dat_file, opts.n_batch, opts.n_win_batch,
+                    dec_params['jitter_prob'])
+            del dec_params['jitter_prob']
             dec_params['n_speakers'] = dataset.num_speakers()
             model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params,
                     dataset.n_mel_chan, training=True)
             model.encoder.set_parent_vc(dataset.mfcc_vc)
-            dataset.post_init(model.decoder.vc)
+            dataset.post_init(model.encoder.vc, model.decoder.vc)
             optim = torch.optim.Adam(params=model.parameters(), lr=self.learning_rates[0])
             self.state = checkpoint.State(0, model, dataset, optim)
             self.start_step = self.state.step

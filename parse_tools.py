@@ -74,6 +74,9 @@ def cold_parser():
             help='number of embedding vectors, K, in section 3.1 of VQVAE paper')
 
     # Decoder architectural parameters
+    cold.add_argument('--dec-jitter-prob', '-djp', type=float, metavar='FLOAT',
+            default=0.12,
+            help='replacement probability for time-jitter regularization')
     cold.add_argument('--dec-filter-sz', '-dfs', type=int, metavar='INT', default=2,
             help='decoder number of dilation kernel elements')
     # !!! This is set equal to --bn-n-out

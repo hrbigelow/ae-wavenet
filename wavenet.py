@@ -99,93 +99,6 @@ class GatedResidualCondConv(nn.Module):
         return sig, skp 
 
 
-class Jitter(nn.Module):
-    """Time-jitter regularization.  With probability [p, (1-2p), p], replace
-    element i with element [i-1, i, i+1] respectively.  Disallow a run of 3
-    identical elements in the output.  Let p = replacement probability, s =
-    "stay probability" = (1-2p).
-    
-    tmp[i][j] = Categorical(a, b, c)
-    encodes P(x_t|x_(t-1), x_(t-2)) 
-    a 2nd-order Markov chain which generates a sequence in alphabet {0, 1, 2}. 
-    
-    The following meanings hold:
-
-    0: replace element with previous
-    1: do not replace 
-    2: replace element with following
-
-    For instance, suppose you have:
-    source sequence: ABCDEFGHIJKLM
-    jitter sequence: 0112021012210
-    output sequence: *BCEDGGGIKLLL
-
-    The only triplet that is disallowed is 012, which causes use of the same source
-    element three times in a row.  So, P(x_t=0|x_(t-2)=2, x_(t-1)=1) = 0 and is
-    renormalized.  Otherwise, all conditional distributions have the same shape,
-    [p, (1-2p), p].
-
-    Jitter has a "receptive field" of 3, and it is unpadded.  Our index mask will be
-    pre-constructed to have {0, ..., n_win
-
-    """
-    def __init__(self, replace_prob):
-        """n_win gives number of 
-        """
-        super(Jitter, self).__init__()
-        p, s = replace_prob, (1 - 2 * replace_prob)
-        self.cond2d = np.tile([p, s, p], 9).reshape(3, 3, 3)
-        self.cond2d[2][1] = [0, s/(p+s), p/(p+s)]
-        self.mindex = None
-        self.adjust = None
-
-    def gen_mask(self):
-        """
-        populates a tensor mask to be used for jitter, and sends it to GPU for
-        next window
-        """
-        n_batch = self.mindex.shape[0]
-        n_time = self.mindex.shape[1] - 1
-        local = np.ones((n_batch, n_time + 1), dtype=np.int32)
-
-        for b in range(n_batch):
-            # The Markov sampling process
-            for t in range(2, n_time):
-                p2 = local[b, t-2]
-                p1 = local[b, t-1]
-                local[b, t] = np.random.choice([0,1,2], 1, False,
-                        self.cond2d[p1][p1])
-            local[b, n_time] = 1
-
-        # adjusts so that temporary value of mindex[i] = {0, 1, 2} imply {i-1,
-        # i, i+1} also, first and last elements of mindex mean 'do not replace
-        # the element with previous or next, but choose the existing element.
-        # This prevents attempting to replace the first element of the input
-        # with a non-existent 'previous' element, and likewise with the last
-        # element.
-        self.mindex[...] = torch.as_tensor(local + self.adjust)
-
-
-    # Will this play well with back-prop?
-    def forward(self, x):
-        """
-        Input: (B, I, T)
-        """
-        n_batch = x.shape[0]
-        if self.mindex is None:
-            n_time = x.shape[2]
-            self.adjust = np.arange(n_time + 1) - 2
-            self.mindex = x.new_empty(n_batch, n_time + 1, dtype=torch.long)
-
-        self.gen_mask()
-
-        assert x.shape[2] == self.mindex.shape[1] - 1
-        y = x.new_empty(x.shape)
-        for b in range(n_batch):
-            y[b] = torch.index_select(x[b], 1, self.mindex[b,1:])
-        return y 
-
-
 class Conditioning(nn.Module):
     """
     Module for merging up-sampled local conditioning vectors
@@ -251,7 +164,7 @@ class Conv1dWrap(nn.Conv1d):
 class WaveNet(nn.Module):
     def __init__(self, filter_sz, n_lc_in, n_lc_out, lc_upsample_filt_sizes,
             lc_upsample_strides, n_res, n_dil, n_skp, n_post, n_quant,
-            n_blocks, n_block_layers, jitter_prob, n_speakers, n_global_embed,
+            n_blocks, n_block_layers, n_speakers, n_global_embed,
             bias=True, parent_vc=None):
         super(WaveNet, self).__init__()
 
@@ -260,7 +173,6 @@ class WaveNet(nn.Module):
         self.n_quant = n_quant
         self.quant_onehot = None 
         self.bias = bias
-        self.jitter = Jitter(jitter_prob)
         post_jitter_filt_sz = 3
         lc_input_stepsize = np_prod(lc_upsample_strides) 
 
@@ -324,7 +236,7 @@ class WaveNet(nn.Module):
             grc.post_init()
 
 
-    def forward(self, wav_onehot, lc_sparse, speaker_inds, lcond_slice):
+    def forward(self, wav_onehot, lc_sparse, speaker_inds, jitter_index, lcond_slice):
         """
         B: n_batch (# of separate wav streams being processed)
         T1: n_wav_timesteps
@@ -338,16 +250,18 @@ class WaveNet(nn.Module):
         speaker_inds: (B, T)
         outputs: (B, Q, N)
         """
-        lc_sparse = self.jitter(lc_sparse)
-        lc_sparse = self.lc_conv(lc_sparse) 
-        lc_dense = self.lc_upsample(lc_sparse)
+        D1 = lc_sparse.size()[1]
+        lc_jitter = torch.take(lc_sparse,
+                jitter_index.unsqueeze(1).expand(-1, D1, -1))
+        lc_conv = self.lc_conv(lc_jitter) 
+        lc_dense = self.lc_upsample(lc_conv)
 
         # Trimming due to different phases of the input MFCC windows
-        B, D, W1 = lc_dense.size()
-        W2 = lcond_slice.size()[1] 
+        # W2 = lcond_slice.size()[1] 
 
+        D2 = lc_dense.size()[1]
         lc_dense_trim = torch.take(lc_dense,
-                lcond_slice.unsqueeze(1).expand(B, D, W2))
+                lcond_slice.unsqueeze(1).expand(-1, D2, -1))
 
         cond = self.cond(lc_dense_trim, speaker_inds)
         # "The conditioning signal was passed separately into each layer" - p 5 pp 1.

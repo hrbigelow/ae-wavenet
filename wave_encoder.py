@@ -64,8 +64,8 @@ class Encoder(nn.Module):
         # stack_residual = [True] * 9
         # stack_residual = [False] * 9
         stack_info = zip(stack_in_chan, stack_filter_sz, stack_strides, stack_residual)
-
         self.net = nn.Sequential()
+        self.vc = dict()
 
         for i, (in_chan, filt_sz, stride, do_res) in enumerate(stack_info):
             name = 'CRR_{}(filter_sz={}, stride={}, do_res={})'.format(i,
@@ -75,12 +75,12 @@ class Encoder(nn.Module):
             self.net.add_module(str(i), mod)
             parent_vc = mod.vc
 
-        self.beg_vc = self.net[0].vc
-        self.vc = parent_vc 
+        self.vc['beg'] = self.net[0].vc
+        self.vc['end'] = self.net[-1].vc
 
     def set_parent_vc(self, parent_vc):
-        self.beg_vc.parent = parent_vc
-        parent_vc.child = self.beg_vc
+        self.vc['beg'].parent = parent_vc
+        parent_vc.child = self.vc['beg']
 
 
     def forward(self, mels):
