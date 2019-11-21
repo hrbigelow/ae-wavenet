@@ -426,11 +426,11 @@ class Slice(torch.utils.data.IterableDataset):
         vb.mel_input.requires_grad_(False)
         for b in range(vb.batch_size):
             vb.set_one(b, self.calc_slice(), self)
-        vb.mel_input.requires_grad_(True)
 
         assert vb.valid()
         if self.target_device:
             vb.to(self.target_device)
+        vb.mel_input.requires_grad_(True)
 
         return vb 
 
