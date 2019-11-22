@@ -178,7 +178,7 @@ class VirtualBatch(object):
         offset = b * data_source.max_lcond_len
         self.lcond_slice[b,:] = torch.arange(offset + ss.lcond_slice[0],
                 offset + ss.lcond_slice[1])
-        self.loss_wav_slice[b] = torch.tensor(ss.loss_wav_slice)
+        self.loss_wav_slice[b,:] = torch.tensor(ss.loss_wav_slice)
         self.wav_input[b,...] = data_source.snd_data[wo + dws[0]:wo + dws[1]] 
         self.mel_input[b,...] = data_source.mel_data[mo + mis[0]:mo +
                 mis[1],:].transpose(1, 0)
