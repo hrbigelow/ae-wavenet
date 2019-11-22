@@ -144,7 +144,7 @@ class VirtualBatch(object):
                 dtype=torch.long)
         self.lcond_slice = torch.empty(batch_size, max_wav_len,
                 dtype=torch.long)
-        self.loss_wav_slice = [None] * batch_size 
+        self.loss_wav_slice = torch.empty(batch_size, 2, dtype=torch.long)
         self.wav_input = torch.empty(batch_size, max_wav_len)
         self.mel_input = torch.empty(batch_size, mel_chan, max_mel_len) 
 
@@ -178,7 +178,7 @@ class VirtualBatch(object):
         offset = b * data_source.max_lcond_len
         self.lcond_slice[b,:] = torch.arange(offset + ss.lcond_slice[0],
                 offset + ss.lcond_slice[1])
-        self.loss_wav_slice[b] = ss.loss_wav_slice 
+        self.loss_wav_slice[b] = torch.tensor(ss.loss_wav_slice)
         self.wav_input[b,...] = data_source.snd_data[wo + dws[0]:wo + dws[1]] 
         self.mel_input[b,...] = data_source.mel_data[mo + mis[0]:mo +
                 mis[1],:].transpose(1, 0)
@@ -191,6 +191,7 @@ class VirtualBatch(object):
         self.voice_index = self.voice_index.to(device)
         self.jitter_index = self.jitter_index.to(device)
         self.lcond_slice = self.lcond_slice.to(device)
+        self.loss_wav_slice = self.loss_wav_slice.to(device)
         self.wav_input = self.wav_input.to(device)
         self.mel_input = self.mel_input.to(device)
 
