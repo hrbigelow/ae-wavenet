@@ -24,7 +24,7 @@ class State(object):
         self.model = pickle.loads(sinfo['model'])
         dataset = pickle.loads(sinfo['dataset'])
         self.model.encoder.set_parent_vc(dataset.mfcc_vc)
-        dataset.post_init(self.model.decoder.vc)
+        dataset.post_init(self.model.encoder.vc, self.model.decoder.vc)
         self.data_loader = data.WavLoader(dataset)
         self.optim = torch.optim.Adam(self.model.parameters())
         self.optim.load_state_dict(sinfo['optim'])
@@ -36,7 +36,7 @@ class State(object):
         cur_device = self.device
         self.to(torch.device('cpu'))
         mstate = pickle.dumps(self.model)
-        dstate = pickle.dumps(self.data_source.dataset)
+        dstate = pickle.dumps(self.data_loader.dataset)
         ostate = self.optim.state_dict()
         state = {
                 'step': self.step,
