@@ -215,9 +215,8 @@ class Slice(torch.utils.data.IterableDataset):
     Defines the current batch of data in iterator style.
     Use with automatic batching disabled, and collate_fn = lambda x: x
     """
-    def __init__(self, dat_file, batch_size, window_batch_size, jitter_prob):
+    def __init__(self, batch_size, window_batch_size, jitter_prob):
         self.init_args = {
-                'dat_file': dat_file,
                 'batch_size': batch_size,
                 'window_batch_size': window_batch_size,
                 'jitter_prob': jitter_prob
@@ -237,17 +236,19 @@ class Slice(torch.utils.data.IterableDataset):
         """
         super(Slice, self).__init__()
         self.target_device = None
-        self.dat_file = self.init_args['dat_file']
         self.batch_size = self.init_args['batch_size']
         self.window_batch_size = self.init_args['window_batch_size']
         self.jitter_prob = self.init_args['jitter_prob']
+        self.jitter = jitter.Jitter(self.jitter_prob) 
 
+
+    def load_data(self, dat_file):
         try:
-            with open(self.dat_file, 'rb') as dat_fh:
+            with open(dat_file, 'rb') as dat_fh:
                 dat = pickle.load(dat_fh)
         except IOError:
-            print('Could not open preprocessed data file {}.'.format(self.dat_file),
-                    file=stderr)
+            print('Could not open preprocessed data file {}.'.format(
+                dat_file), file=stderr)
             stderr.flush()
             exit(1)
 
@@ -262,7 +263,7 @@ class Slice(torch.utils.data.IterableDataset):
                 filter_info=mfcc_pars['window_size'], stride=mfcc_pars['hop_size'],
                 parent=None, name='MFCC'
         )
-        self.jitter = jitter.Jitter(self.jitter_prob) 
+
 
     def __setstate__(self, init_args):
         self.init_args = init_args 

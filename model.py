@@ -256,9 +256,9 @@ class Metrics(object):
             dec_params = parse_tools.get_prefixed_items(vars(opts), 'dec_')
 
             # Initialize data
-            dataset = data.Slice(opts.dat_file, opts.n_batch, opts.n_win_batch,
-                    dec_params['jitter_prob'])
-            del dec_params['jitter_prob']
+            jprob = dec_params.pop('jitter_prob')
+            dataset = data.Slice(opts.n_batch, opts.n_win_batch, jprob)
+            dataset.load_data(opts.dat_file)
             dec_params['n_speakers'] = dataset.num_speakers()
             model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params,
                     dataset.n_mel_chan, training=True)
@@ -270,7 +270,7 @@ class Metrics(object):
 
         else:
             self.state = checkpoint.State()
-            self.state.load(opts.ckpt_file)
+            self.state.load(opts.ckpt_file, opts.dat_file)
             self.start_step = self.state.step
             # print('Restored model, data, and optim from {}'.format(opts.ckpt_file), file=stderr)
             #print('Data state: {}'.format(state.data), file=stderr)

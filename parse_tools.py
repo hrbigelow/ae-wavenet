@@ -117,6 +117,8 @@ def resume_parser():
     resume.add_argument('ckpt_file', type=str, metavar='CHECKPOINT_FILE',
             help="""Checkpoint file generated from a previous run.  Restores model
             architecture, model parameters, and data generator state.""")
+    resume.add_argument('dat_file', type=str, metavar='DAT_FILE',
+            help='File created by preprocess.py')
     resume.prog += ' resume'
     return resume
 

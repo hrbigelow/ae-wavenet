@@ -1,4 +1,5 @@
 import pickle
+import io
 import torch
 from sys import stderr
 import util
@@ -19,12 +20,17 @@ class State(object):
         else:
             self.torch_cuda_rng_states = None
 
-    def load(self, ckpt_file):
+
+    def load(self, ckpt_file, dat_file):
         sinfo = torch.load(ckpt_file)
+
+        # This is the required order for model and data init 
         self.model = pickle.loads(sinfo['model'])
         dataset = pickle.loads(sinfo['dataset'])
+        dataset.load_data(dat_file)
         self.model.encoder.set_parent_vc(dataset.mfcc_vc)
         dataset.post_init(self.model.encoder.vc, self.model.decoder.vc)
+
         self.data_loader = data.WavLoader(dataset)
         self.optim = torch.optim.Adam(self.model.parameters())
         self.optim.load_state_dict(sinfo['optim'])
