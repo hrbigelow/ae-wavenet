@@ -448,8 +448,8 @@ class Slice(torch.utils.data.IterableDataset):
         """
         vb = VirtualBatch(self.batch_size, self.max_wav_len, self.max_mel_len,
                 self.max_embed_len, self.n_mel_chan)
-        vb.mel_input.detach_()
-        vb.mel_input.requires_grad_(False)
+        # vb.mel_input.detach_()
+        # vb.mel_input.requires_grad_(False)
         for b in range(vb.batch_size):
             vb.set_one(b, self.calc_slice(), self)
 
