@@ -22,7 +22,8 @@ class AELoss(nn.Module):
         self.logsoftmax = nn.LogSoftmax(1) # input is (B, Q, N)
         self.bottleneck = bottleneck
         self.register_buffer('norm_gamma', torch.tensor(norm_gamma))  
-        self.register_buffer('two', torch.tensor(2, dtype=torch.int32))
+        # self.register_buffer('two', torch.tensor(2, dtype=torch.int32))
+        self.register_buffer('two', torch.tensor(2, dtype=torch.float32))
         self.register_buffer('one', torch.tensor(1.0))
 
     def forward(self, quant_pred, target_wav):
