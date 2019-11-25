@@ -20,7 +20,6 @@
 # From librosa.feature.mfcc):
 # n_mfcc (# of MFCCs to return)
 
-import librosa
 import numpy as np
 import vconv 
 import math
@@ -38,6 +37,7 @@ class ProcessWav(object):
                 parent=None, name=name)
 
     def func(self, wav):
+        import librosa
         # See padding_notes.txt 
         # NOTE: This function can't be executed on GPU due to the use of
         # librosa.feature.mfcc
