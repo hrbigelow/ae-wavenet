@@ -1,7 +1,6 @@
 # Preprocess Data
 from sys import stderr, exit
 import pickle
-import librosa
 import numpy as np
 import torch
 import torch.utils.data
@@ -31,6 +30,7 @@ def convert(catalog, dat_file, n_quant, sample_rate=16000, win_sz=400, hop_sz=16
     """
     Convert all input data and save a dat file 
     """
+    import librosa
     mfcc_proc = mfcc.ProcessWav(sample_rate, win_sz, hop_sz, n_mels, n_mfcc)
 
     if n_quant <= 2**8:
