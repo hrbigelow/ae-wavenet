@@ -136,7 +136,7 @@ OutputRange = namedtuple('OutputRange', [
 
 class VirtualBatch(object):
     def __init__(self, batch_size, max_wav_len, max_mel_len, max_embed_len,
-            mel_chan):
+            wav_out_len, mel_chan):
         super(VirtualBatch, self).__init__()
         self.batch_size = batch_size
         self.voice_index = torch.empty(batch_size, dtype=torch.long)
@@ -144,7 +144,7 @@ class VirtualBatch(object):
                 dtype=torch.long)
         self.lcond_slice = torch.empty(batch_size, max_wav_len,
                 dtype=torch.long)
-        self.loss_wav_slice = torch.empty(batch_size, 2, dtype=torch.long)
+        self.loss_wav_slice = torch.empty(batch_size, wav_out_len, dtype=torch.long)
         self.wav_input = torch.empty(batch_size, max_wav_len)
         self.mel_input = torch.empty(batch_size, mel_chan, max_mel_len) 
 
@@ -178,7 +178,10 @@ class VirtualBatch(object):
         offset = b * data_source.max_lcond_len
         self.lcond_slice[b,:] = torch.arange(offset + ss.lcond_slice[0],
                 offset + ss.lcond_slice[1])
-        self.loss_wav_slice[b,:] = torch.tensor(ss.loss_wav_slice)
+        offset = b * data_source.max_wav_len
+        self.loss_wav_slice[b,:] = torch.arange(offset + ss.loss_wav_slice[0],
+                offset + ss.loss_wav_slice[1])
+        # self.loss_wav_slice[b,:] = torch.tensor(ss.loss_wav_slice)
         self.wav_input[b,...] = data_source.snd_data[wo + dws[0]:wo + dws[1]] 
         self.mel_input[b,...] = data_source.mel_data[mo + mis[0]:mo +
                 mis[1],:].transpose(1, 0)
@@ -447,7 +450,7 @@ class Slice(torch.utils.data.IterableDataset):
         not GPU.
         """
         vb = VirtualBatch(self.batch_size, self.max_wav_len, self.max_mel_len,
-                self.max_embed_len, self.n_mel_chan)
+                self.max_embed_len, self.window_batch_size, self.n_mel_chan)
         # vb.mel_input.detach_()
         # vb.mel_input.requires_grad_(False)
         for b in range(vb.batch_size):
