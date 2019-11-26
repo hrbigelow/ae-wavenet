@@ -198,19 +198,8 @@ class VirtualBatch(object):
         self.wav_input = self.wav_input.to(device)
         self.mel_input = self.mel_input.to(device)
 
-
-    def valid(self):
-        lw_len = self.loss_wav_len()
-        return (
-                all(map(lambda lw: lw[1] - lw[0] == lw_len,
-                    self.loss_wav_slice))
-                )
-
     def lcond_len(self):
         return self.lcond_slice.size()[1]
-
-    def loss_wav_len(self):
-        return self.loss_wav_slice[0][1] - self.loss_wav_slice[0][0]
 
 
 class Slice(torch.utils.data.IterableDataset):
@@ -456,7 +445,6 @@ class Slice(torch.utils.data.IterableDataset):
         for b in range(vb.batch_size):
             vb.set_one(b, self.calc_slice(), self)
 
-        assert vb.valid()
         if self.target_device:
             vb.to(self.target_device)
         vb.mel_input.requires_grad_(True)
