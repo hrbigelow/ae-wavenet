@@ -204,8 +204,6 @@ class AutoEncoder(nn.Module):
         # grad = torch.autograd.grad(wav_onehot_dec, vbatch.wav_input).data
 
         # Slice each wav input
-        wav_batch_out = vbatch.wav_input.new_empty(vbatch.batch_size,
-                vbatch.loss_wav_len()) 
         wav_batch_out = torch.take(vbatch.wav_input, vbatch.loss_wav_slice)
         #for b, (sl_b, sl_e) in enumerate(vbatch.loss_wav_slice):
         #    wav_batch_out[b] = vbatch.wav_input[b,sl_b:sl_e]
