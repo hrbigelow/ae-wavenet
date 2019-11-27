@@ -97,7 +97,7 @@ class GatedResidualCondConv(nn.Module):
         z = torch.tanh(filt)
         sig = self.dil_res(z)
         skp = self.dil_skp(z[:,:,self.skip_lead:])
-        sig += x[:,:,self.left_wing_size:]
+        # sig += x[:,:,self.left_wing_size:]
         return sig, skp 
 
 
@@ -231,6 +231,11 @@ class WaveNet(nn.Module):
         # residual connections
         self.vc['beg_grcc'] = self.conv_layers[0].vc
         self.vc['end_grcc'] = self.conv_layers[-1].vc 
+        # out_win_size = self.vc['end_grcc'].l_wing_sz + \
+        #         self.vc['end_grcc'].r_wing_sz + 1
+
+        # self.register_buffer('skp_sum', torch.empty(self.batch_size,
+        #     self.n_skp, out_win_size))
 
         self.relu = nn.ReLU()
         self.post1 = Conv1dWrap(n_skp, n_post, 1, bias=bias)
@@ -278,13 +283,10 @@ class WaveNet(nn.Module):
         # be able to operate with a new speaker ID.
 
         sig = self.base_layer(wav_onehot) 
-        skp_sum = None
-        for i, l in enumerate(self.conv_layers):
+        sig, skp_sum = self.conv_layers[0](sig, cond)
+        for i, l in enumerate(self.conv_layers[1:]):
             sig, skp = l(sig, cond)
-            if skp_sum is None:
-                skp_sum = skp
-            else:
-                skp_sum += skp
+            skp_sum[...] += skp
             
         post1 = self.post1(self.relu(skp_sum))
         quant = self.post2(self.relu(post1))
