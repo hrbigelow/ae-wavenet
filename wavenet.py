@@ -92,8 +92,9 @@ class GatedResidualCondConv(nn.Module):
         #skip_lead = self.skip_lead()
 
         filt = self.conv_signal(x) + self.proj_signal(cond[:,:,self.cond_lead:])
-        gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.cond_lead:])
-        z = torch.tanh(filt) * torch.sigmoid(gate)
+        # gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.cond_lead:])
+        # z = torch.tanh(filt) * torch.sigmoid(gate)
+        z = torch.tanh(filt)
         sig = self.dil_res(z)
         skp = self.dil_skp(z[:,:,self.skip_lead:])
         sig += x[:,:,self.left_wing_size:]
@@ -214,8 +215,8 @@ class WaveNet(nn.Module):
 
         for b in range(self.n_blocks):
             for bl in range(self.n_block_layers):
-                # dil = 2**bl
-                dil = 5 
+                dil = 2**bl
+                # dil = 5 
                 name = 'GRCC_{},{}(dil={})'.format(b, bl, dil)
                 grc = GatedResidualCondConv(self.vc, n_cond, n_res, n_dil,
                         n_skp, 1, dil, filter_sz, bias, cur_vc, name)
