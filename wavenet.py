@@ -18,6 +18,7 @@ class GatedResidualCondConv(nn.Module):
         n_skp : # channels output to skip connections
         """
         super(GatedResidualCondConv, self).__init__()
+        # self.register_buffer('dil', torch.tensor(dil))
         self.wavenet_vc = wavenet_vc 
         self.conv_signal = nn.Conv1d(n_res, n_dil, filter_sz, dilation=dil, bias=bias)
         self.conv_gate = nn.Conv1d(n_res, n_dil, filter_sz, dilation=dil, bias=bias)
@@ -213,8 +214,8 @@ class WaveNet(nn.Module):
 
         for b in range(self.n_blocks):
             for bl in range(self.n_block_layers):
-                dil = 2**bl
-                # dil = 1
+                # dil = 2**bl
+                dil = 10
                 name = 'GRCC_{},{}(dil={})'.format(b, bl, dil)
                 grc = GatedResidualCondConv(self.vc, n_cond, n_res, n_dil,
                         n_skp, 1, dil, filter_sz, bias, cur_vc, name)
