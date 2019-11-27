@@ -120,10 +120,11 @@ class Conditioning(nn.Module):
         """
         assert speaker_inds.dtype == torch.long
         # one_hot: (B, S)
-        one_hot = util.gather_md(self.eye, 0, speaker_inds).permute(1, 0) 
-        gc = self.speaker_embedding(one_hot) # gc: (B, G)
-        gc_rep = gc.unsqueeze(2).expand(-1, -1, lc.shape[2])
-        all_cond = torch.cat((lc, gc_rep), dim=1) 
+        # one_hot = util.gather_md(self.eye, 0, speaker_inds).permute(1, 0) 
+        # gc = self.speaker_embedding(one_hot) # gc: (B, G)
+        # gc_rep = gc.unsqueeze(2).expand(-1, -1, lc.shape[2])
+        # all_cond = torch.cat((lc, gc_rep), dim=1) 
+        all_cond = lc
         return all_cond
 
 class Upsampling(nn.Module):
