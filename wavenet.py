@@ -251,9 +251,10 @@ class WaveNet(nn.Module):
         outputs: (B, Q, N)
         """
         D1 = lc_sparse.size()[1]
-        lc_jitter = torch.take(lc_sparse,
-                jitter_index.unsqueeze(1).expand(-1, D1, -1))
-        lc_conv = self.lc_conv(lc_jitter) 
+        # lc_jitter = torch.take(lc_sparse,
+        #         jitter_index.unsqueeze(1).expand(-1, D1, -1))
+        #lc_conv = self.lc_conv(lc_jitter) 
+        lc_conv = self.lc_conv(lc_sparse)
         lc_dense = self.lc_upsample(lc_conv)
 
         # Trimming due to different phases of the input MFCC windows
