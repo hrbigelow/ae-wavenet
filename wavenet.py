@@ -26,6 +26,7 @@ class GatedResidualCondConv(nn.Module):
         self.proj_gate = nn.Conv1d(n_cond, n_dil, kernel_size=1, bias=False)
         self.dil_res = nn.Conv1d(n_dil, n_res, kernel_size=1, bias=False)
         self.dil_skp = nn.Conv1d(n_dil, n_skp, kernel_size=1, bias=False)
+        self.final = nn.Conv1d(n_res, n_skp, kernel_size=1, bias=False)
 
         # The dilated autoregressive convolution produces an output at the
         # right-most position of the receptive field.  (At the very end of a
@@ -96,9 +97,9 @@ class GatedResidualCondConv(nn.Module):
         # z = torch.tanh(filt) * torch.sigmoid(gate)
         z = torch.tanh(filt)
         sig = self.dil_res(z)
-        skp = self.dil_skp(z[:,:,self.skip_lead:])
+        # skp = self.dil_skp(z[:,:,self.skip_lead:])
         # sig += x[:,:,self.left_wing_size:]
-        return sig, skp 
+        return sig # , skp 
 
 
 class Conditioning(nn.Module):
@@ -283,12 +284,17 @@ class WaveNet(nn.Module):
         # be able to operate with a new speaker ID.
 
         sig = self.base_layer(wav_onehot) 
-        sig, skp_sum = self.conv_layers[0](sig, cond)
-        for i, l in enumerate(self.conv_layers[1:]):
-            sig, skp = l(sig, cond)
-            skp_sum[...] += skp
+        # sig, skp_sum = self.conv_layers[0](sig, cond)
+        # for i, l in enumerate(self.conv_layers[1:]):
+        #     sig, skp = l(sig, cond)
+        #     skp_sum[...] += skp
             
-        post1 = self.post1(self.relu(skp_sum))
+        # post1 = self.post1(self.relu(skp_sum))
+        for i, l in enumerate(self.conv_layers):
+            sig = l(sig, cond)
+            
+        skp = self.conv_layers[-1].final(sig)
+        post1 = self.post1(self.relu(skp))
         quant = self.post2(self.relu(post1))
         # we only need this for inference time
         # logits = self.logsoftmax(quant) 
