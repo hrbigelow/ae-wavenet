@@ -215,13 +215,14 @@ class WaveNet(nn.Module):
 
         for b in range(self.n_blocks):
             for bl in range(self.n_block_layers):
-                dil = 2**bl
-                # dil = 5 
+                # dil = 2**bl
+                dil = 100 
                 name = 'GRCC_{},{}(dil={})'.format(b, bl, dil)
                 grc = GatedResidualCondConv(self.vc, n_cond, n_res, n_dil,
                         n_skp, 1, dil, filter_sz, bias, cur_vc, name)
                 self.conv_layers.append(grc)
                 cur_vc = grc.vc
+                print('{} constructed'.format(name))
 
         # Each module in the stack needs to know the dimensions of
         # the input and output of the overall stack, in order to trim
