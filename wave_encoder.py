@@ -28,9 +28,8 @@ class ConvReLURes(nn.Module):
                 raise ValueError
             l_off, r_off = vconv.output_offsets(self.vc, self.vc)
             self.register_buffer('residual_offsets',
-                    torch.tensor([l_off, r_off]))
+                   torch.tensor([l_off, r_off]))
                 
-
 
         netmisc.xavier_init(self.conv)
 
