@@ -213,8 +213,8 @@ class WaveNet(nn.Module):
 
         for b in range(self.n_blocks):
             for bl in range(self.n_block_layers):
-                # dil = 2**bl
-                dil = 1
+                dil = 2**bl
+                # dil = 1
                 name = 'GRCC_{},{}(dil={})'.format(b, bl, dil)
                 grc = GatedResidualCondConv(self.vc, n_cond, n_res, n_dil,
                         n_skp, 1, dil, filter_sz, bias, cur_vc, name)
