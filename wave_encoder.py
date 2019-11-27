@@ -42,8 +42,8 @@ class ConvReLURes(nn.Module):
         pre = self.conv(x)
         # out = self.bn(out)
         act = self.relu(pre)
-        if self.do_res:
-            act[...] += x[:,:,self.residual_offsets[0]:self.residual_offsets[1] or None]
+        #if self.do_res:
+        #    act[...] += x[:,:,self.residual_offsets[0]:self.residual_offsets[1] or None]
             # act += x[:,:,self.residual_offsets[0]:self.residual_offsets[1] or None]
         #act_sum = act.sum()
         #if act_sum.eq(0.0):
@@ -64,7 +64,7 @@ class Encoder(nn.Module):
         stack_in_chan = [n_in, n_out, n_out]
         stack_filter_sz = [3, 4, 3]
         stack_strides = [1, 2, 1]
-        stack_residual = [False, False, True]
+        stack_residual = [False, False, False]
         # stack_residual = [True] * 9
         # stack_residual = [False] * 9
         stack_info = zip(stack_in_chan, stack_filter_sz, stack_strides, stack_residual)
