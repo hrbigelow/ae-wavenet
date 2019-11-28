@@ -92,7 +92,8 @@ class GatedResidualCondConv(nn.Module):
         #cond_lead = self.cond_lead()
         #skip_lead = self.skip_lead()
 
-        filt = self.conv_signal(x) + self.proj_signal(cond[:,:,self.cond_lead:])
+        # filt = self.conv_signal(x) + self.proj_signal(cond[:,:,self.cond_lead:])
+        filt = self.conv_signal(x)
         # gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.cond_lead:])
         # z = torch.tanh(filt) * torch.sigmoid(gate)
         z = torch.tanh(filt)
