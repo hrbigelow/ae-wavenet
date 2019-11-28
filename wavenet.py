@@ -94,7 +94,7 @@ class GatedResidualCondConv(nn.Module):
 
         filt = self.conv_signal(x) + self.proj_signal(cond[:,:,self.cond_lead:])
         # filt = self.conv_signal(x)
-        gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.cond_lead:])
+        # gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.cond_lead:])
         # z = torch.tanh(filt) * torch.sigmoid(gate)
         z = torch.tanh(filt)
         sig = self.dil_res(z)
@@ -276,7 +276,7 @@ class WaveNet(nn.Module):
         D2 = lc_dense.size()[1]
         # lc_dense_trim = torch.take(lc_dense,
         #         lcond_slice.unsqueeze(1).expand(-1, D2, -1))
-        lc_dense_trim = lc_dense[:,:,2146]
+        lc_dense_trim = lc_dense[:,:,:2146]
 
         cond = self.cond(lc_dense_trim, speaker_inds)
         # "The conditioning signal was passed separately into each layer" - p 5 pp 1.
