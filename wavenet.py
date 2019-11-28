@@ -55,30 +55,6 @@ class GatedResidualCondConv(nn.Module):
         self.register_buffer('left_wing_size', torch.tensor(self.vc.l_wing_sz))
 
 
-    def cond_lead_fn(self):
-        """
-        distance from start of the overall stack input to
-        the start of this convolution
-        """
-        l_off, r_off = vconv.output_offsets(self.wavenet_vc['beg_grcc'],
-                self.vc)
-        assert r_off == 0
-        return l_off 
-
-    def skip_lead_fn(self):
-        """
-        distance from start of this *output* to start of the final stack
-        output.  Note that the skip information is the *output* of self.vc, not
-        the input.
-        """
-        if self.vc == self.wavenet_vc['end_grcc']:
-            return 0
-
-        l_off, r_off = vconv.output_offsets(self.vc.child,
-                self.wavenet_vc['end_grcc'])
-        assert r_off == 0
-        return l_off 
-
     def forward(self, x, cond):
         """
         B, T: batchsize, win_size (determined from input)
@@ -87,11 +63,12 @@ class GatedResidualCondConv(nn.Module):
         cond: (B, C, T) (necessary shape for Conv1d)
         returns: sig: (B, R, T), skp: (B, S, T) 
         """
-        #cond_lead = self.cond_lead()
-        #skip_lead = self.skip_lead()
-
-        filt = self.conv_signal(x) + self.proj_signal(cond[:,:,self.cond_lead:])
-        gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.cond_lead:])
+        # filt = self.conv_signal(x) + self.proj_signal(cond[:,:,self.cond_lead:])
+        ps = cond.new_empty((cond.shape[0], cond.shape[1], cond.shape[2] -
+            self.cond_lead))
+        filt = self.conv_signal(x) + self.proj_signal(ps)
+        # gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.cond_lead:])
+        gate = self.conv_gate(x)
         z = torch.tanh(filt) * torch.sigmoid(gate)
         sig = self.dil_res(z)
         skp = self.dil_skp(z[:,:,self.skip_lead:])
