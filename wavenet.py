@@ -22,7 +22,7 @@ class GatedResidualCondConv(nn.Module):
         self.wavenet_vc = wavenet_vc 
         self.conv_signal = nn.Conv1d(n_res, n_dil, filter_sz, dilation=dil, bias=bias)
         # self.conv_gate = nn.Conv1d(n_res, n_dil, filter_sz, dilation=dil, bias=bias)
-        # self.proj_signal = nn.Conv1d(n_cond, n_dil, kernel_size=1, bias=False)
+        self.proj_signal = nn.Conv1d(n_cond, n_dil, kernel_size=1, bias=False)
         # self.proj_gate = nn.Conv1d(n_cond, n_dil, kernel_size=1, bias=False)
         self.dil_res = nn.Conv1d(n_dil, n_res, kernel_size=1, bias=False)
         # self.dil_skp = nn.Conv1d(n_dil, n_skp, kernel_size=1, bias=False)
