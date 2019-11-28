@@ -64,11 +64,9 @@ class GatedResidualCondConv(nn.Module):
         returns: sig: (B, R, T), skp: (B, S, T) 
         """
         # filt = self.conv_signal(x) + self.proj_signal(cond[:,:,self.cond_lead:])
-        ps = cond.new_empty((cond.shape[0], cond.shape[1], cond.shape[2] -
-            self.cond_lead))
-        filt = self.conv_signal(x) + self.proj_signal(ps)
+        filt = self.proj_signal(cond[:,:,self.cond_lead:])
         # gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.cond_lead:])
-        gate = self.conv_gate(x)
+        gate = self.proj_gate(cond[:,:,self.cond_lead:])
         z = torch.tanh(filt) * torch.sigmoid(gate)
         sig = self.dil_res(z)
         skp = self.dil_skp(z[:,:,self.skip_lead:])
