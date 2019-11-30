@@ -371,7 +371,7 @@ class Metrics(object):
             # 'bn_grad_max': bn_grad.max()
             })
         # loss.backward(create_graph=True, retain_graph=True)
-        loss.backward()
+        # loss.backward()
         return loss
     
     def peak_dist(self):
