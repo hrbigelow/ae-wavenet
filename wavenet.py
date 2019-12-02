@@ -54,31 +54,6 @@ class GatedResidualCondConv(nn.Module):
         self.register_buffer('skip_lead', torch.tensor(skip_lead))
         self.register_buffer('left_wing_size', torch.tensor(self.vc.l_wing_sz))
 
-
-    def cond_lead_fn(self):
-        """
-        distance from start of the overall stack input to
-        the start of this convolution
-        """
-        l_off, r_off = vconv.output_offsets(self.wavenet_vc['beg_grcc'],
-                self.vc)
-        assert r_off == 0
-        return l_off 
-
-    def skip_lead_fn(self):
-        """
-        distance from start of this *output* to start of the final stack
-        output.  Note that the skip information is the *output* of self.vc, not
-        the input.
-        """
-        if self.vc == self.wavenet_vc['end_grcc']:
-            return 0
-
-        l_off, r_off = vconv.output_offsets(self.vc.child,
-                self.wavenet_vc['end_grcc'])
-        assert r_off == 0
-        return l_off 
-
     def forward(self, x, cond):
         """
         B, T: batchsize, win_size (determined from input)
@@ -87,9 +62,6 @@ class GatedResidualCondConv(nn.Module):
         cond: (B, C, T) (necessary shape for Conv1d)
         returns: sig: (B, R, T), skp: (B, S, T) 
         """
-        #cond_lead = self.cond_lead()
-        #skip_lead = self.skip_lead()
-
         filt = self.conv_signal(x) + self.proj_signal(cond[:,:,self.cond_lead:])
         gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.cond_lead:])
         z = torch.tanh(filt) * torch.sigmoid(gate)
@@ -236,7 +208,8 @@ class WaveNet(nn.Module):
             grc.post_init()
 
 
-    def forward(self, wav_onehot, lc_sparse, speaker_inds, jitter_index, lcond_slice):
+    def forward(self, wav_onehot, lc_sparse, speaker_inds, jitter_index,
+            trim_ups_out):
         """
         B: n_batch (# of separate wav streams being processed)
         T1: n_wav_timesteps
@@ -260,8 +233,9 @@ class WaveNet(nn.Module):
         # W2 = lcond_slice.size()[1] 
 
         D2 = lc_dense.size()[1]
-        lc_dense_trim = torch.take(lc_dense,
-                lcond_slice.unsqueeze(1).expand(-1, D2, -1))
+        lc_dense_trim = lc_dense[:,:,trim_ups_out[0]:trim_ups_out[1]]
+        # lc_dense_trim = torch.take(lc_dense,
+        #         lcond_slice.unsqueeze(1).expand(-1, D2, -1))
 
         cond = self.cond(lc_dense_trim, speaker_inds)
         # "The conditioning signal was passed separately into each layer" - p 5 pp 1.

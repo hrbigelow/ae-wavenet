@@ -111,18 +111,18 @@ class VirtualBatch(object):
         self.ds = dataset
         self.voice_index = torch.empty(self.ds.batch_size, dtype=torch.long)
         self.jitter_index = torch.empty(self.ds.batch_size, dataset.emb_len, dtype=torch.long)
-        self.wav_input = torch.empty(self.ds.batch_size, wav_len)
-        self.mel_input = torch.empty(self.ds.batch_size, mel_chan, mel_len) 
+        self.wav_dec_input = torch.empty(self.ds.batch_size, wav_len)
+        self.mel_enc_input = torch.empty(self.ds.batch_size, mel_chan, mel_len) 
 
     def __repr__(self):
         fmt = (
             'voice_index: {}\n' + 
             'jitter_index: {}\n' + 
-            'wav_input.shape: {}\n' + 
-            'mel_input.shape: {}\n'
+            'wav_dec_input.shape: {}\n' + 
+            'mel_enc_input.shape: {}\n'
         )
         return fmt.format(self.voice_index, self.jitter_index,
-                self.wav_input.shape, self.mel_input.shape)
+                self.wav_dec_input.shape, self.mel_enc_input.shape)
 
     def populate(self):
         """
@@ -131,11 +131,13 @@ class VirtualBatch(object):
         rg = torch.empty((self.ds.batch_size), dtype=torch.int64).cpu()
         picks = rg.random_()[0] % len(self.in_start)
         nz = self.ds.max_embed_len
+        wav_trim = self.ds.trim_dec_in
 
         for b, wi in enumerate(picks):
             s, voice_ind = self.in_starts[wi]
-            self.wav_input[b,...] = self.ds.snd_data[s:s + self.ds.enc_in_len]
-            self.mel_input[b,...] = self.ds.mfcc_func(self.wav_input[b,...])
+            wav_enc_input = self.ds.snd_data[s:s + self.ds.enc_in_len]
+            self.wav_dec_input[b,...] = wav_enc_input[wav_trim[0]:wav_trim[1]]
+            self.mel_enc_input[b,...] = self.ds.mfcc_func(wav_enc_input)
             self.voice_index[b] = voice_ind 
             self.jitter_index[b,:] = \
                     torch.tensor(self.ds.jitter.gen_indices(nz) + b * nz) 
@@ -144,8 +146,8 @@ class VirtualBatch(object):
     def to(self, device):
         self.voice_index = self.voice_index.to(device)
         self.jitter_index = self.jitter_index.to(device)
-        self.wav_input = self.wav_input.to(device)
-        self.mel_input = self.mel_input.to(device)
+        self.wav_dec_input = self.wav_dec_input.to(device)
+        self.mel_enc_input = self.mel_enc_input.to(device)
 
 
 
@@ -291,13 +293,13 @@ class Slice(torch.utils.data.IterableDataset):
         not GPU.
         """
         vb = VirtualBatch(self)
-        vb.mel_input.detach_()
-        vb.mel_input.requires_grad_(False)
+        vb.mel_enc_input.detach_()
+        vb.mel_enc_input.requires_grad_(False)
         vb.populate()
 
         if self.target_device:
             vb.to(self.target_device)
-        vb.mel_input.requires_grad_(True)
+        vb.mel_enc_input.requires_grad_(True)
 
         return vb 
 

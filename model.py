@@ -33,9 +33,6 @@ class PreProcess(nn.Module):
         self.n_quant = n_quant
         self.register_buffer('quant_onehot', torch.eye(self.n_quant))
 
-        # A dummy buffer that simply allows querying the current model device 
-        self.register_buffer('dummy_buf', torch.empty(0))
-
     def one_hot(self, wav_compand):
         """
         wav_compand: (B, T)
@@ -169,7 +166,8 @@ class AutoEncoder(nn.Module):
         return util.tensor_digest(self.parameters())
         
 
-    def forward(self, mels, wav_onehot_dec, voice_inds, jitter_index, lcond_slice):
+    def forward(self, mels, wav_onehot_dec, voice_inds, jitter_index,
+            trim_ups_out):
         """
         B: n_batch
         M: n_mels
@@ -188,7 +186,7 @@ class AutoEncoder(nn.Module):
         encoding_bn = self.bottleneck(encoding)
         self.encoding_bn = encoding_bn
         quant = self.decoder(wav_onehot_dec, encoding_bn, voice_inds,
-                jitter_index, lcond_slice)
+                jitter_index, trim_ups_out)
         return quant
 
     def run(self, vbatch):
@@ -204,7 +202,9 @@ class AutoEncoder(nn.Module):
         # grad = torch.autograd.grad(wav_onehot_dec, vbatch.wav_input).data
 
         # Slice each wav input
-        wav_batch_out = torch.take(vbatch.wav_input, vbatch.loss_wav_slice)
+        trim = vbatch.ds.trim_dec_out
+        wav_batch_out = vbatch.wav_input[:,trim[0]:trim[1]]
+        # wav_batch_out = torch.take(vbatch.wav_input, vbatch.loss_wav_slice)
         #for b, (sl_b, sl_e) in enumerate(vbatch.loss_wav_slice):
         #    wav_batch_out[b] = vbatch.wav_input[b,sl_b:sl_e]
 
@@ -212,7 +212,7 @@ class AutoEncoder(nn.Module):
         self.wav_onehot_dec = wav_onehot_dec
 
         quant = self.forward(vbatch.mel_input, wav_onehot_dec,
-                vbatch.voice_index, vbatch.jitter_index, vbatch.lcond_slice)
+                vbatch.voice_index, vbatch.jitter_index, vbatch.ds.trim_ups_out)
         # quant_pred[:,:,0] is a prediction for wav_compand_out[:,1] 
         return quant[...,:-1], wav_batch_out[...,1:]
 
