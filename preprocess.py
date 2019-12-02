@@ -8,6 +8,7 @@ def make_parser():
             default=256, help='Number of quantization levels for Mu-law companding')
     p.add_argument('--sample-rate', '-sr', type=int, metavar='INT',
             default=16000, help='Number of samples per second for parsing sound files')
+
     # positional arguments
     p.add_argument('sam_file', type=str, metavar='SAMPLES_FILE',
             help='File containing lines:\n'

@@ -105,6 +105,14 @@ def cold_parser():
     cold.add_argument('--dec-n-global-embed', '-dng', type=int, metavar='INT',
             help='decoder number of global embedding channels')
 
+    # MFCC parameters
+    p.add_argument('--win-size', '-ws', type=int, metavar='INT',
+            default=400,
+            help='Number of timesteps used to calculate MFCC coefficients')
+    p.add_argument('--hop-size', '-hs', type=int, metavar='INT',
+            default=160,
+            help='Number of timesteps to hop between consecutive MFCC coefficients')
+
     # positional arguments
     cold.add_argument('dat_file', type=str, metavar='DAT_FILE',
             help='File created by preprocess.py')
