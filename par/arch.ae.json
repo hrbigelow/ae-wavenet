@@ -1,7 +1,7 @@
 {
     "pre_sample_rate": 16000,
-    "pre_win_sz": 400,
-    "pre_hop_sz": 160,
+    "pre_mfcc_win_sz": 400,
+    "pre_mfcc_hop_sz": 160,
     "pre_n_mels": 80,
     "pre_n_mfcc": 13,
     "enc_n_out": 768,

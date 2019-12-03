@@ -52,9 +52,9 @@ def cold_parser():
     # Preprocessing parameters
     cold.add_argument('--pre-sample-rate', '-sr', type=int, metavar='INT', default=16000,
             help='# samples per second in input wav files')
-    cold.add_argument('--pre-win-sz', '-wl', type=int, metavar='INT', default=400,
+    cold.add_argument('--pre-mfcc-win-sz', '-wl', type=int, metavar='INT', default=400,
             help='size of the MFCC window length in timesteps')
-    cold.add_argument('--pre-hop-sz', '-hl', type=int, metavar='INT', default=160,
+    cold.add_argument('--pre-mfcc-hop-sz', '-hl', type=int, metavar='INT', default=160,
             help='size of the hop length for MFCC preprocessing, in timesteps')
     cold.add_argument('--pre-n-mels', '-nm', type=int, metavar='INT', default=80,
             help='number of mel frequency values to calculate')
@@ -106,10 +106,10 @@ def cold_parser():
             help='decoder number of global embedding channels')
 
     # MFCC parameters
-    p.add_argument('--win-size', '-ws', type=int, metavar='INT',
+    cold.add_argument('--win-size', '-ws', type=int, metavar='INT',
             default=400,
             help='Number of timesteps used to calculate MFCC coefficients')
-    p.add_argument('--hop-size', '-hs', type=int, metavar='INT',
+    cold.add_argument('--hop-size', '-hs', type=int, metavar='INT',
             default=160,
             help='Number of timesteps to hop between consecutive MFCC coefficients')
 

@@ -41,7 +41,6 @@ def convert(catalog, dat_file, n_quant, sample_rate=16000):
     speaker_ids = set(id for id,__ in catalog)
     speaker_id_map = dict((v,k) for k,v in enumerate(speaker_ids))
     snd_data = np.empty((0), dtype=snd_dtype) 
-    mel_data = np.empty((0), dtype=snd_dtype)
     samples = []
 
     for (voice_id, snd_path) in catalog:
@@ -109,10 +108,12 @@ class VirtualBatch(object):
     def __init__(self, dataset):
         super(VirtualBatch, self).__init__()
         self.ds = dataset
-        self.voice_index = torch.empty(self.ds.batch_size, dtype=torch.long)
-        self.jitter_index = torch.empty(self.ds.batch_size, dataset.emb_len, dtype=torch.long)
-        self.wav_dec_input = torch.empty(self.ds.batch_size, wav_len)
-        self.mel_enc_input = torch.empty(self.ds.batch_size, mel_chan, mel_len) 
+        bs = self.ds.batch_size
+        self.voice_index = torch.empty(bs, dtype=torch.long)
+        self.jitter_index = torch.empty(bs, self.ds.emb_len, dtype=torch.long)
+        self.wav_dec_input = torch.empty(bs, self.ds.dec_in_len)
+        self.mel_enc_input = torch.empty(bs, self.ds.num_mel_chan(),
+                self.ds.enc_in_mel_len) 
 
     def __repr__(self):
         fmt = (
@@ -129,15 +130,15 @@ class VirtualBatch(object):
         sets the data for one sample in the batch
         """
         rg = torch.empty((self.ds.batch_size), dtype=torch.int64).cpu()
-        picks = rg.random_()[0] % len(self.in_start)
-        nz = self.ds.max_embed_len
+        picks = rg.random_() % len(self.ds.in_start)
+        nz = self.ds.emb_len
         wav_trim = self.ds.trim_dec_in
 
         for b, wi in enumerate(picks):
-            s, voice_ind = self.in_starts[wi]
+            s, voice_ind = self.ds.in_start[wi]
             wav_enc_input = self.ds.snd_data[s:s + self.ds.enc_in_len]
             self.wav_dec_input[b,...] = wav_enc_input[wav_trim[0]:wav_trim[1]]
-            self.mel_enc_input[b,...] = self.ds.mfcc_func(wav_enc_input)
+            self.mel_enc_input[b,...] = self.ds.mfcc_proc.func(wav_enc_input)
             self.voice_index[b] = voice_ind 
             self.jitter_index[b,:] = \
                     torch.tensor(self.ds.jitter.gen_indices(nz) + b * nz) 
@@ -182,6 +183,8 @@ class Slice(torch.utils.data.IterableDataset):
                 hop_sz=self.mfcc_hop_sz,
                 n_mels=self.n_mels,
                 n_mfcc=self.n_mfcc)
+        self.mfcc_vc = vconv.VirtualConv(filter_info=self.mfcc_win_sz,
+                stride=self.mfcc_hop_sz, parent=None, name='MFCC')
 
     def load_data(self, dat_file):
         try:
@@ -193,17 +196,9 @@ class Slice(torch.utils.data.IterableDataset):
             stderr.flush()
             exit(1)
 
-        mfcc_pars = dat['mfcc_params']
         self.samples = dat['samples']
-        self.n_mel_chan = mfcc_pars['n_mel_chan']
+        self._load_sample_data(dat['snd_data'], dat['snd_dtype'])
 
-        self._load_sample_data(dat['snd_data'], dat['mel_data'],
-                dat['snd_dtype'], self.n_mel_chan)
-
-        self.mfcc_vc = vconv.VirtualConv(
-                filter_info=mfcc_pars['window_size'], stride=mfcc_pars['hop_size'],
-                parent=None, name='MFCC'
-        )
 
 
     def __setstate__(self, init_args):
@@ -216,8 +211,10 @@ class Slice(torch.utils.data.IterableDataset):
 
 
     def num_speakers(self):
-        return len(set(map(lambda s: s.voice_index, self.samples)))
+        return max(map(lambda s: s.voice_index, self.samples)) + 1
 
+    def num_mel_chan(self):
+        return self.mfcc_proc.n_out
 
     def init_geometry(self):
         """
@@ -229,26 +226,33 @@ class Slice(torch.utils.data.IterableDataset):
         """
         # Calculate max length of mfcc encoder input and wav decoder input
         w = self.window_batch_size
+        mfcc_vc = self.mfcc_vc
         beg_grcc_vc = self.decoder_vcs['beg_grcc']
         end_grcc_vc = self.decoder_vcs['end_grcc']
         end_ups_vc = self.decoder_vcs['last_upsample']
+        end_enc_vc = self.encoder_vcs['end']
 
-        do = GridRange((0, 100000), (0, w), 1)
+        do = vconv.GridRange((0, 100000), (0, w), 1)
         di = vconv.input_range(beg_grcc_vc, end_grcc_vc, do)
-        ei = vconv.input_range(self.mfcc_vc, end_grcc_vc, do)
-        uo = vconv.output_range(self.mfcc_vc, end_ups_vc, ei)
+        ei = vconv.input_range(mfcc_vc, end_grcc_vc, do)
+        mi = vconv.input_range(mfcc_vc.child, end_grcc_vc, do)
+        eo = vconv.output_range(mfcc_vc, end_enc_vc, ei)
+        uo = vconv.output_range(mfcc_vc, end_ups_vc, ei)
 
         # Needed for trimming various tensors
         self.enc_in_len = ei.sub_length()
+        self.enc_in_mel_len = mi.sub_length()
+        self.emb_len = eo.sub_length() 
+        self.dec_in_len = di.sub_length()
         self.trim_dec_in = di.sub[0] - ei.sub[0], di.sub[1] - ei.sub[0]
-        self.trim_ups_out = uo.sub[0] - di.sub[0], uo.sub[1] - di.sub[0]
-        self.trim_dec_out = do.sub[0] - ei.sub[0], do.sub[1] - ei.sub[0]
+        self.trim_ups_out = di.sub[0] - uo.sub[0], di.sub[1] - uo.sub[0]
+        self.trim_dec_out = do.sub[0] - di.sub[0], do.sub[1] - di.sub[0]
 
         # Generate slices from input
         self.in_start = []
-        for si, sam in enumerate(self.samples):
+        for sam in self.samples:
             for b in range(sam.wav_b, sam.wav_e - w, w):
-                self.in_start.append((b, si))
+                self.in_start.append((b, sam.voice_index))
 
 
     def post_init(self, encoder_vcs, decoder_vcs):
@@ -263,9 +267,9 @@ class Slice(torch.utils.data.IterableDataset):
         self.init_geometry()
 
 
-    def _load_sample_data(self, snd_np, mel_np, snd_dtype, n_mel_chan):
+    def _load_sample_data(self, snd_np, snd_dtype):
         """
-        Populates self.snd_data and self.mel_data
+        Populates self.snd_data
         """
         if snd_dtype is np.uint8:
             snd_data = torch.ByteTensor(snd_np)
@@ -274,11 +278,8 @@ class Slice(torch.utils.data.IterableDataset):
         elif snd_dtype is np.int32:
             snd_data = torch.IntTensor(snd_np)
 
-        # shape: T, M
-        mel_data = torch.FloatTensor(mel_np).reshape((-1, n_mel_chan))
-
         self.snd_data = snd_data
-        self.mel_data = mel_data
+
 
     def set_target_device(self, target_device):
         self.target_device = target_device

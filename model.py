@@ -147,7 +147,7 @@ class AutoEncoder(nn.Module):
         with torch.no_grad():
             while e != n_samples:
                 vbatch = next(data_source)
-                encoding = self.encoder(vbatch.mel_input)
+                encoding = self.encoder(vbatch.mel_enc_input)
                 ze = self.bottleneck.linear(encoding)
                 ze = ze.permute(0, 2, 1).flatten(0, 1)
                 c = min(n_samples - e, ze.shape[0])
@@ -198,20 +198,20 @@ class AutoEncoder(nn.Module):
         quant_pred: (B, Q, T) (the prediction from the model)
         wav_batch_out: (B, T) (the actual data from the same timesteps)
         """
-        wav_onehot_dec = self.preprocess(vbatch.wav_input)
-        # grad = torch.autograd.grad(wav_onehot_dec, vbatch.wav_input).data
+        wav_onehot_dec = self.preprocess(vbatch.wav_dec_input)
+        # grad = torch.autograd.grad(wav_onehot_dec, vbatch.wav_dec_input).data
 
         # Slice each wav input
         trim = vbatch.ds.trim_dec_out
-        wav_batch_out = vbatch.wav_input[:,trim[0]:trim[1]]
-        # wav_batch_out = torch.take(vbatch.wav_input, vbatch.loss_wav_slice)
+        wav_batch_out = vbatch.wav_dec_input[:,trim[0]:trim[1]]
+        # wav_batch_out = torch.take(vbatch.wav_dec_input, vbatch.loss_wav_slice)
         #for b, (sl_b, sl_e) in enumerate(vbatch.loss_wav_slice):
-        #    wav_batch_out[b] = vbatch.wav_input[b,sl_b:sl_e]
+        #    wav_batch_out[b] = vbatch.wav_dec_input[b,sl_b:sl_e]
 
         # self.wav_batch_out = wav_batch_out
         self.wav_onehot_dec = wav_onehot_dec
 
-        quant = self.forward(vbatch.mel_input, wav_onehot_dec,
+        quant = self.forward(vbatch.mel_enc_input, wav_onehot_dec,
                 vbatch.voice_index, vbatch.jitter_index, vbatch.ds.trim_ups_out)
         # quant_pred[:,:,0] is a prediction for wav_compand_out[:,1] 
         return quant[...,:-1], wav_batch_out[...,1:]
@@ -249,18 +249,21 @@ class Metrics(object):
 
         if mode == 'new':
             torch.manual_seed(opts.random_seed)
-            pre_params = parse_tools.get_prefixed_items(vars(opts), 'pre_')
-            enc_params = parse_tools.get_prefixed_items(vars(opts), 'enc_')
-            bn_params = parse_tools.get_prefixed_items(vars(opts), 'bn_')
-            dec_params = parse_tools.get_prefixed_items(vars(opts), 'dec_')
+            pre_par = parse_tools.get_prefixed_items(vars(opts), 'pre_')
+            enc_par = parse_tools.get_prefixed_items(vars(opts), 'enc_')
+            bn_par = parse_tools.get_prefixed_items(vars(opts), 'bn_')
+            dec_par = parse_tools.get_prefixed_items(vars(opts), 'dec_')
 
             # Initialize data
-            jprob = dec_params.pop('jitter_prob')
-            dataset = data.Slice(opts.n_batch, opts.n_win_batch, jprob)
+            jprob = dec_par.pop('jitter_prob')
+            dataset = data.Slice(opts.n_batch, opts.n_win_batch, jprob,
+                    pre_par['sample_rate'], pre_par['mfcc_win_sz'],
+                    pre_par['mfcc_hop_sz'], pre_par['n_mels'],
+                    pre_par['n_mfcc'])
             dataset.load_data(opts.dat_file)
-            dec_params['n_speakers'] = dataset.num_speakers()
-            model = ae.AutoEncoder(pre_params, enc_params, bn_params, dec_params,
-                    dataset.n_mel_chan, training=True)
+            dec_par['n_speakers'] = dataset.num_speakers()
+            model = ae.AutoEncoder(pre_par, enc_par, bn_par, dec_par,
+                    dataset.num_mel_chan(), training=True)
             model.encoder.set_parent_vc(dataset.mfcc_vc)
             dataset.post_init(model.encoder.vc, model.decoder.vc)
             optim = torch.optim.Adam(params=model.parameters(), lr=self.learning_rates[0])
@@ -350,7 +353,7 @@ class Metrics(object):
         self.quant = quant_pred_snip
         self.target = wav_compand_out_snip
         self.probs = self.softmax(self.quant)
-        self.mel_input = batch.mel_input
+        self.mel_enc_input = batch.mel_enc_input
         
 
     def loss_fn(self):
@@ -358,7 +361,7 @@ class Metrics(object):
         self.run_batch()
         self.state.optim.zero_grad()
         loss = self.state.model.objective(self.quant, self.target)
-        # inputs = (self.mel_input, self.state.model.encoding_bn)
+        # inputs = (self.mel_enc_input, self.state.model.encoding_bn)
         # mel_grad, bn_grad = torch.autograd.grad(loss, inputs, retain_graph=True)
         inputs = (self.state.model.encoding_bn)
         (bn_grad,) = torch.autograd.grad(loss, inputs, retain_graph=True)

@@ -20,6 +20,7 @@
 # From librosa.feature.mfcc):
 # n_mfcc (# of MFCCs to return)
 
+import torch
 import numpy as np
 import vconv 
 import math
@@ -51,6 +52,7 @@ class ProcessWav(object):
         trim_left = adj_l_wing_sz // self.hop_sz
         trim_right = self.vc.r_wing_sz // self.hop_sz
 
+        wav = wav.numpy()
         wav_pad = np.concatenate((np.zeros(left_pad), wav), axis=0) 
         mfcc = librosa.feature.mfcc(y=wav_pad, sr=self.sample_rate,
                 n_fft=self.window_sz, hop_length=self.hop_sz,
@@ -72,5 +74,5 @@ class ProcessWav(object):
         mfcc_delta2 = librosa.feature.delta(mfcc_trim, order=2)
         mfcc_and_derivatives = np.concatenate((mfcc_trim, mfcc_delta, mfcc_delta2), axis=0)
 
-        return mfcc_and_derivatives.astype(wav.dtype)
+        return torch.tensor(mfcc_and_derivatives.astype(wav.dtype))
 
