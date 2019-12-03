@@ -69,29 +69,6 @@ def convert(catalog, dat_file, n_quant, sample_rate=16000):
                 }
         pickle.dump(state, dat_fh)
         
-    
-def make_mel():
-    mfcc_proc = mfcc.ProcessWav(sample_rate, win_sz, hop_sz, n_mels, n_mfcc)
-
-    # mel: C, T  (n_mels, n_timesteps)
-    # reshape to T, C for ease in slicing timesteps 
-    # then flatten
-    # we must revert the shape of slices back to C, T
-    mel = mfcc_proc.func(snd)
-    if n_mel_chan is None:
-        n_mel_chan = mel.shape[0]
-    n_mel_elem = mel.shape[1]
-
-    mel = mel.transpose((1, 0)).flatten()
-    mel_raw_b = len(mel_data)
-    mel_raw_e = mel_raw_b + len(mel)
-    mel_data.resize(mel_raw_e)
-    mel_data[mel_raw_b:mel_raw_e] = mel
-    assert mel_raw_b % n_mel_chan == 0
-    assert mel_raw_e % n_mel_chan == 0
-    mel_b = mel_raw_b // n_mel_chan
-    mel_e = mel_raw_e // n_mel_chan
-
 
 
 SpokenSample = namedtuple('SpokenSample', [
@@ -244,9 +221,12 @@ class Slice(torch.utils.data.IterableDataset):
         self.enc_in_mel_len = mi.sub_length()
         self.emb_len = eo.sub_length() 
         self.dec_in_len = di.sub_length()
-        self.trim_dec_in = di.sub[0] - ei.sub[0], di.sub[1] - ei.sub[0]
-        self.trim_ups_out = di.sub[0] - uo.sub[0], di.sub[1] - uo.sub[0]
-        self.trim_dec_out = do.sub[0] - di.sub[0], do.sub[1] - di.sub[0]
+        self.trim_dec_in = torch.tensor([di.sub[0] - ei.sub[0], di.sub[1] -
+            ei.sub[0]], dtype=torch.long)
+        self.trim_ups_out = torch.tensor([di.sub[0] - uo.sub[0], di.sub[1] -
+            uo.sub[0]], dtype=torch.long)
+        self.trim_dec_out = torch.tensor([do.sub[0] - di.sub[0], do.sub[1] -
+            di.sub[0]], dtype=torch.long)
 
         # Generate slices from input
         self.in_start = []
@@ -283,6 +263,9 @@ class Slice(torch.utils.data.IterableDataset):
 
     def set_target_device(self, target_device):
         self.target_device = target_device
+        self.trim_dec_in = self.trim_dec_in.to(target_device)
+        self.trim_ups_out = self.trim_ups_out.to(target_device)
+        self.trim_dec_out = self.trim_dec_out.to(target_device)
 
     def __iter__(self):
         return self
