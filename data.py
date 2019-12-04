@@ -91,6 +91,7 @@ class VirtualBatch(object):
         self.wav_dec_input = torch.empty(bs, self.ds.dec_in_len)
         self.mel_enc_input = torch.empty(bs, self.ds.num_mel_chan(),
                 self.ds.enc_in_mel_len) 
+        assert self.wav_dec_input.shape[0] == 8
 
     def __repr__(self):
         fmt = (
@@ -130,6 +131,7 @@ class VirtualBatch(object):
         self.jitter_index = self.jitter_index.to(device)
         self.wav_dec_input = self.wav_dec_input.to(device)
         self.mel_enc_input = self.mel_enc_input.to(device)
+        assert self.wav_dec_input.shape[0] == 8
 
 
 
@@ -283,10 +285,12 @@ class Slice(torch.utils.data.IterableDataset):
         vb.mel_enc_input.detach_()
         vb.mel_enc_input.requires_grad_(False)
         vb.populate()
+        assert vb.wav_dec_input.shape[0] == 8
 
         if self.target_device:
             vb.to(self.target_device)
         vb.mel_enc_input.requires_grad_(True)
+        assert vb.wav_dec_input.shape[0] == 8
 
         return vb 
 
