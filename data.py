@@ -119,6 +119,7 @@ class VirtualBatch(object):
             self.voice_index[b] = voice_ind 
             self.jitter_index[b,:] = \
                     torch.tensor(self.ds.jitter.gen_indices(nz) + b * nz) 
+        assert self.wav_dec_input.shape[0] == 8
 
 
     def to(self, device):
