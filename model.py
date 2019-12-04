@@ -231,7 +231,6 @@ class TPULoaderIter(object):
 
     def __next__(self):
         vb = self.per_dev_loader.__next__()[0]
-        assert vb.wav_dec_input.shape[0] == 8
         return vb
 
 
