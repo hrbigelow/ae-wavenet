@@ -86,11 +86,11 @@ class VirtualBatch(object):
         super(VirtualBatch, self).__init__()
         self.ds = dataset
         bs = self.ds.batch_size
-        self.voice_index = torch.empty(bs, dtype=torch.long)
-        self.jitter_index = torch.empty(bs, self.ds.emb_len, dtype=torch.long)
-        self.wav_dec_input = torch.empty(bs, self.ds.dec_in_len)
-        self.mel_enc_input = torch.empty(bs, self.ds.num_mel_chan(),
-                self.ds.enc_in_mel_len) 
+        self.voice_index = torch.empty((bs,), dtype=torch.long)
+        self.jitter_index = torch.empty((bs, self.ds.emb_len), dtype=torch.long)
+        self.wav_dec_input = torch.empty((bs, self.ds.dec_in_len))
+        self.mel_enc_input = torch.empty((bs, self.ds.num_mel_chan(),
+                self.ds.enc_in_mel_len)) 
         assert self.wav_dec_input.shape[0] == 8
 
     def __repr__(self):
