@@ -122,9 +122,10 @@ class VirtualBatch(object):
 
 
     def to(self, device):
-        print('shape on cpu: {}'.format(self.voice_index.shape))
+        shape_cpu = self.voice_index.shape
         self.voice_index = self.voice_index.to(device)
-        print('shape on tpu: {}'.format(self.voice_index.shape))
+        shape_tpu = self.voice_index.shape
+        assert shape_cpu == shape_tpu
         self.jitter_index = self.jitter_index.to(device)
         self.wav_dec_input = self.wav_dec_input.to(device)
         self.mel_enc_input = self.mel_enc_input.to(device)
