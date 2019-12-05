@@ -290,8 +290,11 @@ class Metrics(object):
     def train(self, index):
         ss = self.state 
         ss.to(self.device)
+        batch_pre = next(self.data_iter)
+        batch = next(self.data_iter)
 
         while ss.step < self.opts.max_steps:
+            self.run_batch()
             loss = self.loss_fn()
             # loss = self.optim_step_fn()
 
@@ -339,21 +342,10 @@ class Metrics(object):
     def loss_fn(self):
         """This is the closure needed for the optimizer"""
         self.run_batch()
-        self.state.optim.zero_grad()
+        # self.state.optim.zero_grad()
         loss = self.state.model.objective(self.quant, self.target)
-        # inputs = (self.mel_enc_input, self.state.model.encoding_bn)
-        # mel_grad, bn_grad = torch.autograd.grad(loss, inputs, retain_graph=True)
-        inputs = (self.state.model.encoding_bn)
-        (bn_grad,) = torch.autograd.grad(loss, inputs, retain_graph=True)
-        # print(mel_grad)
-        # print(bn_grad)
-        self.state.model.objective.metrics.update({
-            # 'mel_grad_sd': mel_grad.std(),
-            # 'mel_grad_max': mel_grad.max(),
-            'bn_grad_sd': bn_grad.std(),
-            # 'bn_grad_max': bn_grad.max()
-            })
-        # loss.backward(create_graph=True, retain_graph=True)
-        loss.backward()
+        # inputs = (self.state.model.encoding_bn)
+        # (bn_grad,) = torch.autograd.grad(loss, inputs, retain_graph=True)
+        # loss.backward()
         return loss
     
