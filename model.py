@@ -264,11 +264,17 @@ class Metrics(object):
         #         dataset.num_mel_chan(), training=True)
         # model.encoder.set_parent_vc(dataset.mfcc_vc)
         # dataset.post_init(model.encoder.vc, model.decoder.vc)
+        # optim = torch.optim.Adam(params=model.parameters(), lr=1e-5)
+        # self.state = checkpoint.State(0, model, dataset, optim)
+        # self.start_step = self.state.step
+
+        # self.ckpt_path = util.CheckpointPath(self.opts.ckpt_template)
 
         import torch_xla.core.xla_model as xm
         import torch_xla.distributed.parallel_loader as pl
         self.device = xm.xla_device()
-        self.data_loader = pl.ParallelLoader(self.state.data_loader, [self.device])
+        wav_loader = data.WavLoader(dataset)
+        self.data_loader = pl.ParallelLoader(wav_loader, [self.device])
         self.data_iter = TPULoaderIter(self.data_loader, self.device)
 
         self.state.init_torch_generator()
@@ -279,4 +285,3 @@ class Metrics(object):
     def train(self, index):
         batch_pre = next(self.data_iter)
         batch = next(self.data_iter)
-
