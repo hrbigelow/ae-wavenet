@@ -260,18 +260,10 @@ class Metrics(object):
                 pre_par['mfcc_hop_sz'], pre_par['n_mels'],
                 pre_par['n_mfcc'])
         
-        with open(opts.dat_file, 'rb') as dat_fh:
-            dat = pickle.load(dat_fh)
-            dataset.snd_data = torch.ByteTensor(dat['snd_data'])
-        # dataset.load_data(opts.dat_file)
-        # dec_par['n_speakers'] = dataset.num_speakers()
-        # model = ae.AutoEncoder(pre_par, enc_par, bn_par, dec_par,
-        #         dataset.num_mel_chan(), training=True)
-        # model.encoder.set_parent_vc(dataset.mfcc_vc)
-        # dataset.post_init(model.encoder.vc, model.decoder.vc)
-        # optim = torch.optim.Adam(params=model.parameters(), lr=1e-5)
-        # self.state = checkpoint.State(0, model, dataset, optim)
-        # self.start_step = self.state.step
+        dataset.snd_data = torch.ByteTensor(np.random.rand(1133840))
+        # with open(opts.dat_file, 'rb') as dat_fh:
+        #     dat = pickle.load(dat_fh)
+        #     dataset.snd_data = torch.ByteTensor(dat['snd_data'])
 
         # self.ckpt_path = util.CheckpointPath(self.opts.ckpt_template)
 
