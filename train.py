@@ -1,6 +1,8 @@
 from sys import stderr
 import torch
 import numpy as np
+import torch_xla.core.xla_model as xm
+import torch_xla.distributed.parallel_loader as pl
 
 class VirtualBatch(object):
     def __init__(self, dataset):
@@ -67,13 +69,20 @@ class WavLoader(torch.utils.data.DataLoader):
         self.dataset.set_target_device(target_device)
 
 
+class TPULoaderIter(object):
+    def __init__(self, parallel_loader, device):
+        self.per_dev_loader = parallel_loader.per_device_loader(device)
+
+    def __next__(self):
+        vb = self.per_dev_loader.__next__()[0]
+        return vb
+
+
 def main():
     # Initialize data
     dataset = Slice(10, 1000)
     dataset.extra_field = torch.ByteTensor(np.random.rand(11338))
 
-    import torch_xla.core.xla_model as xm
-    import torch_xla.distributed.parallel_loader as pl
     device = xm.xla_device()
     wav_loader = WavLoader(dataset)
     data_loader = pl.ParallelLoader(wav_loader, [device])
