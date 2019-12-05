@@ -11,12 +11,12 @@ def main():
 
     import torch_xla.core.xla_model as xm
     import torch_xla.distributed.parallel_loader as pl
-    self.device = xm.xla_device()
+    device = xm.xla_device()
     wav_loader = data.WavLoader(dataset)
-    self.data_loader = pl.ParallelLoader(wav_loader, [self.device])
-    self.data_iter = TPULoaderIter(self.data_loader, self.device)
-    batch_pre = next(self.data_iter)
-    batch = next(self.data_iter)
+    data_loader = pl.ParallelLoader(wav_loader, [device])
+    data_iter = TPULoaderIter(data_loader, device)
+    batch_pre = next(data_iter)
+    batch = next(data_iter)
 
 if __name__ == '__main__':
     main()
