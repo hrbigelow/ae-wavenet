@@ -243,15 +243,8 @@ class Metrics(object):
     """
 
     def __init__(self, mode, opts):
-        print('Initializing model and data source...', end='', file=stderr)
-        stderr.flush()
         self.opts = opts
-
-        torch.manual_seed(opts.random_seed)
         pre_par = parse_tools.get_prefixed_items(vars(opts), 'pre_')
-        enc_par = parse_tools.get_prefixed_items(vars(opts), 'enc_')
-        bn_par = parse_tools.get_prefixed_items(vars(opts), 'bn_')
-        dec_par = parse_tools.get_prefixed_items(vars(opts), 'dec_')
 
         # Initialize data
         jprob = dec_par.pop('jitter_prob')
@@ -260,12 +253,8 @@ class Metrics(object):
                 pre_par['mfcc_hop_sz'], pre_par['n_mels'],
                 pre_par['n_mfcc'])
         
-        dataset.snd_data = torch.ByteTensor(np.random.rand(1133840))
-        # with open(opts.dat_file, 'rb') as dat_fh:
-        #     dat = pickle.load(dat_fh)
-        #     dataset.snd_data = torch.ByteTensor(dat['snd_data'])
-
-        # self.ckpt_path = util.CheckpointPath(self.opts.ckpt_template)
+        # dataset.snd_data = torch.ByteTensor(np.random.rand(1133840))
+        dataset.snd_data = torch.ByteTensor(np.random.rand(11338))
 
         import torch_xla.core.xla_model as xm
         import torch_xla.distributed.parallel_loader as pl
@@ -273,10 +262,6 @@ class Metrics(object):
         wav_loader = data.WavLoader(dataset)
         self.data_loader = pl.ParallelLoader(wav_loader, [self.device])
         self.data_iter = TPULoaderIter(self.data_loader, self.device)
-
-        # self.state.init_torch_generator()
-        print('Done.', file=stderr)
-        stderr.flush()
 
 
     def train(self, index):
