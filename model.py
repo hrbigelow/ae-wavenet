@@ -264,7 +264,7 @@ class Metrics(object):
                 dataset.num_mel_chan(), training=True)
         model.encoder.set_parent_vc(dataset.mfcc_vc)
         dataset.post_init(model.encoder.vc, model.decoder.vc)
-        optim = torch.optim.Adam(params=model.parameters(), lr=self.learning_rates[0])
+        optim = torch.optim.Adam(params=model.parameters(), lr=1e-5)
         self.state = checkpoint.State(0, model, dataset, optim)
         self.start_step = self.state.step
 
