@@ -244,62 +244,43 @@ class Metrics(object):
     def __init__(self, mode, opts):
         print('Initializing model and data source...', end='', file=stderr)
         stderr.flush()
-        self.learning_rates = dict(zip(opts.learning_rate_steps,
-            opts.learning_rate_rates))
         self.opts = opts
 
-        if mode == 'new':
-            torch.manual_seed(opts.random_seed)
-            pre_par = parse_tools.get_prefixed_items(vars(opts), 'pre_')
-            enc_par = parse_tools.get_prefixed_items(vars(opts), 'enc_')
-            bn_par = parse_tools.get_prefixed_items(vars(opts), 'bn_')
-            dec_par = parse_tools.get_prefixed_items(vars(opts), 'dec_')
+        torch.manual_seed(opts.random_seed)
+        pre_par = parse_tools.get_prefixed_items(vars(opts), 'pre_')
+        enc_par = parse_tools.get_prefixed_items(vars(opts), 'enc_')
+        bn_par = parse_tools.get_prefixed_items(vars(opts), 'bn_')
+        dec_par = parse_tools.get_prefixed_items(vars(opts), 'dec_')
 
-            # Initialize data
-            jprob = dec_par.pop('jitter_prob')
-            dataset = data.Slice(opts.n_batch, opts.n_win_batch, jprob,
-                    pre_par['sample_rate'], pre_par['mfcc_win_sz'],
-                    pre_par['mfcc_hop_sz'], pre_par['n_mels'],
-                    pre_par['n_mfcc'])
-            dataset.load_data(opts.dat_file)
-            dec_par['n_speakers'] = dataset.num_speakers()
-            model = ae.AutoEncoder(pre_par, enc_par, bn_par, dec_par,
-                    dataset.num_mel_chan(), training=True)
-            model.encoder.set_parent_vc(dataset.mfcc_vc)
-            dataset.post_init(model.encoder.vc, model.decoder.vc)
-            optim = torch.optim.Adam(params=model.parameters(), lr=self.learning_rates[0])
-            self.state = checkpoint.State(0, model, dataset, optim)
-            self.start_step = self.state.step
+        # Initialize data
+        jprob = dec_par.pop('jitter_prob')
+        dataset = data.Slice(opts.n_batch, opts.n_win_batch, jprob,
+                pre_par['sample_rate'], pre_par['mfcc_win_sz'],
+                pre_par['mfcc_hop_sz'], pre_par['n_mels'],
+                pre_par['n_mfcc'])
+        dataset.load_data(opts.dat_file)
+        dec_par['n_speakers'] = dataset.num_speakers()
+        model = ae.AutoEncoder(pre_par, enc_par, bn_par, dec_par,
+                dataset.num_mel_chan(), training=True)
+        model.encoder.set_parent_vc(dataset.mfcc_vc)
+        dataset.post_init(model.encoder.vc, model.decoder.vc)
+        optim = torch.optim.Adam(params=model.parameters(), lr=self.learning_rates[0])
+        self.state = checkpoint.State(0, model, dataset, optim)
+        self.start_step = self.state.step
 
-        else:
-            self.state = checkpoint.State()
-            self.state.load(opts.ckpt_file, opts.dat_file)
-            self.start_step = self.state.step
-            # print('Restored model, data, and optim from {}'.format(opts.ckpt_file), file=stderr)
-            #print('Data state: {}'.format(state.data), file=stderr)
-            #print('Model state: {}'.format(state.model.checksum()))
-            #print('Optim state: {}'.format(state.optim_checksum()))
-            stderr.flush()
 
         self.ckpt_path = util.CheckpointPath(self.opts.ckpt_template)
         self.quant = None
         self.target = None
         self.softmax = torch.nn.Softmax(1) # input to this is (B, Q, N)
 
-        if self.opts.hwtype == 'GPU':
-            self.device = torch.device('cuda')
-            self.data_loader = self.state.data_loader
-            self.data_loader.set_target_device(self.device)
-            self.optim_step_fn = (lambda: self.state.optim.step(self.loss_fn))
-            self.data_iter = GPULoaderIter(iter(self.data_loader))
-        else:
-            import torch_xla.core.xla_model as xm
-            import torch_xla.distributed.parallel_loader as pl
-            self.device = xm.xla_device()
-            self.data_loader = pl.ParallelLoader(self.state.data_loader, [self.device])
-            self.data_iter = TPULoaderIter(self.data_loader, self.device)
-            self.optim_step_fn = (lambda : xm.optimizer_step(self.state.optim,
-                    optimizer_args={'closure': self.loss_fn}))
+        import torch_xla.core.xla_model as xm
+        import torch_xla.distributed.parallel_loader as pl
+        self.device = xm.xla_device()
+        self.data_loader = pl.ParallelLoader(self.state.data_loader, [self.device])
+        self.data_iter = TPULoaderIter(self.data_loader, self.device)
+        self.optim_step_fn = (lambda : xm.optimizer_step(self.state.optim,
+                optimizer_args={'closure': self.loss_fn}))
 
         self.state.init_torch_generator()
         print('Done.', file=stderr)
@@ -309,12 +290,10 @@ class Metrics(object):
     def train(self, index):
         ss = self.state 
         ss.to(self.device)
-        if ss.model.bn_type in ('vqvae', 'vqvae-ema'):
-            ss.model.init_codebook(self.data_iter, 10000)
 
         while ss.step < self.opts.max_steps:
-            if ss.step in self.learning_rates:
-                ss.update_learning_rate(self.learning_rates[ss.step])
+            # if ss.step in self.learning_rates:
+            #     ss.update_learning_rate(self.learning_rates[ss.step])
             loss = self.optim_step_fn()
 
             if ss.model.bn_type == 'vqvae-ema' and ss.step == 10000:
