@@ -8,14 +8,10 @@ class VirtualBatch(object):
     def __init__(self, dataset):
         super(VirtualBatch, self).__init__()
         self.ds = dataset
-        bs = self.ds.batch_size
-        self.wav_dec_input = torch.empty((bs, self.ds.window_batch_size))
+        self.ten = torch.empty((self.ds.batch_size, self.ds.window_batch_size))
 
     def __repr__(self):
-        fmt = (
-            'wav_dec_input.shape: {}\n'
-        )
-        return fmt.format(self.wav_dec_input.shape)
+        return 'ten.shape: {}'.format(self.ten.shape)
 
 
 class Slice(torch.utils.data.IterableDataset):
