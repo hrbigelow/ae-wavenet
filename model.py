@@ -252,7 +252,6 @@ class Metrics(object):
                 pre_par['mfcc_hop_sz'], pre_par['n_mels'],
                 pre_par['n_mfcc'])
         
-        # dataset.snd_data = torch.ByteTensor(np.random.rand(1133840))
         # dataset.snd_data = torch.ByteTensor(np.random.rand(11338))
 
         import torch_xla.core.xla_model as xm

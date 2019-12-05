@@ -171,75 +171,6 @@ class Slice(torch.utils.data.IterableDataset):
     def __getstate__(self):
         return self.init_args
 
-
-    def num_speakers(self):
-        return max(map(lambda s: s.voice_index, self.samples)) + 1
-
-    def num_mel_chan(self):
-        return self.mfcc_proc.n_out
-
-    def init_geometry(self):
-        """
-        Initializes:
-        self.enc_in_len
-        self.trim_ups_out
-        self.trim_dec_out
-        self.trim_dec_in
-        """
-        # Calculate max length of mfcc encoder input and wav decoder input
-        w = self.window_batch_size
-        mfcc_vc = self.mfcc_vc
-        beg_grcc_vc = self.decoder_vcs['beg_grcc']
-        end_grcc_vc = self.decoder_vcs['end_grcc']
-        end_ups_vc = self.decoder_vcs['last_upsample']
-        end_enc_vc = self.encoder_vcs['end']
-
-        do = vconv.GridRange((0, 100000), (0, w), 1)
-        di = vconv.input_range(beg_grcc_vc, end_grcc_vc, do)
-        ei = vconv.input_range(mfcc_vc, end_grcc_vc, do)
-        mi = vconv.input_range(mfcc_vc.child, end_grcc_vc, do)
-        eo = vconv.output_range(mfcc_vc, end_enc_vc, ei)
-        uo = vconv.output_range(mfcc_vc, end_ups_vc, ei)
-
-        # Needed for trimming various tensors
-        self.enc_in_len = ei.sub_length()
-        self.enc_in_mel_len = mi.sub_length()
-        self.emb_len = eo.sub_length() 
-        self.dec_in_len = di.sub_length()
-        self.trim_dec_in = torch.tensor([di.sub[0] - ei.sub[0], di.sub[1] -
-            ei.sub[0]], dtype=torch.long)
-        self.trim_ups_out = torch.tensor([di.sub[0] - uo.sub[0], di.sub[1] -
-            uo.sub[0]], dtype=torch.long)
-        self.trim_dec_out = torch.tensor([do.sub[0] - di.sub[0], do.sub[1] -
-            di.sub[0]], dtype=torch.long)
-
-        # Generate slices from input
-        self.in_start = []
-        for sam in self.samples:
-            for b in range(sam.wav_b, sam.wav_e - w, w):
-                self.in_start.append((b, sam.voice_index))
-
-
-    def post_init(self, encoder_vcs, decoder_vcs):
-        """
-        Initializes:
-        self.slices
-        Depends on information computed from the model, so must be
-        called after model construction.
-        """
-        self.encoder_vcs = encoder_vcs
-        self.decoder_vcs = decoder_vcs
-        self.init_geometry()
-
-
-    def _load_sample_data(self, snd_np):
-        """
-        Populates self.snd_data
-        """
-        self.snd_data = torch.ByteTensor(snd_np)
-        # self.snd_data = snd_data
-
-
     def set_target_device(self, target_device):
         self.target_device = target_device
         self.trim_dec_in = self.trim_dec_in.to(target_device)
@@ -250,22 +181,7 @@ class Slice(torch.utils.data.IterableDataset):
         return self
 
     def __next__(self):
-        """
-        Get a random slice of a file, together with its start position and ID.
-        Random state is from torch.{get,set}_rng_state().  It is on the CPU,
-        not GPU.
-        """
         vb = VirtualBatch(self)
-        # vb.mel_enc_input.detach_()
-        # vb.mel_enc_input.requires_grad_(False)
-        # vb.populate()
-        assert vb.wav_dec_input.shape[0] == 8
-
-        # if self.target_device:
-        #     vb.to(self.target_device)
-        # vb.mel_enc_input.requires_grad_(True)
-        assert vb.wav_dec_input.shape[0] == 8
-
         return vb 
 
 
