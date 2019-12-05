@@ -149,15 +149,12 @@ class AutoEncoder(nn.Module):
         self.enc_in_mel_len = mi.sub_length()
         self.embed_len = eo.sub_length() 
         self.dec_in_len = di.sub_length()
-        self.register_buffer('trim_dec_in',
-                torch.tensor([di.sub[0] - ei.sub[0], di.sub[1] - ei.sub[0]],
-                    dtype=torch.long))
-        self.decoder.register_buffer('trim_ups_out', 
-                torch.tensor([di.sub[0] - uo.sub[0], di.sub[1] - uo.sub[0]],
-                    dtype=torch.long))
-        self.register_buffer('trim_dec_out', 
-                torch.tensor([do.sub[0] - di.sub[0], do.sub[1] - di.sub[0]],
-                    dtype=torch.long))
+        self.trim_dec_in = torch.tensor([di.sub[0] - ei.sub[0], di.sub[1] -
+            ei.sub[0]], dtype=torch.long)
+        self.decoder.trim_ups_out = torch.tensor([di.sub[0] - uo.sub[0],
+            di.sub[1] - uo.sub[0]], dtype=torch.long)
+        self.trim_dec_out = torch.tensor([do.sub[0] - di.sub[0], do.sub[1] -
+            di.sub[0]], dtype=torch.long))
 
 
     def __getstate__(self):
