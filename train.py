@@ -4,9 +4,9 @@ import numpy as np
 import torch_xla.core.xla_model as xm
 import torch_xla.distributed.parallel_loader as pl
 
-class VirtualBatch(object):
+class MyBatch(object):
     def __init__(self, dataset):
-        super(VirtualBatch, self).__init__()
+        super(MyBatch, self).__init__()
         self.ds = dataset
         self.ten = torch.empty((self.ds.dim1, self.ds.dim2))
 
@@ -14,14 +14,13 @@ class VirtualBatch(object):
         return 'ten.shape: {}'.format(self.ten.shape)
 
 
-class Slice(torch.utils.data.IterableDataset):
+class MyDataset(torch.utils.data.IterableDataset):
     def __init__(self, dim1, dim2):
         self.init_args = { 'dim1': dim1, 'dim2': dim2 }
         self._initialize()
 
-
     def _initialize(self):
-        super(Slice, self).__init__()
+        super(MyDataset, self).__init__()
         self.__dict__.update(self.init_args)
 
     def __setstate__(self, init_args):
@@ -35,17 +34,16 @@ class Slice(torch.utils.data.IterableDataset):
         return self
 
     def __next__(self):
-        vb = VirtualBatch(self)
-        return vb 
+        return MyBatch(self)
 
 
-class WavLoader(torch.utils.data.DataLoader):
+class MyLoader(torch.utils.data.DataLoader):
     @staticmethod
     def ident(x):
         return x
 
     def __init__(self, wav_dataset):
-        super(WavLoader, self).__init__(
+        super(MyLoader, self).__init__(
                 dataset=wav_dataset,
                 batch_sampler=None,
                 collate_fn=self.ident
@@ -62,13 +60,13 @@ class TPULoaderIter(object):
 
 
 def main():
-    dataset = Slice(10, 1000)
+    dataset = MyDataset(10, 1000)
     dataset.extra_field = torch.ByteTensor(np.random.rand(11338))
 
     device = xm.xla_device()
-    wav_loader = WavLoader(dataset)
-    data_loader = pl.ParallelLoader(wav_loader, [device])
-    data_iter = TPULoaderIter(data_loader, device)
+    plain_loader = MyLoader(dataset)
+    para_loader = pl.ParallelLoader(plain_loader, [device])
+    data_iter = TPULoaderIter(para_loader, device)
     batch_pre = next(data_iter)
     batch = next(data_iter)
 
