@@ -171,8 +171,8 @@ class Slice(torch.utils.data.IterableDataset):
             stderr.flush()
             exit(1)
 
-        self.samples = dat['samples']
-        self._load_sample_data(dat['snd_data'], dat['snd_dtype'])
+        # self.samples = dat['samples']
+        # self._load_sample_data(dat['snd_data'], dat['snd_dtype'])
 
 
     def __setstate__(self, init_args):
