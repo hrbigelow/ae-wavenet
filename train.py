@@ -5,17 +5,25 @@ import torch_xla.core.xla_model as xm
 import torch_xla.distributed.parallel_loader as pl
 
 class VirtualBatch(object):
-    def __init__(self, dim1, dim2):
+    def __init__(self, dataset):
         super(VirtualBatch, self).__init__()
-        self.ten = torch.empty(dim1, dim2)
+        self.ds = dataset
+        bs = self.ds.batch_size
+        self.wav_dec_input = torch.empty((bs, self.ds.window_batch_size))
 
     def __repr__(self):
-        return 'ten.shape: {}'.format(self.ten.shape)
+        fmt = (
+            'wav_dec_input.shape: {}\n'
+        )
+        return fmt.format(self.wav_dec_input.shape)
 
 
 class Slice(torch.utils.data.IterableDataset):
-    def __init__(self, dim1, dim2):
-        self.init_args = { 'dim1': dim1, 'dim2': dim2 }
+    def __init__(self, batch_size, window_batch_size):
+        self.init_args = {
+                'batch_size': batch_size,
+                'window_batch_size': window_batch_size
+                }
         self._initialize()
 
 
@@ -34,7 +42,7 @@ class Slice(torch.utils.data.IterableDataset):
         return self
 
     def __next__(self):
-        vb = VirtualBatch(self.dim1, self.dim2)
+        vb = VirtualBatch(self)
         return vb 
 
 
