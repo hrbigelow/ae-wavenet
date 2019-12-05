@@ -163,13 +163,13 @@ class Slice(torch.utils.data.IterableDataset):
         self.snd_data = torch.ByteTensor(np.random.rand(11338))
 
 
-    def __setstate__(self, init_args):
-        self.init_args = init_args 
-        self._initialize()
+    # def __setstate__(self, init_args):
+    #     self.init_args = init_args 
+    #     self._initialize()
 
 
-    def __getstate__(self):
-        return self.init_args
+    # def __getstate__(self):
+    #     return self.init_args
 
     def set_target_device(self, target_device):
         self.target_device = target_device
