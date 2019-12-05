@@ -284,7 +284,7 @@ class Slice(torch.utils.data.IterableDataset):
         vb = VirtualBatch(self)
         vb.mel_enc_input.detach_()
         vb.mel_enc_input.requires_grad_(False)
-        vb.populate()
+        # vb.populate()
         assert vb.wav_dec_input.shape[0] == 8
 
         if self.target_device:
