@@ -160,18 +160,7 @@ class Slice(torch.utils.data.IterableDataset):
                 n_mfcc=self.n_mfcc)
         self.mfcc_vc = vconv.VirtualConv(filter_info=self.mfcc_win_sz,
                 stride=self.mfcc_hop_sz, parent=None, name='MFCC')
-
-    def load_data(self, dat_file):
-        try:
-            with open(dat_file, 'rb') as dat_fh:
-                dat = pickle.load(dat_fh)
-        except IOError:
-            print('Could not open preprocessed data file {}.'.format(
-                dat_file), file=stderr)
-            stderr.flush()
-            exit(1)
-
-        self._load_sample_data(dat['snd_data'])
+        self.snd_data = torch.ByteTensor(np.random.rand(11338))
 
 
     def __setstate__(self, init_args):

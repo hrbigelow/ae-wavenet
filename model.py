@@ -253,7 +253,7 @@ class Metrics(object):
                 pre_par['n_mfcc'])
         
         # dataset.snd_data = torch.ByteTensor(np.random.rand(1133840))
-        dataset.snd_data = torch.ByteTensor(np.random.rand(11338))
+        # dataset.snd_data = torch.ByteTensor(np.random.rand(11338))
 
         import torch_xla.core.xla_model as xm
         import torch_xla.distributed.parallel_loader as pl
