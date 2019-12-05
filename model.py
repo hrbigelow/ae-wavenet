@@ -387,7 +387,6 @@ class Metrics(object):
         run the next batch through the model, populating quantities for the
         loss.
         """
-        batch_pre = next(self.data_iter)
         batch = next(self.data_iter)
         quant_pred_snip, wav_compand_out_snip = self.state.model.run(batch) 
         self.quant = quant_pred_snip
