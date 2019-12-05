@@ -247,8 +247,7 @@ class Metrics(object):
         pre_par = parse_tools.get_prefixed_items(vars(opts), 'pre_')
 
         # Initialize data
-        jprob = dec_par.pop('jitter_prob')
-        dataset = data.Slice(opts.n_batch, opts.n_win_batch, jprob,
+        dataset = data.Slice(opts.n_batch, opts.n_win_batch, 0.12,
                 pre_par['sample_rate'], pre_par['mfcc_win_sz'],
                 pre_par['mfcc_hop_sz'], pre_par['n_mels'],
                 pre_par['n_mfcc'])
