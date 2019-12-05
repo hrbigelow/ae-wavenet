@@ -277,7 +277,7 @@ class Metrics(object):
         self.data_loader = pl.ParallelLoader(wav_loader, [self.device])
         self.data_iter = TPULoaderIter(self.data_loader, self.device)
 
-        self.state.init_torch_generator()
+        # self.state.init_torch_generator()
         print('Done.', file=stderr)
         stderr.flush()
 
