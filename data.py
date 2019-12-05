@@ -85,12 +85,12 @@ class VirtualBatch(object):
     def __init__(self, dataset):
         super(VirtualBatch, self).__init__()
         ds = dataset
-        self.voice_index = torch.empty((bs,), dtype=torch.long)
-        self.jitter_index = torch.empty((bs, ds.emb_len), dtype=torch.long)
-        self.wav_dec_input = torch.empty((bs, ds.dec_in_len))
-        self.mel_enc_input = torch.empty((bs, ds.num_mel_chan(),
+        self.voice_index = torch.empty((ds.batch_size,), dtype=torch.long)
+        self.jitter_index = torch.empty((ds.batch_size, ds.embed_len),
+                dtype=torch.long)
+        self.wav_dec_input = torch.empty((ds.batch_size, ds.dec_in_len))
+        self.mel_enc_input = torch.empty((ds.batch_size, ds.num_mel_chan(),
             ds.enc_in_mel_len)) 
-        assert self.wav_dec_input.shape[0] == 8
 
     def __repr__(self):
         fmt = (
@@ -107,7 +107,7 @@ class VirtualBatch(object):
         sets the data for one sample in the batch
         """
         ds = dataset
-        rg = torch.empty((self.batch_size), dtype=torch.int64).cpu()
+        rg = torch.empty((ds.batch_size), dtype=torch.int64).cpu()
         picks = rg.random_() % len(ds.in_start) 
         nz = ds.embed_len
         trim = ds.trim_dec_in
@@ -116,11 +116,10 @@ class VirtualBatch(object):
             s, voice_ind = ds.in_start[wi]
             wav_enc_input = ds.snd_data[s:s + ds.enc_in_len]
             self.wav_dec_input[b,...] = wav_enc_input[trim[0]:trim[1]]
-            self.mel_enc_input[b,...] = self.ds.mfcc_proc.func(wav_enc_input)
+            self.mel_enc_input[b,...] = ds.mfcc_proc.func(wav_enc_input)
             self.voice_index[b] = voice_ind 
             self.jitter_index[b,:] = \
-                    torch.tensor(self.ds.jitter.gen_indices(nz) + b * nz) 
-        assert self.wav_dec_input.shape[0] == 8
+                    torch.tensor(ds.jitter.gen_indices(nz) + b * nz) 
 
 
     def to(self, device):
@@ -128,7 +127,6 @@ class VirtualBatch(object):
         self.jitter_index = self.jitter_index.to(device)
         self.wav_dec_input = self.wav_dec_input.to(device)
         self.mel_enc_input = self.mel_enc_input.to(device)
-        assert self.wav_dec_input.shape[0] == 8
 
 
 
@@ -196,8 +194,13 @@ class Slice(torch.utils.data.IterableDataset):
         return self.mfcc_proc.n_out
 
 
-    def post_init(self, trim_dec_in):
-        self.trim_dec_in = trim_dec_in
+    def post_init(self, model):
+        self.trim_dec_in = model.trim_dec_in
+        self.embed_len = model.embed_len
+        self.enc_in_len = model.enc_in_len
+        self.dec_in_len = model.dec_in_len
+        self.enc_in_mel_len = model.enc_in_mel_len
+        
         w = self.window_batch_size
         self.in_start = []
         for sam in self.samples:
@@ -231,9 +234,9 @@ class Slice(torch.utils.data.IterableDataset):
         Random state is from torch.{get,set}_rng_state().  It is on the CPU,
         not GPU.
         """
-        vb = VirtualBatch()
-        self.mel_enc_input.detach_()
-        self.mel_enc_input.requires_grad_(False)
+        vb = VirtualBatch(self)
+        vb.mel_enc_input.detach_()
+        vb.mel_enc_input.requires_grad_(False)
         vb.populate(self)
 
         if self.target_device:

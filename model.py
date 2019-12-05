@@ -117,7 +117,11 @@ class AutoEncoder(nn.Module):
         self.vc = self.decoder.vc
         self.decoder.post_init()
 
-    def init_geometry(self, batch_win_size):
+    def post_init(self, dataset):
+        self.encoder.set_parent_vc(dataset.mfcc_vc)
+        self._init_geometry(dataset.window_batch_size)
+
+    def _init_geometry(self, batch_win_size):
         """
         Initializes:
         self.enc_in_len
@@ -127,7 +131,7 @@ class AutoEncoder(nn.Module):
         """
         # Calculate max length of mfcc encoder input and wav decoder input
         w = batch_win_size
-        mfcc_vc = self.mfcc_vc
+        mfcc_vc = self.encoder.vc['beg'].parent
         beg_grcc_vc = self.decoder.vc['beg_grcc']
         end_grcc_vc = self.decoder.vc['end_grcc']
         end_ups_vc = self.decoder.vc['last_upsample']
@@ -143,7 +147,7 @@ class AutoEncoder(nn.Module):
         # Needed for trimming various tensors
         self.enc_in_len = ei.sub_length()
         self.enc_in_mel_len = mi.sub_length()
-        self.emb_len = eo.sub_length() 
+        self.embed_len = eo.sub_length() 
         self.dec_in_len = di.sub_length()
         self.register_buffer('trim_dec_in',
                 torch.tensor([di.sub[0] - ei.sub[0], di.sub[1] - ei.sub[0]],
@@ -204,8 +208,7 @@ class AutoEncoder(nn.Module):
         return util.tensor_digest(self.parameters())
         
 
-    def forward(self, mels, wav_onehot_dec, voice_inds, jitter_index,
-            trim_ups_out):
+    def forward(self, mels, wav_onehot_dec, voice_inds, jitter_index):
         """
         B: n_batch
         M: n_mels
@@ -224,7 +227,7 @@ class AutoEncoder(nn.Module):
         encoding_bn = self.bottleneck(encoding)
         self.encoding_bn = encoding_bn
         quant = self.decoder(wav_onehot_dec, encoding_bn, voice_inds,
-                jitter_index, trim_ups_out)
+                jitter_index)
         return quant
 
     def run(self, vbatch):
@@ -303,8 +306,8 @@ class Metrics(object):
             dec_par['n_speakers'] = dataset.num_speakers()
             model = ae.AutoEncoder(pre_par, enc_par, bn_par, dec_par,
                     dataset.num_mel_chan(), training=True)
-            model.encoder.set_parent_vc(dataset.mfcc_vc)
-            dataset.post_init(model.encoder.vc, model.decoder.vc)
+            model.post_init(dataset)
+            dataset.post_init(model)
             optim = torch.optim.Adam(params=model.parameters(), lr=self.learning_rates[0])
             self.state = checkpoint.State(0, model, dataset, optim)
             self.start_step = self.state.step
