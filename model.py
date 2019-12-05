@@ -259,7 +259,7 @@ class Metrics(object):
                 pre_par['mfcc_hop_sz'], pre_par['n_mels'],
                 pre_par['n_mfcc'])
         
-        with open(dat_file, 'rb') as dat_fh:
+        with open(opts.dat_file, 'rb') as dat_fh:
             dat = pickle.load(dat_fh)
             dataset.snd_data = torch.ByteTensor(dat['snd_data'])
         # dataset.load_data(opts.dat_file)
