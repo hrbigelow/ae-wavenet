@@ -268,19 +268,13 @@ class Metrics(object):
         self.state = checkpoint.State(0, model, dataset, optim)
         self.start_step = self.state.step
 
-
         self.ckpt_path = util.CheckpointPath(self.opts.ckpt_template)
-        self.quant = None
-        self.target = None
-        self.softmax = torch.nn.Softmax(1) # input to this is (B, Q, N)
 
         import torch_xla.core.xla_model as xm
         import torch_xla.distributed.parallel_loader as pl
         self.device = xm.xla_device()
         self.data_loader = pl.ParallelLoader(self.state.data_loader, [self.device])
         self.data_iter = TPULoaderIter(self.data_loader, self.device)
-        # self.optim_step_fn = (lambda : xm.optimizer_step(self.state.optim,
-        #         optimizer_args={'closure': self.loss_fn}))
 
         self.state.init_torch_generator()
         print('Done.', file=stderr)
@@ -293,30 +287,6 @@ class Metrics(object):
         batch_pre = next(self.data_iter)
         batch = next(self.data_iter)
 
-        while ss.step < self.opts.max_steps:
-            self.run_batch()
-            loss = self.loss_fn()
-            # loss = self.optim_step_fn()
-
-            if ss.model.bn_type == 'vqvae-ema' and ss.step == 10000:
-                ss.model.bottleneck.update_codebook()
-
-            if ss.step % self.opts.progress_interval == 0:
-                current_stats = {
-                        'step': ss.step,
-                        'loss': loss,
-                        'tprb_m': self.avg_prob_target(),
-                        # 'pk_d_m': avg_peak_dist
-                        }
-                if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae'):
-                    current_stats.update(ss.model.objective.metrics)
-                netmisc.print_metrics(current_stats, index, 100)
-                stderr.flush()
-
-            if ((ss.step % self.opts.save_interval == 0 and ss.step !=
-                self.start_step)):
-                self.save_checkpoint()
-            ss.step += 1
 
     def save_checkpoint(self):
         ckpt_file = self.ckpt_path.path(self.state.step)
@@ -324,28 +294,3 @@ class Metrics(object):
         print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
         #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
         stderr.flush()
-
-    def run_batch(self):
-        """
-        run the next batch through the model, populating quantities for the
-        loss.
-        """
-        batch_pre = next(self.data_iter)
-        batch = next(self.data_iter)
-        quant_pred_snip, wav_compand_out_snip = self.state.model.run(batch) 
-        self.quant = quant_pred_snip
-        self.target = wav_compand_out_snip
-        self.probs = self.softmax(self.quant)
-        self.mel_enc_input = batch.mel_enc_input
-        
-
-    def loss_fn(self):
-        """This is the closure needed for the optimizer"""
-        self.run_batch()
-        # self.state.optim.zero_grad()
-        loss = self.state.model.objective(self.quant, self.target)
-        # inputs = (self.state.model.encoding_bn)
-        # (bn_grad,) = torch.autograd.grad(loss, inputs, retain_graph=True)
-        # loss.backward()
-        return loss
-    
