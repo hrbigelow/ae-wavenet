@@ -8,18 +8,15 @@ class VirtualBatch(object):
     def __init__(self, dataset):
         super(VirtualBatch, self).__init__()
         self.ds = dataset
-        self.ten = torch.empty((self.ds.batch_size, self.ds.window_batch_size))
+        self.ten = torch.empty((self.ds.dim1, self.ds.dim2))
 
     def __repr__(self):
         return 'ten.shape: {}'.format(self.ten.shape)
 
 
 class Slice(torch.utils.data.IterableDataset):
-    def __init__(self, batch_size, window_batch_size):
-        self.init_args = {
-                'batch_size': batch_size,
-                'window_batch_size': window_batch_size
-                }
+    def __init__(self, dim1, dim2):
+        self.init_args = { 'dim1': dim1, 'dim2': dim2 }
         self._initialize()
 
 
@@ -43,26 +40,16 @@ class Slice(torch.utils.data.IterableDataset):
 
 
 class WavLoader(torch.utils.data.DataLoader):
-    """
-    Data loader which may be wrapped by a
-    torch_xla.distributed.parallel_loader.
-    This loader returns batches of tensors on cpu, optionally
-    pushing them to target_device if provided
-    """
     @staticmethod
     def ident(x):
         return x
 
-    def __init__(self, wav_dataset, target_device=None):
-        self.target_device = target_device
+    def __init__(self, wav_dataset):
         super(WavLoader, self).__init__(
                 dataset=wav_dataset,
                 batch_sampler=None,
                 collate_fn=self.ident
                 )
-
-    def set_target_device(self, target_device):
-        self.dataset.set_target_device(target_device)
 
 
 class TPULoaderIter(object):
@@ -75,7 +62,6 @@ class TPULoaderIter(object):
 
 
 def main():
-    # Initialize data
     dataset = Slice(10, 1000)
     dataset.extra_field = torch.ByteTensor(np.random.rand(11338))
 
