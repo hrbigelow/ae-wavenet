@@ -87,7 +87,6 @@ class VirtualBatch(object):
         self.ds = dataset
         bs = self.ds.batch_size
         self.wav_dec_input = torch.empty((bs, self.ds.window_batch_size))
-        assert self.wav_dec_input.shape[0] == 8
 
     def __repr__(self):
         fmt = (
