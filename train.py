@@ -79,7 +79,7 @@ def main():
         print('Shapes of batch1 and batch2 match')
     else:
         print('Mismatching shapes: batch1: {} != batch2: {}'.format(
-            batch1.shape, batch2.shape))
+            batch1.ten.shape, batch2.ten.shape))
 
 if __name__ == '__main__':
     main()
