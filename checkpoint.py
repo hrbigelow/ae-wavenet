@@ -29,7 +29,7 @@ class State(object):
         dataset = pickle.loads(sinfo['dataset'])
         dataset.load_data(dat_file)
         self.model.encoder.set_parent_vc(dataset.mfcc_vc)
-        dataset.post_init(self.model.encoder.vc, self.model.decoder.vc)
+        dataset.post_init(self.model.trim_dec_in)
 
         self.data_loader = data.WavLoader(dataset)
         self.optim = torch.optim.Adam(self.model.parameters())

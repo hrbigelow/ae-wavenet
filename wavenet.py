@@ -208,8 +208,7 @@ class WaveNet(nn.Module):
             grc.post_init()
 
 
-    def forward(self, wav_onehot, lc_sparse, speaker_inds, jitter_index,
-            trim_ups_out):
+    def forward(self, wav_onehot, lc_sparse, speaker_inds, jitter_index):
         """
         B: n_batch (# of separate wav streams being processed)
         T1: n_wav_timesteps
@@ -233,7 +232,7 @@ class WaveNet(nn.Module):
         # W2 = lcond_slice.size()[1] 
 
         D2 = lc_dense.size()[1]
-        lc_dense_trim = lc_dense[:,:,trim_ups_out[0]:trim_ups_out[1]]
+        lc_dense_trim = lc_dense[:,:,self.trim_ups_out[0]:self.trim_ups_out[1]]
         # lc_dense_trim = torch.take(lc_dense,
         #         lcond_slice.unsqueeze(1).expand(-1, D2, -1))
 

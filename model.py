@@ -117,6 +117,44 @@ class AutoEncoder(nn.Module):
         self.vc = self.decoder.vc
         self.decoder.post_init()
 
+    def init_geometry(self, batch_win_size):
+        """
+        Initializes:
+        self.enc_in_len
+        self.trim_ups_out
+        self.trim_dec_out
+        self.trim_dec_in
+        """
+        # Calculate max length of mfcc encoder input and wav decoder input
+        w = batch_win_size
+        mfcc_vc = self.mfcc_vc
+        beg_grcc_vc = self.decoder.vc['beg_grcc']
+        end_grcc_vc = self.decoder.vc['end_grcc']
+        end_ups_vc = self.decoder.vc['last_upsample']
+        end_enc_vc = self.encoder.vc['end']
+
+        do = vconv.GridRange((0, 100000), (0, w), 1)
+        di = vconv.input_range(beg_grcc_vc, end_grcc_vc, do)
+        ei = vconv.input_range(mfcc_vc, end_grcc_vc, do)
+        mi = vconv.input_range(mfcc_vc.child, end_grcc_vc, do)
+        eo = vconv.output_range(mfcc_vc, end_enc_vc, ei)
+        uo = vconv.output_range(mfcc_vc, end_ups_vc, ei)
+
+        # Needed for trimming various tensors
+        self.enc_in_len = ei.sub_length()
+        self.enc_in_mel_len = mi.sub_length()
+        self.emb_len = eo.sub_length() 
+        self.dec_in_len = di.sub_length()
+        self.register_buffer('trim_dec_in',
+                torch.tensor([di.sub[0] - ei.sub[0], di.sub[1] - ei.sub[0]],
+                    dtype=torch.long))
+        self.decoder.register_buffer('trim_ups_out', 
+                torch.tensor([di.sub[0] - uo.sub[0], di.sub[1] - uo.sub[0]],
+                    dtype=torch.long))
+        self.register_buffer('trim_dec_out', 
+                torch.tensor([do.sub[0] - di.sub[0], do.sub[1] - di.sub[0]],
+                    dtype=torch.long))
+
 
     def __getstate__(self):
         state = { 
@@ -202,7 +240,7 @@ class AutoEncoder(nn.Module):
         # grad = torch.autograd.grad(wav_onehot_dec, vbatch.wav_dec_input).data
 
         # Slice each wav input
-        trim = vbatch.ds.trim_dec_out
+        trim = self.trim_dec_out
         wav_batch_out = vbatch.wav_dec_input[:,trim[0]:trim[1]]
         # wav_batch_out = torch.take(vbatch.wav_dec_input, vbatch.loss_wav_slice)
         #for b, (sl_b, sl_e) in enumerate(vbatch.loss_wav_slice):
@@ -212,7 +250,7 @@ class AutoEncoder(nn.Module):
         self.wav_onehot_dec = wav_onehot_dec
 
         quant = self.forward(vbatch.mel_enc_input, wav_onehot_dec,
-                vbatch.voice_index, vbatch.jitter_index, vbatch.ds.trim_ups_out)
+                vbatch.voice_index, vbatch.jitter_index)
         # quant_pred[:,:,0] is a prediction for wav_compand_out[:,1] 
         return quant[...,:-1], wav_batch_out[...,1:]
 

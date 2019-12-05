@@ -84,13 +84,12 @@ SpokenSample = namedtuple('SpokenSample', [
 class VirtualBatch(object):
     def __init__(self, dataset):
         super(VirtualBatch, self).__init__()
-        self.ds = dataset
-        bs = self.ds.batch_size
+        ds = dataset
         self.voice_index = torch.empty((bs,), dtype=torch.long)
-        self.jitter_index = torch.empty((bs, self.ds.emb_len), dtype=torch.long)
-        self.wav_dec_input = torch.empty((bs, self.ds.dec_in_len))
-        self.mel_enc_input = torch.empty((bs, self.ds.num_mel_chan(),
-                self.ds.enc_in_mel_len)) 
+        self.jitter_index = torch.empty((bs, ds.emb_len), dtype=torch.long)
+        self.wav_dec_input = torch.empty((bs, ds.dec_in_len))
+        self.mel_enc_input = torch.empty((bs, ds.num_mel_chan(),
+            ds.enc_in_mel_len)) 
         assert self.wav_dec_input.shape[0] == 8
 
     def __repr__(self):
@@ -103,19 +102,20 @@ class VirtualBatch(object):
         return fmt.format(self.voice_index, self.jitter_index,
                 self.wav_dec_input.shape, self.mel_enc_input.shape)
 
-    def populate(self):
+    def populate(self, dataset):
         """
         sets the data for one sample in the batch
         """
-        rg = torch.empty((self.ds.batch_size), dtype=torch.int64).cpu()
-        picks = rg.random_() % len(self.ds.in_start)
-        nz = self.ds.emb_len
-        wav_trim = self.ds.trim_dec_in
+        ds = dataset
+        rg = torch.empty((self.batch_size), dtype=torch.int64).cpu()
+        picks = rg.random_() % len(ds.in_start) 
+        nz = ds.embed_len
+        trim = ds.trim_dec_in
 
         for b, wi in enumerate(picks):
-            s, voice_ind = self.ds.in_start[wi]
-            wav_enc_input = self.ds.snd_data[s:s + self.ds.enc_in_len]
-            self.wav_dec_input[b,...] = wav_enc_input[wav_trim[0]:wav_trim[1]]
+            s, voice_ind = ds.in_start[wi]
+            wav_enc_input = ds.snd_data[s:s + ds.enc_in_len]
+            self.wav_dec_input[b,...] = wav_enc_input[trim[0]:trim[1]]
             self.mel_enc_input[b,...] = self.ds.mfcc_proc.func(wav_enc_input)
             self.voice_index[b] = voice_ind 
             self.jitter_index[b,:] = \
@@ -124,10 +124,7 @@ class VirtualBatch(object):
 
 
     def to(self, device):
-        shape_cpu = self.voice_index.shape
         self.voice_index = self.voice_index.to(device)
-        shape_tpu = self.voice_index.shape
-        assert shape_cpu == shape_tpu
         self.jitter_index = self.jitter_index.to(device)
         self.wav_dec_input = self.wav_dec_input.to(device)
         self.mel_enc_input = self.mel_enc_input.to(device)
@@ -198,58 +195,14 @@ class Slice(torch.utils.data.IterableDataset):
     def num_mel_chan(self):
         return self.mfcc_proc.n_out
 
-    def init_geometry(self):
-        """
-        Initializes:
-        self.enc_in_len
-        self.trim_ups_out
-        self.trim_dec_out
-        self.trim_dec_in
-        """
-        # Calculate max length of mfcc encoder input and wav decoder input
+
+    def post_init(self, trim_dec_in):
+        self.trim_dec_in = trim_dec_in
         w = self.window_batch_size
-        mfcc_vc = self.mfcc_vc
-        beg_grcc_vc = self.decoder_vcs['beg_grcc']
-        end_grcc_vc = self.decoder_vcs['end_grcc']
-        end_ups_vc = self.decoder_vcs['last_upsample']
-        end_enc_vc = self.encoder_vcs['end']
-
-        do = vconv.GridRange((0, 100000), (0, w), 1)
-        di = vconv.input_range(beg_grcc_vc, end_grcc_vc, do)
-        ei = vconv.input_range(mfcc_vc, end_grcc_vc, do)
-        mi = vconv.input_range(mfcc_vc.child, end_grcc_vc, do)
-        eo = vconv.output_range(mfcc_vc, end_enc_vc, ei)
-        uo = vconv.output_range(mfcc_vc, end_ups_vc, ei)
-
-        # Needed for trimming various tensors
-        self.enc_in_len = ei.sub_length()
-        self.enc_in_mel_len = mi.sub_length()
-        self.emb_len = eo.sub_length() 
-        self.dec_in_len = di.sub_length()
-        self.trim_dec_in = torch.tensor([di.sub[0] - ei.sub[0], di.sub[1] -
-            ei.sub[0]], dtype=torch.long)
-        self.trim_ups_out = torch.tensor([di.sub[0] - uo.sub[0], di.sub[1] -
-            uo.sub[0]], dtype=torch.long)
-        self.trim_dec_out = torch.tensor([do.sub[0] - di.sub[0], do.sub[1] -
-            di.sub[0]], dtype=torch.long)
-
-        # Generate slices from input
         self.in_start = []
         for sam in self.samples:
             for b in range(sam.wav_b, sam.wav_e - w, w):
                 self.in_start.append((b, sam.voice_index))
-
-
-    def post_init(self, encoder_vcs, decoder_vcs):
-        """
-        Initializes:
-        self.slices
-        Depends on information computed from the model, so must be
-        called after model construction.
-        """
-        self.encoder_vcs = encoder_vcs
-        self.decoder_vcs = decoder_vcs
-        self.init_geometry()
 
 
     def _load_sample_data(self, snd_np, snd_dtype):
@@ -262,15 +215,12 @@ class Slice(torch.utils.data.IterableDataset):
             snd_data = torch.ShortTensor(snd_np)
         elif snd_dtype is np.int32:
             snd_data = torch.IntTensor(snd_np)
-
         self.snd_data = snd_data
 
 
     def set_target_device(self, target_device):
         self.target_device = target_device
-        self.trim_dec_in = self.trim_dec_in.to(target_device)
-        self.trim_ups_out = self.trim_ups_out.to(target_device)
-        self.trim_dec_out = self.trim_dec_out.to(target_device)
+
 
     def __iter__(self):
         return self
@@ -281,16 +231,14 @@ class Slice(torch.utils.data.IterableDataset):
         Random state is from torch.{get,set}_rng_state().  It is on the CPU,
         not GPU.
         """
-        vb = VirtualBatch(self)
-        vb.mel_enc_input.detach_()
-        vb.mel_enc_input.requires_grad_(False)
-        vb.populate()
-        assert vb.wav_dec_input.shape[0] == 8
+        vb = VirtualBatch()
+        self.mel_enc_input.detach_()
+        self.mel_enc_input.requires_grad_(False)
+        vb.populate(self)
 
         if self.target_device:
             vb.to(self.target_device)
         vb.mel_enc_input.requires_grad_(True)
-        assert vb.wav_dec_input.shape[0] == 8
 
         return vb 
 
