@@ -258,7 +258,7 @@ class Metrics(object):
                 pre_par['sample_rate'], pre_par['mfcc_win_sz'],
                 pre_par['mfcc_hop_sz'], pre_par['n_mels'],
                 pre_par['n_mfcc'])
-        # dataset.load_data(opts.dat_file)
+        dataset.load_data(opts.dat_file)
         # dec_par['n_speakers'] = dataset.num_speakers()
         # model = ae.AutoEncoder(pre_par, enc_par, bn_par, dec_par,
         #         dataset.num_mel_chan(), training=True)
