@@ -3,6 +3,7 @@ from sys import stderr
 from hashlib import md5
 import numpy as np
 from pickle import dumps
+import pickle
 import torch
 from torch import nn
 from torch.nn.modules import loss
