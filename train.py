@@ -3,28 +3,22 @@ from sys import stderr
 from pprint import pprint
 import torch
 
-import model as ae
-import parse_tools  
-import netmisc
-
+import data
 
 def main():
-    if len(sys.argv) == 1 or sys.argv[1] not in ('new', 'resume'):
-        print(parse_tools.top_usage, file=stderr)
-        return
+    # Initialize data
+    dataset = data.Slice(10, 1000)
+    
+    dataset.extra_field = torch.ByteTensor(np.random.rand(11338))
 
-    print('Command line: ', ' '.join(sys.argv), file=stderr)
-    stderr.flush()
-
-    mode = sys.argv[1]
-    del sys.argv[1]
-    cold_parser = parse_tools.cold_parser()
-    opts = parse_tools.two_stage_parse(cold_parser)
-    # set this to zero if you want to print out a logging header in resume mode as well
-    netmisc.set_print_iter(0)
-
-    ae.Metrics(mode, opts).train(0)
-
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.parallel_loader as pl
+    self.device = xm.xla_device()
+    wav_loader = data.WavLoader(dataset)
+    self.data_loader = pl.ParallelLoader(wav_loader, [self.device])
+    self.data_iter = TPULoaderIter(self.data_loader, self.device)
+    batch_pre = next(self.data_iter)
+    batch = next(self.data_iter)
 
 if __name__ == '__main__':
     main()

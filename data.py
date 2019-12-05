@@ -132,35 +132,17 @@ class Slice(torch.utils.data.IterableDataset):
     Defines the current batch of data in iterator style.
     Use with automatic batching disabled, and collate_fn = lambda x: x
     """
-    def __init__(self, batch_size, window_batch_size, jitter_prob,
-            sample_rate, mfcc_win_sz, mfcc_hop_sz, n_mels, n_mfcc):
+    def __init__(self, batch_size, window_batch_size):
         self.init_args = {
                 'batch_size': batch_size,
-                'window_batch_size': window_batch_size,
-                'jitter_prob': jitter_prob,
-                'sample_rate': sample_rate,
-                'mfcc_win_sz': mfcc_win_sz,
-                'mfcc_hop_sz': mfcc_hop_sz,
-                'n_mels': n_mels,
-                'n_mfcc': n_mfcc
+                'window_batch_size': window_batch_size
                 }
         self._initialize()
 
 
     def _initialize(self):
         super(Slice, self).__init__()
-        self.target_device = None
         self.__dict__.update(self.init_args)
-        self.jitter = jitter.Jitter(self.jitter_prob) 
-        self.mfcc_proc = mfcc.ProcessWav(
-                sample_rate=self.sample_rate,
-                win_sz=self.mfcc_win_sz,
-                hop_sz=self.mfcc_hop_sz,
-                n_mels=self.n_mels,
-                n_mfcc=self.n_mfcc)
-        self.mfcc_vc = vconv.VirtualConv(filter_info=self.mfcc_win_sz,
-                stride=self.mfcc_hop_sz, parent=None, name='MFCC')
-        self.snd_data = torch.ByteTensor(np.random.rand(11338))
 
 
     # def __setstate__(self, init_args):
@@ -170,12 +152,6 @@ class Slice(torch.utils.data.IterableDataset):
 
     # def __getstate__(self):
     #     return self.init_args
-
-    def set_target_device(self, target_device):
-        self.target_device = target_device
-        self.trim_dec_in = self.trim_dec_in.to(target_device)
-        self.trim_ups_out = self.trim_ups_out.to(target_device)
-        self.trim_dec_out = self.trim_dec_out.to(target_device)
 
     def __iter__(self):
         return self
