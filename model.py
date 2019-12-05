@@ -279,8 +279,8 @@ class Metrics(object):
         self.device = xm.xla_device()
         self.data_loader = pl.ParallelLoader(self.state.data_loader, [self.device])
         self.data_iter = TPULoaderIter(self.data_loader, self.device)
-        self.optim_step_fn = (lambda : xm.optimizer_step(self.state.optim,
-                optimizer_args={'closure': self.loss_fn}))
+        # self.optim_step_fn = (lambda : xm.optimizer_step(self.state.optim,
+        #         optimizer_args={'closure': self.loss_fn}))
 
         self.state.init_torch_generator()
         print('Done.', file=stderr)
@@ -292,9 +292,8 @@ class Metrics(object):
         ss.to(self.device)
 
         while ss.step < self.opts.max_steps:
-            # if ss.step in self.learning_rates:
-            #     ss.update_learning_rate(self.learning_rates[ss.step])
-            loss = self.optim_step_fn()
+            loss = self.loss_fn()
+            # loss = self.optim_step_fn()
 
             if ss.model.bn_type == 'vqvae-ema' and ss.step == 10000:
                 ss.model.bottleneck.update_codebook()
@@ -358,86 +357,3 @@ class Metrics(object):
         loss.backward()
         return loss
     
-    def peak_dist(self):
-        """Average distance between the indices of the peaks in pred and
-        target"""
-        diffs = torch.argmax(self.quant, dim=1) - self.target.long()
-        mean = torch.mean(torch.abs(diffs).float())
-        return mean
-
-    def avg_max(self):
-        """Average max value for the predictions.  As the prediction becomes
-        more peaked, this should go up"""
-        max_val, max_ind = torch.max(self.probs, dim=1)
-        mean = torch.mean(max_val)
-        return mean
-        
-    def avg_prob_target(self):
-        """Average probability given to target"""
-        target_probs = torch.gather(self.probs, 1, self.target.long().unsqueeze(1)) 
-        mean = torch.mean(target_probs)
-        return mean
-
-
-
-#    def train_old(self):
-#        """
-#        Run the main training logic
-#        """
-#        ss = self.state
-#        ss.to(device=ss.device)
-#        self.data_loader = ss.data_loader
-#
-#        while ss.step < self.max_steps:
-#            if ss.step in learning_rates:
-#                ss.update_learning_rate(learning_rates[ss.step])
-#            # do 'pip install --upgrade scipy' if you get 'FutureWarning: ...'
-#            # print('in main loop')
-#
-#            #if (ss.step in (50, 100, 300, 500) and 
-#            #        ss.model.bn_type in ('vqvae', 'vqvae-ema')):
-#            #    print('Reinitializing embed with current distribution', file=stderr)
-#            #    stderr.flush()
-#            #    ss.model.init_vq_embed(ss.data)
-#
-#            loss = metrics.update()
-#            if ss.model.bn_type == 'vqvae-ema' and ss.step > 10000:
-#                ss.model.bottleneck.update_codebook()
-#
-#            # avg_peak_dist = metrics.peak_dist()
-#            avg_max = self.avg_max()
-#            avg_prob_target = self.avg_prob_target()
-#
-#            if False:
-#                for n, p in list(ss.model.encoder.named_parameters()):
-#                    g = p.grad
-#                    if g is None:
-#                        print('{:60s}\tNone'.format(n), file=stderr)
-#                    else:
-#                        fmt='{:s}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}'
-#                        print(fmt.format(n, g.max(), g.min(), g.mean(), g.std()), file=stderr)
-#
-#            # Progress reporting
-#            if ss.step % opts.progress_interval == 0:
-#                current_stats = {
-#                        'step': ss.step,
-#                        'loss': loss,
-#                        'tprb_m': avg_prob_target,
-#                        # 'pk_d_m': avg_peak_dist
-#                        }
-#                #fmt = "M\t{:d}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
-#                #print(fmt.format(ss.step, loss, avg_prob_target, avg_peak_dist,
-#                #    avg_max), file=stderr)
-#                if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae'):
-#                    current_stats.update(ss.model.objective.metrics)
-#                    
-#                netmisc.print_metrics(current_stats, 100)
-#                stderr.flush()
-#            
-#            # Checkpointing
-#            if ((ss.step % self.opts.save_interval == 0 and ss.step !=
-#                self.start_step)):
-#                self.save_checkpoint()
-#
-#            ss.step += 1
-#
