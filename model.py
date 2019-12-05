@@ -282,8 +282,8 @@ class Metrics(object):
 
 
     def train(self, index):
-        ss = self.state 
-        ss.to(self.device)
+        # ss = self.state 
+        # ss.to(self.device)
         batch_pre = next(self.data_iter)
         batch = next(self.data_iter)
 
