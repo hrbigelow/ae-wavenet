@@ -67,7 +67,6 @@ class WavLoader(torch.utils.data.DataLoader):
         self.dataset.set_target_device(target_device)
 
 
-
 def main():
     # Initialize data
     dataset = Slice(10, 1000)
@@ -76,7 +75,7 @@ def main():
     import torch_xla.core.xla_model as xm
     import torch_xla.distributed.parallel_loader as pl
     device = xm.xla_device()
-    wav_loader = data.WavLoader(dataset)
+    wav_loader = WavLoader(dataset)
     data_loader = pl.ParallelLoader(wav_loader, [device])
     data_iter = TPULoaderIter(data_loader, device)
     batch_pre = next(data_iter)
