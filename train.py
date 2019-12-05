@@ -61,14 +61,20 @@ class TPULoaderIter(object):
 
 def main():
     dataset = MyDataset(10, 1000)
+
+    # With this line removed, batch1 is not corrupted
+    # Or, with this line present, but __getstate__ and __setstate__ removed,
+    # batch1 is not corrupted.
     dataset.extra_field = torch.ByteTensor(np.random.rand(11338))
 
     device = xm.xla_device()
     plain_loader = MyLoader(dataset)
     para_loader = pl.ParallelLoader(plain_loader, [device])
     data_iter = TPULoaderIter(para_loader, device)
-    batch_pre = next(data_iter)
-    batch = next(data_iter)
+
+    # batch1 is corrupted, batch2 looks good 
+    batch1 = next(data_iter)
+    batch2 = next(data_iter)
 
 if __name__ == '__main__':
     main()
