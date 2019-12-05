@@ -171,8 +171,7 @@ class Slice(torch.utils.data.IterableDataset):
             stderr.flush()
             exit(1)
 
-        self.samples = dat['samples']
-        # self._load_sample_data(dat['snd_data'], dat['snd_dtype'])
+        self._load_sample_data(dat['snd_data'])
 
 
     def __setstate__(self, init_args):
@@ -244,18 +243,12 @@ class Slice(torch.utils.data.IterableDataset):
         self.init_geometry()
 
 
-    def _load_sample_data(self, snd_np, snd_dtype):
+    def _load_sample_data(self, snd_np):
         """
         Populates self.snd_data
         """
-        if snd_dtype is np.uint8:
-            snd_data = torch.ByteTensor(snd_np)
-        elif snd_dtype is np.uint16:
-            snd_data = torch.ShortTensor(snd_np)
-        elif snd_dtype is np.int32:
-            snd_data = torch.IntTensor(snd_np)
-
-        self.snd_data = snd_data
+        self.snd_data = torch.ByteTensor(snd_np)
+        # self.snd_data = snd_data
 
 
     def set_target_device(self, target_device):
