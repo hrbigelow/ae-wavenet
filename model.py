@@ -259,16 +259,11 @@ class Metrics(object):
                 pre_par['mfcc_hop_sz'], pre_par['n_mels'],
                 pre_par['n_mfcc'])
         dataset.load_data(opts.dat_file)
-        dec_par['n_speakers'] = dataset.num_speakers()
-        model = ae.AutoEncoder(pre_par, enc_par, bn_par, dec_par,
-                dataset.num_mel_chan(), training=True)
-        model.encoder.set_parent_vc(dataset.mfcc_vc)
-        dataset.post_init(model.encoder.vc, model.decoder.vc)
-        optim = torch.optim.Adam(params=model.parameters(), lr=1e-5)
-        self.state = checkpoint.State(0, model, dataset, optim)
-        self.start_step = self.state.step
-
-        self.ckpt_path = util.CheckpointPath(self.opts.ckpt_template)
+        # dec_par['n_speakers'] = dataset.num_speakers()
+        # model = ae.AutoEncoder(pre_par, enc_par, bn_par, dec_par,
+        #         dataset.num_mel_chan(), training=True)
+        # model.encoder.set_parent_vc(dataset.mfcc_vc)
+        # dataset.post_init(model.encoder.vc, model.decoder.vc)
 
         import torch_xla.core.xla_model as xm
         import torch_xla.distributed.parallel_loader as pl
@@ -282,15 +277,6 @@ class Metrics(object):
 
 
     def train(self, index):
-        # ss = self.state 
-        # ss.to(self.device)
         batch_pre = next(self.data_iter)
         batch = next(self.data_iter)
 
-
-    def save_checkpoint(self):
-        ckpt_file = self.ckpt_path.path(self.state.step)
-        self.state.save(ckpt_file)
-        print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
-        #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
-        stderr.flush()

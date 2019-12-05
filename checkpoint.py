@@ -14,11 +14,6 @@ class State(object):
         self.optim = optim
         self.step = step
         self.device = None
-        self.torch_rng_state = torch.get_rng_state()
-        if torch.cuda.is_available():
-            self.torch_cuda_rng_states = torch.cuda.get_rng_state_all()
-        else:
-            self.torch_cuda_rng_states = None
 
 
     def load(self, ckpt_file, dat_file):
