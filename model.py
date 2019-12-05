@@ -154,7 +154,7 @@ class AutoEncoder(nn.Module):
         self.decoder.trim_ups_out = torch.tensor([di.sub[0] - uo.sub[0],
             di.sub[1] - uo.sub[0]], dtype=torch.long)
         self.trim_dec_out = torch.tensor([do.sub[0] - di.sub[0], do.sub[1] -
-            di.sub[0]], dtype=torch.long))
+            di.sub[0]], dtype=torch.long)
 
 
     def __getstate__(self):
