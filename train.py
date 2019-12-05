@@ -1,14 +1,12 @@
-import sys
 from sys import stderr
 from pprint import pprint
 import torch
-
 import data
+import numpy as np
 
 def main():
     # Initialize data
     dataset = data.Slice(10, 1000)
-    
     dataset.extra_field = torch.ByteTensor(np.random.rand(11338))
 
     import torch_xla.core.xla_model as xm
