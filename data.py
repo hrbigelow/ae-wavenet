@@ -195,7 +195,7 @@ class Slice(torch.utils.data.IterableDataset):
 
 
     def post_init(self, model):
-        self.trim_dec_in = model.trim_dec_in
+        self.trim_dec_in = model.trim_dec_in.numpy()
         self.embed_len = model.embed_len
         self.enc_in_len = model.enc_in_len
         self.dec_in_len = model.dec_in_len
