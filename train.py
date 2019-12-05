@@ -75,6 +75,11 @@ def main():
     # batch1 is corrupted, batch2 looks good 
     batch1 = next(data_iter)
     batch2 = next(data_iter)
+    if batch1.ten.shape == batch2.ten.shape:
+        print('Shapes of batch1 and batch2 match')
+    else:
+        print('Mismatching shapes: batch1: {} != batch2: {}'.format(
+            batch1.shape, batch2.shape))
 
 if __name__ == '__main__':
     main()
