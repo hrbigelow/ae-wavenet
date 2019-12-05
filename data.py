@@ -282,14 +282,14 @@ class Slice(torch.utils.data.IterableDataset):
         not GPU.
         """
         vb = VirtualBatch(self)
-        vb.mel_enc_input.detach_()
-        vb.mel_enc_input.requires_grad_(False)
+        # vb.mel_enc_input.detach_()
+        # vb.mel_enc_input.requires_grad_(False)
         # vb.populate()
         assert vb.wav_dec_input.shape[0] == 8
 
-        if self.target_device:
-            vb.to(self.target_device)
-        vb.mel_enc_input.requires_grad_(True)
+        # if self.target_device:
+        #     vb.to(self.target_device)
+        # vb.mel_enc_input.requires_grad_(True)
         assert vb.wav_dec_input.shape[0] == 8
 
         return vb 
