@@ -274,6 +274,7 @@ class Metrics(object):
         import torch_xla.distributed.parallel_loader as pl
         self.device = xm.xla_device()
         wav_loader = data.WavLoader(dataset)
+        vs = next(wav_loader)
         self.data_loader = pl.ParallelLoader(wav_loader, [self.device])
         self.data_iter = TPULoaderIter(self.data_loader, self.device)
 

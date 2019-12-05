@@ -86,22 +86,14 @@ class VirtualBatch(object):
         super(VirtualBatch, self).__init__()
         self.ds = dataset
         bs = self.ds.batch_size
-        self.voice_index = torch.empty((bs,), dtype=torch.long)
-        self.jitter_index = torch.empty((bs, self.ds.emb_len), dtype=torch.long)
-        self.wav_dec_input = torch.empty((bs, self.ds.dec_in_len))
-        self.mel_enc_input = torch.empty((bs, self.ds.num_mel_chan(),
-                self.ds.enc_in_mel_len)) 
+        self.wav_dec_input = torch.empty((bs, self.ds.window_batch_size))
         assert self.wav_dec_input.shape[0] == 8
 
     def __repr__(self):
         fmt = (
-            'voice_index: {}\n' + 
-            'jitter_index: {}\n' + 
-            'wav_dec_input.shape: {}\n' + 
-            'mel_enc_input.shape: {}\n'
+            'wav_dec_input.shape: {}\n'
         )
-        return fmt.format(self.voice_index, self.jitter_index,
-                self.wav_dec_input.shape, self.mel_enc_input.shape)
+        return fmt.format(self.wav_dec_input.shape)
 
     def populate(self):
         """
