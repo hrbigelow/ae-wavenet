@@ -31,12 +31,12 @@ class Slice(torch.utils.data.IterableDataset):
         super(Slice, self).__init__()
         self.__dict__.update(self.init_args)
 
-    # def __setstate__(self, init_args):
-    #     self.init_args = init_args 
-    #     self._initialize()
+    def __setstate__(self, init_args):
+        self.init_args = init_args 
+        self._initialize()
 
-    # def __getstate__(self):
-    #     return self.init_args
+    def __getstate__(self):
+        return self.init_args
 
     def __iter__(self):
         return self
