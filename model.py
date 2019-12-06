@@ -160,14 +160,14 @@ class AutoEncoder(nn.Module):
     def __getstate__(self):
         state = { 
                 'init_args': self.init_args,
-                'state_dict': self.state_dict()
+                # 'state_dict': self.state_dict()
                 }
         return state 
 
     def __setstate__(self, state):
         self.init_args = state['init_args']
         self._initialize()
-        self.load_state_dict(state['state_dict'])
+        # self.load_state_dict(state['state_dict'])
 
 
     def init_codebook(self, data_source, n_samples):

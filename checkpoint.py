@@ -29,6 +29,7 @@ class State(object):
         dataset = pickle.loads(sinfo['dataset'])
         dataset.load_data(dat_file)
         self.model.post_init(dataset)
+        self.model.load_state_dict(sinfo['model_state_dict'])
         dataset.post_init(self.model)
 
         self.data_loader = data.WavLoader(dataset)
@@ -43,11 +44,13 @@ class State(object):
         # self.to(torch.device('cpu'))
 
         mstate = pickle.dumps(self.model)
+        mstate_dict = self.model.state_dict()
         dstate = pickle.dumps(self.data_loader.dataset)
         ostate = self.optim.state_dict()
         state = {
                 'step': self.step,
                 'model': mstate,
+                'model_state_dict': mstate_dict,
                 'dataset': dstate,
                 'optim': ostate,
                 'rand_state': torch.get_rng_state(),
