@@ -178,13 +178,12 @@ class Slice(torch.utils.data.IterableDataset):
         self._load_sample_data(dat['snd_data'], dat['snd_dtype'])
 
 
-    # def __setstate__(self, init_args):
-    #     self.init_args = init_args 
-    #     self._initialize()
+    def __setstate__(self, init_args):
+        self.init_args = init_args 
+        self._initialize()
 
-
-    # def __getstate__(self):
-    #     return self.init_args
+    def __getstate__(self):
+        return self.init_args
 
 
     def num_speakers(self):
