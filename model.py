@@ -304,7 +304,7 @@ class Metrics(object):
             model = ae.AutoEncoder(pre_par, enc_par, bn_par, dec_par,
                     dataset.num_mel_chan(), training=True)
             model.post_init(dataset)
-            dataset.post_init(model)
+            # dataset.post_init(model)
             optim = torch.optim.Adam(params=model.parameters(), lr=self.learning_rates[0])
             self.state = checkpoint.State(0, model, dataset, optim)
             self.start_step = self.state.step
