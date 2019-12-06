@@ -115,10 +115,10 @@ class VirtualBatch(object):
         for b, wi in enumerate(picks):
             s, voice_ind = ds.in_start[wi]
             wav_enc_input = ds.snd_data[s:s + ds.enc_in_len]
-            print('wav_enc_input.shape: {}'.format(wav_enc_input.shape),
-                    file=stderr)
-            print('trim: {}'.format(trim), file=stderr)
+            print('wav_enc_input.shape: {}, s: {}, ds.snd_data.shape: {}'.format(
+                wav_enc_input.shape, s, ds.snd_data.shape), file=stderr)
             stderr.flush()
+
 
             self.wav_dec_input[b,...] = wav_enc_input[trim[0]:trim[1]]
             self.mel_enc_input[b,...] = ds.mfcc_proc.func(wav_enc_input)
