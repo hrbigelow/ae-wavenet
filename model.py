@@ -272,13 +272,10 @@ class TPULoaderIter(object):
         return vb
 
 
-
-
 class Metrics(object):
     """
     Manage running the model and saving output and target state
     """
-
     def __init__(self, mode, opts):
         print('Initializing model and data source...', end='', file=stderr)
         stderr.flush()

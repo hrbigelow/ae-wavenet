@@ -39,8 +39,9 @@ class State(object):
         self.torch_cuda_rng_states = sinfo['cuda_rand_states']
 
     def save(self, ckpt_file):
-        cur_device = self.device
-        self.to(torch.device('cpu'))
+        # cur_device = self.device
+        # self.to(torch.device('cpu'))
+
         mstate = pickle.dumps(self.model)
         dstate = pickle.dumps(self.data_loader.dataset)
         ostate = self.optim.state_dict()
@@ -53,11 +54,15 @@ class State(object):
                 'cuda_rand_states': (torch.cuda.get_rng_state_all() if
                     torch.cuda.is_available() else None)
                 }
-        torch.save(state, ckpt_file)
-        self.to(cur_device)
+        if self.device.type == 'cuda':
+            torch.save(state, ckpt_file)
+        elif self.device.type == 'xla':
+            xm.save(state, ckpt_file)
+        # self.to(cur_device)
 
     def to(self, device):
         """Hack to move both model and optimizer to device"""
+        self.device = device
         self.model.to(device)
         ostate = self.optim.state_dict()
         self.optim = torch.optim.Adam(self.model.parameters())
