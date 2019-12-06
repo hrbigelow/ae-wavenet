@@ -60,6 +60,7 @@ class State(object):
         if self.device.type == 'cuda':
             torch.save(state, ckpt_file)
         elif self.device.type == 'xla':
+            import torch_xla.core.xla_model as xm
             xm.save(state, ckpt_file)
         # self.to(cur_device)
 
