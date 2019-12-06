@@ -208,7 +208,7 @@ class Slice(torch.utils.data.IterableDataset):
         w = self.window_batch_size
         self.in_start = []
         for sam in self.samples:
-            for b in range(sam.wav_b, sam.wav_e - w, w):
+            for b in range(sam.wav_b, sam.wav_e - self.enc_in_len, w):
                 self.in_start.append((b, sam.voice_index))
 
 
