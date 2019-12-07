@@ -243,13 +243,10 @@ class WaveNet(nn.Module):
         # be able to operate with a new speaker ID.
 
         sig = self.base_layer(wav_onehot) 
-        skp_sum = None
-        for i, l in enumerate(self.conv_layers):
-            sig, skp = l(sig, cond)
-            if skp_sum is None:
-                skp_sum = skp
-            else:
-                skp_sum += skp
+        sig, skp_sum = self.conv_layers[0](sig, cond)
+        for layer in self.conv_layers[1:]:
+            sig, skp = layer(sig, cond)
+            skp_sum += skp
             
         post1 = self.post1(self.relu(skp_sum))
         quant = self.post2(self.relu(post1))
