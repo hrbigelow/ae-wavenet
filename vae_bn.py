@@ -64,12 +64,16 @@ class VAE(nn.Module):
         return samples
 
 class SGVBLoss(nn.Module):
-    def __init__(self, bottleneck):
+    def __init__(self, bottleneck, free_nats):
         super(SGVBLoss, self).__init__()
         self.bottleneck = bottleneck
+        self.register_buffer('free_nats', torch.tensor(free_nats))
+        self.register_buffer('anneal_weight', torch.tensor(0.0))
         self.logsoftmax = nn.LogSoftmax(1) # input is (B, Q, N)
-        # self.usage_adjust = netmisc.EmbedLossAdjust('EmbedLossAdjust')
-        # self.combine = netmisc.LCCombine('LCCombine')
+
+    def update_anneal_weight(self, anneal_weight):
+        self.anneal_weight.fill_(anneal_weight)
+        
 
     def forward(self, quant_pred, target_wav):
         '''
@@ -93,28 +97,26 @@ class SGVBLoss(nn.Module):
 
         # neg_kl_div_gaussian: (B, K) (from Appendix B at end of derivation)
         channel_terms = 1.0 + log_sigma_sq -  mu_sq - sigma_sq 
-        chan_dim = 1 # K
-        neg_kl_div_gauss = 0.5 * torch.sum(channel_terms, dim=chan_dim, keepdim=True)
-
-        # The last element is a prediction past the end of our target so must trim. 
-        combined_kl = self.combine(neg_kl_div_gauss)[...,:-1]
+        neg_kl_div_gauss = 0.5 * torch.sum(channel_terms)
 
         L = self.bottleneck.n_sam_per_datapoint
         BL = log_pred.size(0)
         assert BL % L == 0 
 
-        target_wav_aug = target_wav.repeat(L, 1).unsqueeze(1)
+        target_wav_aug = target_wav.repeat(L, 1).unsqueeze(1).long()
         log_pred_target = torch.gather(log_pred, 1, target_wav_aug)
-        log_pred_target_avg = torch.mean(log_pred_target, dim=1, keepdim=True)
+        log_pred_target_avg = torch.mean(log_pred_target)
 
-        sgvb = - combined_kl - log_pred_target_avg  
-        total_loss = sgvb.mean()
+        log_pred_loss = - log_pred_target_avg
+        kl_div_loss = - neg_kl_div_gauss 
 
-        log_pred_loss = - log_pred_target_avg.mean()
-        kl_div_loss = - combined_kl.mean()
+        # "For the VAE, this collapse can be prevented by annealing the weight
+        # of the KL term and using the free-information formulation in Eq. (2)"
+        # (See p 3 Section C second paragraph)
+        total_loss = log_pred_loss - self.anneal_weight \
+                * torch.clamp(kl_div_loss, min=self.free_nats)
 
-        losses = { 'kl_div_loss': kl_div_loss, 'log_pred_loss': log_pred_loss }
-        netmisc.print_metrics(log_pred, losses)
+        self.metrics = { 'kl_div_loss': kl_div_loss, 'log_pred_loss': log_pred_loss }
 
         return total_loss 
 

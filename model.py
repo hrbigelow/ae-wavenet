@@ -98,8 +98,10 @@ class AutoEncoder(nn.Module):
 
         elif bn_type == 'vae':
             # mu and sigma members  
-            self.bottleneck = vae_bn.VAE(**bn_extra, n_in=enc_params['n_out'])
-            self.objective = vae_bn.SGVBLoss(self.bottleneck)
+            self.bottleneck = vae_bn.VAE(n_in=enc_params['n_out'],
+                    n_out=bn_params['n_out'])
+            self.objective = vae_bn.SGVBLoss(self.bottleneck,
+                    free_nats=bn_params['free_nats']) 
 
         elif bn_type == 'ae':
             self.bottleneck = ae_bn.AE(n_out=bn_extra['n_out'], n_in=enc_params['n_out'])
@@ -281,6 +283,9 @@ class Metrics(object):
         stderr.flush()
         self.learning_rates = dict(zip(opts.learning_rate_steps,
             opts.learning_rate_rates))
+        if opts.bn_type == 'vae':
+            self.anneal_schedule = dict(zip(opts.bn_anneal_weight_steps,
+                opts.bn_anneal_weight_vals))
         self.opts = opts
 
         if mode == 'new':
@@ -350,6 +355,9 @@ class Metrics(object):
         while ss.step < self.opts.max_steps:
             if ss.step in self.learning_rates:
                 ss.update_learning_rate(self.learning_rates[ss.step])
+            if ss.model.bn_type == 'vae' and ss.step in self.anneal_schedule:
+                ss.model.objective.update_anneal_weight(self.anneal_schedule[ss.step])
+
             loss = self.optim_step_fn()
 
             if ss.model.bn_type == 'vqvae-ema' and ss.step == 10000:
@@ -362,7 +370,7 @@ class Metrics(object):
                         'tprb_m': self.avg_prob_target(),
                         # 'pk_d_m': avg_peak_dist
                         }
-                if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae'):
+                if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
                     current_stats.update(ss.model.objective.metrics)
                 netmisc.print_metrics(current_stats, index, 100)
                 stderr.flush()
