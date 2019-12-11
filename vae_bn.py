@@ -113,8 +113,9 @@ class SGVBLoss(nn.Module):
         # "For the VAE, this collapse can be prevented by annealing the weight
         # of the KL term and using the free-information formulation in Eq. (2)"
         # (See p 3 Section C second paragraph)
-        total_loss = log_pred_loss - self.anneal_weight \
-                * torch.clamp(kl_div_loss, min=self.free_nats)
+        total_loss = (
+            log_pred_loss + self.anneal_weight 
+            * torch.clamp(kl_div_loss, min=self.free_nats))
 
         self.metrics = { 'kl_div_loss': kl_div_loss, 'log_pred_loss': log_pred_loss }
 
