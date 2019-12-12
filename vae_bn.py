@@ -38,12 +38,12 @@ class VAE(nn.Module):
         # mss = self.linear2(h)
         #mss = h
         mu = lin[:,:self.n_out_chan,:] 
-        sigma = lin[:,self.n_out_chan:,:]
-        sigma_sq = torch.pow(sigma, 2.0)
-        log_sigma_sq = torch.log(sigma_sq)
-        # log_sigma_sq = mss[:,n_out_chan:,:] 
-        # sigma_sq = torch.exp(log_sigma_sq)
-        # sigma = torch.sqrt(sigma_sq)
+        log_sigma_sq = lin[:,self.n_out_chan:,:] 
+        sigma_sq = torch.exp(log_sigma_sq)
+        sigma = torch.sqrt(sigma_sq)
+        # sigma = lin[:,self.n_out_chan:,:]
+        # sigma_sq = torch.pow(sigma, 2.0)
+        # log_sigma_sq = torch.log(sigma_sq)
         # sigma_sq = mss[:,n_out_chan:,:]
         #sigma = torch.sqrt(sigma_sq)
 
