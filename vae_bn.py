@@ -13,6 +13,7 @@ class VAE(nn.Module):
         self.tanh = nn.Tanh()
         self.linear2 = nn.Conv1d(n_out * 2, n_out * 2, 1, bias=bias)
         self.n_sam_per_datapoint = n_sam_per_datapoint
+        self.n_out_chan = n_out
         netmisc.xavier_init(self.linear)
         netmisc.xavier_init(self.linear2)
 
@@ -32,15 +33,17 @@ class VAE(nn.Module):
         # the very least, sigma must be positive.  So, I adopt techniques from
         # Appendix C.2, Gaussian MLP as encoder or decoder" from Kingma VAE
         # paper.
-        h = self.tanh(lin)
+        # h = self.tanh(lin)
         #h = lin
-        mss = self.linear2(h)
+        # mss = self.linear2(h)
         #mss = h
-        n_out_chan = mss.size(1) // 2
-        mu = mss[:,:n_out_chan,:] 
-        log_sigma_sq = mss[:,n_out_chan:,:] 
-        sigma_sq = torch.exp(log_sigma_sq)
-        sigma = torch.sqrt(sigma_sq)
+        mu = lin[:,:self.n_out_chan,:] 
+        sigma = lin[:,self.n_out_chan:,:]
+        sigma_sq = torch.pow(sigma, 2.0)
+        log_sigma_sq = torch.log(sigma_sq)
+        # log_sigma_sq = mss[:,n_out_chan:,:] 
+        # sigma_sq = torch.exp(log_sigma_sq)
+        # sigma = torch.sqrt(sigma_sq)
         # sigma_sq = mss[:,n_out_chan:,:]
         #sigma = torch.sqrt(sigma_sq)
 
