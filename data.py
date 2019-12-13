@@ -124,6 +124,8 @@ class VirtualBatch(object):
             self.voice_index[b] = voice_ind 
             self.jitter_index[b,:] = \
                     torch.tensor(ds.jitter.gen_indices(nz) + b * nz) 
+        self.mel_enc_input /= \
+            self.mel_enc_input.std(dim=(1,2)).unsqueeze(1).unsqueeze(1)
 
 
     def to(self, device):

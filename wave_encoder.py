@@ -29,9 +29,6 @@ class ConvReLURes(nn.Module):
             l_off, r_off = vconv.output_offsets(self.vc, self.vc)
             self.register_buffer('residual_offsets',
                     torch.tensor([l_off, r_off]))
-                
-
-
         netmisc.xavier_init(self.conv)
 
     def forward(self, x):

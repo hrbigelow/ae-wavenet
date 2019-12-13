@@ -11,12 +11,13 @@ class VAE(nn.Module):
         super(VAE, self).__init__()
         self.linear = nn.Conv1d(n_in, n_out * 2, 1, bias=False)
         self.tanh = nn.Tanh()
-        self.linear_mu = nn.Conv1d(n_out, n_out, 1, bias=bias)
-        self.linear_sigma = nn.Conv1d(n_out, n_out, 1, bias=bias)
+        # self.linear_mu = nn.Conv1d(n_out, n_out, 1, bias=bias)
+        # self.linear_sigma = nn.Conv1d(n_out, n_out, 1, bias=bias)
         self.n_sam_per_datapoint = n_sam_per_datapoint
         self.n_out_chan = n_out
-        netmisc.xavier_init(self.linear_mu)
-        netmisc.xavier_init(self.linear_sigma)
+        netmisc.xavier_init(self.linear)
+        # netmisc.xavier_init(self.linear_mu)
+        # netmisc.xavier_init(self.linear_sigma)
 
         # Cache these values for later access by the objective function
         self.mu = None
@@ -34,7 +35,7 @@ class VAE(nn.Module):
         # the very least, sigma must be positive.  So, I adopt techniques from
         # Appendix C.2, Gaussian MLP as encoder or decoder" from Kingma VAE
         # paper.
-        mu, log_sigma_sq = torch.split(h, self.n_out_chan, dim=1)
+        mu, log_sigma_sq = torch.split(lin, self.n_out_chan, dim=1)
         sigma = torch.exp(0.5 * log_sigma_sq)
         # sigma_sq = mss[:,n_out_chan:,:]
         #sigma = torch.sqrt(sigma_sq)
@@ -53,7 +54,7 @@ class VAE(nn.Module):
 
         # Cache mu and sigma for objective function later 
         self.mu = mu
-        self.sigma_sq = sigma_sq
+        self.sigma_sq = torch.pow(sigma, 2.0)
         self.log_sigma_sq = log_sigma_sq
         #print(('linmu: {:.3}, linsd: {:.3}, zmu: {:.3}, zsd: {:.3}, mmu: {:.3}, msd: {:.3}, smu:'
         #        '{:.3}, ssd: {:.3}').format(lin.mean(), lin.std(), z.mean(),
