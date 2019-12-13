@@ -34,19 +34,8 @@ class VAE(nn.Module):
         # the very least, sigma must be positive.  So, I adopt techniques from
         # Appendix C.2, Gaussian MLP as encoder or decoder" from Kingma VAE
         # paper.
-        h = self.tanh(lin)
-        h1 = h[:,:self.n_out_chan,:] 
-        h2 = h[:,self.n_out_chan:,:] 
-        log_sigma_sq = self.linear_sigma(h1)
-        mu = self.linear_mu(h2)
-        #h = lin
-        # mss = self.linear2(h)
-        #mss = h
-        sigma_sq = torch.exp(log_sigma_sq)
-        sigma = torch.sqrt(sigma_sq)
-        # sigma = lin[:,self.n_out_chan:,:]
-        # sigma_sq = torch.pow(sigma, 2.0)
-        # log_sigma_sq = torch.log(sigma_sq)
+        mu, log_sigma_sq = torch.split(h, self.n_out_chan, dim=1)
+        sigma = torch.exp(0.5 * log_sigma_sq)
         # sigma_sq = mss[:,n_out_chan:,:]
         #sigma = torch.sqrt(sigma_sq)
 
@@ -58,8 +47,10 @@ class VAE(nn.Module):
             mu = mu.repeat(L, 1, 1)
 
         # epsilon is the randomness injected here
-        epsilon = mu.new_empty(sample_sz).normal_()
-        samples = sigma * epsilon + mu 
+        samples = torch.randn_like(mu)
+        samples.mul_(sigma)
+        samples.add_(mu)
+
         # Cache mu and sigma for objective function later 
         self.mu = mu
         self.sigma_sq = sigma_sq
