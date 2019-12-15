@@ -28,7 +28,7 @@ def print_metrics(metrics, worker_index, hdr_frequency):
     h = ''
     s = ''
     d = dict(metrics)
-    max_width = 9 
+    max_width = 12 
 
     for k, v in d.items():
         if isinstance(v, torch.Tensor) and v.numel() == 1:
