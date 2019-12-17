@@ -372,6 +372,7 @@ class Metrics(object):
                         }
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
                     current_stats.update(ss.model.objective.metrics)
+                    current_stats.update(ss.model.encoder.metrics)
                 netmisc.print_metrics(current_stats, index, 100)
                 stderr.flush()
 
@@ -436,65 +437,3 @@ class Metrics(object):
         return mean
 
 
-
-#    def train_old(self):
-#        """
-#        Run the main training logic
-#        """
-#        ss = self.state
-#        ss.to(device=ss.device)
-#        self.data_loader = ss.data_loader
-#
-#        while ss.step < self.max_steps:
-#            if ss.step in learning_rates:
-#                ss.update_learning_rate(learning_rates[ss.step])
-#            # do 'pip install --upgrade scipy' if you get 'FutureWarning: ...'
-#            # print('in main loop')
-#
-#            #if (ss.step in (50, 100, 300, 500) and 
-#            #        ss.model.bn_type in ('vqvae', 'vqvae-ema')):
-#            #    print('Reinitializing embed with current distribution', file=stderr)
-#            #    stderr.flush()
-#            #    ss.model.init_vq_embed(ss.data)
-#
-#            loss = metrics.update()
-#            if ss.model.bn_type == 'vqvae-ema' and ss.step > 10000:
-#                ss.model.bottleneck.update_codebook()
-#
-#            # avg_peak_dist = metrics.peak_dist()
-#            avg_max = self.avg_max()
-#            avg_prob_target = self.avg_prob_target()
-#
-#            if False:
-#                for n, p in list(ss.model.encoder.named_parameters()):
-#                    g = p.grad
-#                    if g is None:
-#                        print('{:60s}\tNone'.format(n), file=stderr)
-#                    else:
-#                        fmt='{:s}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}'
-#                        print(fmt.format(n, g.max(), g.min(), g.mean(), g.std()), file=stderr)
-#
-#            # Progress reporting
-#            if ss.step % opts.progress_interval == 0:
-#                current_stats = {
-#                        'step': ss.step,
-#                        'loss': loss,
-#                        'tprb_m': avg_prob_target,
-#                        # 'pk_d_m': avg_peak_dist
-#                        }
-#                #fmt = "M\t{:d}\t{:.5f}\t{:.5f}\t{:.5f}\t{:.5f}"
-#                #print(fmt.format(ss.step, loss, avg_prob_target, avg_peak_dist,
-#                #    avg_max), file=stderr)
-#                if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae'):
-#                    current_stats.update(ss.model.objective.metrics)
-#                    
-#                netmisc.print_metrics(current_stats, 100)
-#                stderr.flush()
-#            
-#            # Checkpointing
-#            if ((ss.step % self.opts.save_interval == 0 and ss.step !=
-#                self.start_step)):
-#                self.save_checkpoint()
-#
-#            ss.step += 1
-#

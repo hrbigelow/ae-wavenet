@@ -79,6 +79,14 @@ class Encoder(nn.Module):
         self.vc['beg'].parent = parent_vc
         parent_vc.child = self.vc['beg']
 
+    def update_metrics(self):
+        self.metrics = {}
+        for i, mod in enumerate(self.net):
+            wkey = 'enc_wz_{}'.format(i)
+            bkey = 'enc_bz_{}'.format(i)
+            self.metrics[wkey] = (mod.conv.weight == 0).sum()
+            self.metrics[bkey] = (mod.conv.bias == 0).sum()
+
 
     def forward(self, mels):
         '''
@@ -86,6 +94,7 @@ class Encoder(nn.Module):
         mels: (B, M, T) (torch.tensor)
         outputs: (B, C, T)
         '''
+        self.update_metrics()
         out = self.net(mels)
         #out = torch.tanh(out * 10.0)
         return out
