@@ -409,9 +409,7 @@ class Metrics(object):
         mel_grad, bn_grad = torch.autograd.grad(loss, inputs, retain_graph=True)
         self.state.model.objective.metrics.update({
             'mel_grad_sd': mel_grad.std(),
-            'mel_grad_mean': mel_grad.mean(),
-            'bn_grad_sd': bn_grad.std(),
-            'bn_grad_max': bn_grad.mean()
+            'bn_grad_sd': bn_grad.std()
             })
         # loss.backward(create_graph=True, retain_graph=True)
         loss.backward()

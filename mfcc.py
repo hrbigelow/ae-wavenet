@@ -74,5 +74,5 @@ class ProcessWav(object):
         mfcc_delta2 = librosa.feature.delta(mfcc_trim, order=2)
         mfcc_and_derivatives = np.concatenate((mfcc_trim, mfcc_delta, mfcc_delta2), axis=0)
 
-        return torch.tensor(mfcc_and_derivatives.astype(wav.dtype))
+        return torch.tensor(mfcc_and_derivatives)
 
