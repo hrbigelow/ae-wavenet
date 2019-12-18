@@ -118,8 +118,8 @@ class SGVBLoss(nn.Module):
         self.metrics = {
                 'kl_div_loss': kl_div_loss,
                 'log_pred_loss': log_pred_loss,
-                'mu_abs_max': mu.abs().max(),
-                's_sq_abs_max': sigma_sq.abs().max()
+                # 'mu_abs_max': mu.abs().max(),
+                # 's_sq_abs_max': sigma_sq.abs().max()
                 }
 
         return total_loss 
