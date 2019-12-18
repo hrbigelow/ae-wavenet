@@ -43,6 +43,7 @@ class ConvReLURes(nn.Module):
             act[...] += x[:,:,self.residual_offsets[0]:self.residual_offsets[1] or None]
             # act += x[:,:,self.residual_offsets[0]:self.residual_offsets[1] or None]
         #act_sum = act.sum()
+        self.num_zero_act = (act == 0.0).sum()
         #if act_sum.eq(0.0):
         #    print('encoder layer {}: {}'.format(self.name, act_sum))
         #print('bias mean: {}'.format(self.conv.bias.mean()))
@@ -84,8 +85,10 @@ class Encoder(nn.Module):
         for i, mod in enumerate(self.net):
             wkey = 'enc_wz_{}'.format(i)
             bkey = 'enc_bz_{}'.format(i)
-            self.metrics[wkey] = (mod.conv.weight == 0).sum()
-            self.metrics[bkey] = (mod.conv.bias == 0).sum()
+            akey = 'enc_az_{}'.format(i)
+            self.metrics[akey] = mod.num_zero_act
+            # self.metrics[wkey] = (mod.conv.weight == 0).sum()
+            # self.metrics[bkey] = (mod.conv.bias == 0).sum()
 
 
     def forward(self, mels):
@@ -94,8 +97,8 @@ class Encoder(nn.Module):
         mels: (B, M, T) (torch.tensor)
         outputs: (B, C, T)
         '''
-        self.update_metrics()
         out = self.net(mels)
+        self.update_metrics()
         #out = torch.tanh(out * 10.0)
         return out
 
