@@ -358,10 +358,9 @@ class Metrics(object):
         while ss.step < self.opts.max_steps:
             if ss.step in self.learning_rates:
                 ss.update_learning_rate(self.learning_rates[ss.step])
-                current_stats['lrate'] = self.learning_rates[ss.step] 
+
             if ss.model.bn_type == 'vae' and ss.step in self.anneal_schedule:
                 ss.model.objective.update_anneal_weight(self.anneal_schedule[ss.step])
-                current_stats['anneal_weight'] = self.anneal_schedule[ss.step]
 
             loss = self.optim_step_fn()
 
@@ -372,15 +371,19 @@ class Metrics(object):
                 current_stats.update({
                         'step': ss.step,
                         'loss': loss,
+                        'lrate': ss.optim.param_groups[0]['lr'],
                         'tprb_m': self.avg_prob_target(),
                         # 'pk_d_m': avg_peak_dist
                         })
+                if ss.model.bn_type in ('vae'):
+                    current_stats['free_nats'] = ss.model.objective.free_nats
+                    current_stats['anneal_weight'] = \
+                            ss.model.objective.anneal_weight.item()
+
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
                     current_stats.update(ss.model.objective.metrics)
                     current_stats.update(ss.model.encoder.metrics)
 
-                if ss.model.bn_type in ('vae'):
-                    current_stats['free_nats'] = ss.model.objective.free_nats
 
                 netmisc.print_metrics(current_stats, index, 100)
                 stderr.flush()
