@@ -91,8 +91,10 @@ class State(object):
                 stderr.flush()
 
     def update_learning_rate(self, learning_rate):
-        sd = self.optim.state_dict()
-        self.optim = torch.optim.Adam(params=self.model.parameters(),
-                lr=learning_rate)
-        self.optim.load_state_dict(sd)
+        for g in self.optim.param_groups:
+            g['lr'] = learning_rate
+        # sd = self.optim.state_dict()
+        # self.optim = torch.optim.Adam(params=self.model.parameters(),
+        #         lr=learning_rate)
+        # self.optim.load_state_dict(sd)
 

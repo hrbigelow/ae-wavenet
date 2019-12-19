@@ -352,6 +352,10 @@ class Metrics(object):
         ss.to(self.device)
         current_stats = {}
 
+        # for resuming the learning rate 
+        lr_step = util.greatest_lower_bound(sorted(self.learning_rates.keys()), ss.step)
+        ss.update_learning_rate(self.learning_rates[lr_step])
+
         if ss.model.bn_type in ('vqvae', 'vqvae-ema'):
             ss.model.init_codebook(self.data_iter, 10000)
 
