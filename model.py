@@ -357,6 +357,10 @@ class Metrics(object):
         lr_index = util.greatest_lower_bound(sorted_lr_steps, ss.step)
         ss.update_learning_rate(self.learning_rates[sorted_lr_steps[lr_index]])
 
+        sorted_as_steps = sorted(self.anneal_schedule.keys())
+        as_index = util.greatest_lower_bound(sorted_as_steps, ss.step)
+        ss.model.objective.update_anneal_weight(sorted_as_steps[as_index])
+
         if ss.model.bn_type in ('vqvae', 'vqvae-ema'):
             ss.model.init_codebook(self.data_iter, 10000)
 
