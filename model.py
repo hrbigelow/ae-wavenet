@@ -353,8 +353,9 @@ class Metrics(object):
         current_stats = {}
 
         # for resuming the learning rate 
-        lr_step = util.greatest_lower_bound(sorted(self.learning_rates.keys()), ss.step)
-        ss.update_learning_rate(self.learning_rates[lr_step])
+        sorted_lr_steps = sorted(self.learning_rates.keys())
+        lr_index = util.greatest_lower_bound(sorted_lr_steps, ss.step)
+        ss.update_learning_rate(self.learning_rates[sorted_lr_steps[lr_index]])
 
         if ss.model.bn_type in ('vqvae', 'vqvae-ema'):
             ss.model.init_codebook(self.data_iter, 10000)
