@@ -37,6 +37,20 @@ def train_parser():
     train.add_argument('ckpt_template', type=str, metavar='CHECKPOINT_TEMPLATE',
             help="Full or relative path, including a filename template, containing "
             "a single %%, which will be replaced by the step number.")
+    # VAE-specific Bottleneck
+    train.add_argument('--bn-free-nats', '-fn', type=int, metavar='INT',
+            default=9, help='number of free nats in KL divergence that are '
+            'not penalized')
+    train.add_argument('--bn-anneal-weight-steps', '-aws', type=int, nargs='+',
+            metavar='INT', default=[0, 2e3, 4e3, 6e3, 8e3, 1e4, 2e4, 3e4, 4e4,
+                5e4, 6e4],
+            help='Learning rate starting steps to apply --anneal-weight-vals')
+    train.add_argument('--bn-anneal-weight-vals', '-awv', type=float, nargs='+',
+            metavar='FLOAT', default=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7,
+                0.8, 0.9, 1.0],
+            help='Each of these anneal weights will be applied at the '
+            'corresponding step for --anneal-weight-steps')
+
     return train
 
 # Complete parser for cold-start mode
@@ -75,19 +89,6 @@ def cold_parser():
             help='beta multiplier for commitment loss term, Eq 3 from Chorowski et al.')
     cold.add_argument('--bn-vq-n-embed', '-vqn', type=int, metavar='INT', default=4096,
             help='number of embedding vectors, K, in section 3.1 of VQVAE paper')
-    # VAE-specific Bottleneck
-    cold.add_argument('--bn-free-nats', '-fn', type=int, metavar='INT',
-            default=9, help='number of free nats in KL divergence that are '
-            'not penalized')
-    cold.add_argument('--bn-anneal-weight-steps', '-aws', type=int, nargs='+',
-            metavar='INT', default=[0, 2e3, 4e3, 6e3, 8e3, 1e4, 2e4, 3e4, 4e4,
-                5e4, 6e4],
-            help='Learning rate starting steps to apply --anneal-weight-vals')
-    cold.add_argument('--bn-anneal-weight-vals', '-awv', type=float, nargs='+',
-            metavar='FLOAT', default=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7,
-                0.8, 0.9, 1.0],
-            help='Each of these anneal weights will be applied at the '
-            'corresponding step for --anneal-weight-steps')
 
 
     # Decoder architectural parameters

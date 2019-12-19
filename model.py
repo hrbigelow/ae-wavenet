@@ -283,9 +283,6 @@ class Metrics(object):
         stderr.flush()
         self.learning_rates = dict(zip(opts.learning_rate_steps,
             opts.learning_rate_rates))
-        if opts.bn_type == 'vae':
-            self.anneal_schedule = dict(zip(opts.bn_anneal_weight_steps,
-                opts.bn_anneal_weight_vals))
         self.opts = opts
 
         if mode == 'new':
@@ -321,6 +318,10 @@ class Metrics(object):
             #print('Optim state: {}'.format(state.optim_checksum()))
             stderr.flush()
 
+        if self.state.model.bn_type == 'vae':
+            self.anneal_schedule = dict(zip(opts.bn_anneal_weight_steps,
+                opts.bn_anneal_weight_vals))
+
         self.ckpt_path = util.CheckpointPath(self.opts.ckpt_template)
         self.quant = None
         self.target = None
@@ -349,14 +350,18 @@ class Metrics(object):
     def train(self, index):
         ss = self.state 
         ss.to(self.device)
+        current_stats = {}
+
         if ss.model.bn_type in ('vqvae', 'vqvae-ema'):
             ss.model.init_codebook(self.data_iter, 10000)
 
         while ss.step < self.opts.max_steps:
             if ss.step in self.learning_rates:
                 ss.update_learning_rate(self.learning_rates[ss.step])
+                current_stats['lrate'] = self.learning_rates[ss.step] 
             if ss.model.bn_type == 'vae' and ss.step in self.anneal_schedule:
                 ss.model.objective.update_anneal_weight(self.anneal_schedule[ss.step])
+                current_stats['anneal_weight'] = self.anneal_schedule[ss.step]
 
             loss = self.optim_step_fn()
 
@@ -364,15 +369,19 @@ class Metrics(object):
                 ss.model.bottleneck.update_codebook()
 
             if ss.step % self.opts.progress_interval == 0:
-                current_stats = {
+                current_stats.update({
                         'step': ss.step,
                         'loss': loss,
                         'tprb_m': self.avg_prob_target(),
                         # 'pk_d_m': avg_peak_dist
-                        }
+                        })
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
                     current_stats.update(ss.model.objective.metrics)
                     current_stats.update(ss.model.encoder.metrics)
+
+                if ss.model.bn_type in ('vae'):
+                    current_stats['free_nats'] = ss.model.objective.free_nats
+
                 netmisc.print_metrics(current_stats, index, 100)
                 stderr.flush()
 
