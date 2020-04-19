@@ -3,7 +3,6 @@ import io
 import torch
 from sys import stderr
 import util
-import model as ae
 import data
 
 class State(object):
