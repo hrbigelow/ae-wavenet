@@ -8,6 +8,7 @@ import jitter
 from torch import nn
 import vconv
 import copy
+import parse_tools
 from collections import namedtuple
 
 import util
@@ -114,13 +115,13 @@ class VirtualBatch(object):
 
         for b, wi in enumerate(picks):
             s, voice_ind = ds.in_start[wi]
-            wav_enc_input = ds.snd_data[s:s + ds.enc_in_len]
+            _wav_enc_input = ds.snd_data[s:s + ds.enc_in_len]
             # print('wav_enc_input.shape: {}, s: {}, ds.snd_data.shape: {}'.format(
             #     wav_enc_input.shape, s, ds.snd_data.shape), file=stderr)
             # stderr.flush()
 
-            self.wav_dec_input[b,...] = wav_enc_input[trim[0]:trim[1]]
-            self.mel_enc_input[b,...] = ds.mfcc_proc.func(wav_enc_input)
+            self.wav_dec_input[b,...] = _wav_enc_input[trim[0]:trim[1]]
+            self.mel_enc_input[b,...] = ds.mfcc_proc.func(_wav_enc_input)
             self.voice_index[b] = voice_ind 
             self.jitter_index[b,:] = \
                     torch.tensor(ds.jitter.gen_indices(nz) + b * nz) 
@@ -141,17 +142,18 @@ class Slice(torch.utils.data.IterableDataset):
     Defines the current batch of data in iterator style.
     Use with automatic batching disabled, and collate_fn = lambda x: x
     """
-    def __init__(self, batch_size, window_batch_size, jitter_prob,
-            sample_rate, mfcc_win_sz, mfcc_hop_sz, n_mels, n_mfcc):
+    def __init__(self, opts):
+        opts_dict = vars(opts)
+        pre_pars = parse_tools.get_prefixed_items(opts_dict, 'pre_')
         self.init_args = {
-                'batch_size': batch_size,
-                'window_batch_size': window_batch_size,
-                'jitter_prob': jitter_prob,
-                'sample_rate': sample_rate,
-                'mfcc_win_sz': mfcc_win_sz,
-                'mfcc_hop_sz': mfcc_hop_sz,
-                'n_mels': n_mels,
-                'n_mfcc': n_mfcc
+                'batch_size': opts.n_batch,
+                'window_batch_size': opts.n_win_batch,
+                'jitter_prob': opts.jitter_prob,
+                'sample_rate': pre_pars['sample_rate'],
+                'mfcc_win_sz': pre_pars['mfcc_win_sz'],
+                'mfcc_hop_sz': pre_pars['mfcc_hop_sz'],
+                'n_mels': pre_pars['n_mels'],
+                'n_mfcc': pre_pars['n_mfcc']
                 }
         self._initialize()
 

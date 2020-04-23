@@ -8,47 +8,16 @@ from torch import nn
 from torch.nn.modules import loss
 from scipy.cluster.vq import kmeans
 
-import model as ae
-import checkpoint
 import ae_bn
-import data
 import mfcc
 import parse_tools  
 import vconv
 import util
-import netmisc
 import vq_bn
 import vqema_bn
 import vae_bn
 import wave_encoder as enc
 import wavenet as dec 
-
-# from numpy import vectorize as np_vectorize
-class PreProcess(nn.Module):
-    """
-    Perform one-hot encoding
-    """
-    def __init__(self, pre_params, n_quant):
-        super(PreProcess, self).__init__()
-        self.n_quant = n_quant
-        self.register_buffer('quant_onehot', torch.eye(self.n_quant))
-
-    def one_hot(self, wav_compand):
-        """
-        wav_compand: (B, T)
-        B, Q, T: n_batch, n_quant, n_timesteps
-        returns: (B, Q, T)
-        """
-        wav_compand_tmp = wav_compand.long()
-        wav_one_hot = util.gather_md(self.quant_onehot, 0, wav_compand_tmp).permute(1,0,2)
-        return wav_one_hot
-
-    def forward(self, in_snd_slice):
-        """
-        Converts the input to a one-hot format
-        """
-        in_snd_slice_onehot = self.one_hot(in_snd_slice)
-        return in_snd_slice_onehot
 
 
 class AutoEncoder(nn.Module):
@@ -56,21 +25,24 @@ class AutoEncoder(nn.Module):
     Full Autoencoder model.  The _initialize method allows us to seamlessly initialize
     from __init__ or __setstate__ 
     """
-    def __init__(self, pre_params, enc_params, bn_params, dec_params,
-            n_mel_chan, training):
+    def __init__(self, opts, dataset):
+        opts_dict = vars(opts)
+        enc_params = parse_tools.get_prefixed_items(opts_dict, 'enc_')
+        bn_params = parse_tools.get_prefixed_items(opts_dict, 'bn_')
+        dec_params = parse_tools.get_prefixed_items(opts_dict, 'dec_')
+        dec_params['n_speakers'] = dataset.num_speakers()
+
         self.init_args = {
-                'pre_params': pre_params,
                 'enc_params': enc_params,
                 'bn_params': bn_params,
                 'dec_params': dec_params,
-                'n_mel_chan': n_mel_chan,
-                'training': training
+                'n_mel_chan': dataset.num_mel_chan(),
+                'training': opts.training
                 }
         self._initialize()
 
     def _initialize(self):
         super(AutoEncoder, self).__init__() 
-        pre_params = self.init_args['pre_params']
         enc_params = self.init_args['enc_params']
         bn_params = self.init_args['bn_params']
         dec_params = self.init_args['dec_params']
@@ -78,7 +50,7 @@ class AutoEncoder(nn.Module):
         training = self.init_args['training']
 
         # the "preprocessing"
-        self.preprocess = PreProcess(pre_params, n_quant=dec_params['n_quant'])
+        self.preprocess = dec.PreProcess(n_quant=dec_params['n_quant'])
 
         self.encoder = enc.Encoder(n_in=n_mel_chan, parent_vc=None, **enc_params)
 
@@ -126,10 +98,15 @@ class AutoEncoder(nn.Module):
     def _init_geometry(self, batch_win_size):
         """
         Initializes:
-        self.enc_in_len
-        self.trim_ups_out
-        self.trim_dec_out
-        self.trim_dec_in
+        self.enc_in_len - timesteps of encoder input needed to
+                          produce batch_win_size decoder output timesteps
+        self.trim_ups_out - offsets for trimming the upsampler output tensor
+        self.trim_dec_out - offsets for trimming the decoder output
+        self.trim_dec_in  - offsets for trimming the decoder input
+
+        The trimming vectors are needed because, due to striding geometry,
+        output tensors cannot be produced in single-increment sizes, therefore
+        must be over-produced in some cases.
         """
         # Calculate max length of mfcc encoder input and wav decoder input
         w = batch_win_size
@@ -139,6 +116,7 @@ class AutoEncoder(nn.Module):
         end_ups_vc = self.decoder.vc['last_upsample']
         end_enc_vc = self.encoder.vc['end']
 
+        # naming: (d: decoder, e: encoder, u: upsample), (o: output, i:input)
         do = vconv.GridRange((0, 100000), (0, w), 1)
         di = vconv.input_range(beg_grcc_vc, end_grcc_vc, do)
         ei = vconv.input_range(mfcc_vc, end_grcc_vc, do)
@@ -155,8 +133,9 @@ class AutoEncoder(nn.Module):
             ei.sub[0]], dtype=torch.long)
         self.decoder.trim_ups_out = torch.tensor([di.sub[0] - uo.sub[0],
             di.sub[1] - uo.sub[0]], dtype=torch.long)
-        self.trim_dec_out = torch.tensor([do.sub[0] - di.sub[0], do.sub[1] -
-            di.sub[0]], dtype=torch.long)
+        self.trim_dec_out = torch.tensor(
+                [do.sub[0] - di.sub[0], do.sub[1] - di.sub[0]],
+                dtype=torch.long)
 
 
     def __getstate__(self):

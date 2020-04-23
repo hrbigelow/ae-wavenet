@@ -7,6 +7,34 @@ from numpy import prod as np_prod
 import util
 import netmisc
 
+# from numpy import vectorize as np_vectorize
+class PreProcess(nn.Module):
+    """
+    Perform one-hot encoding
+    """
+    def __init__(self, n_quant):
+        super(PreProcess, self).__init__()
+        self.n_quant = n_quant
+        self.register_buffer('quant_onehot', torch.eye(self.n_quant))
+
+    def one_hot(self, wav_compand):
+        """
+        wav_compand: (B, T)
+        B, Q, T: n_batch, n_quant, n_timesteps
+        returns: (B, Q, T)
+        """
+        wav_compand_tmp = wav_compand.long()
+        wav_one_hot = util.gather_md(self.quant_onehot, 0, wav_compand_tmp).permute(1,0,2)
+        return wav_one_hot
+
+    def forward(self, in_snd_slice):
+        """
+        Converts the input to a one-hot format
+        """
+        in_snd_slice_onehot = self.one_hot(in_snd_slice)
+        return in_snd_slice_onehot
+
+
 class GatedResidualCondConv(nn.Module):
     def __init__(self, wavenet_vc, n_cond, n_res, n_dil, n_skp, stride, dil,
             filter_sz=2, bias=True, parent_vc=None, name=None):

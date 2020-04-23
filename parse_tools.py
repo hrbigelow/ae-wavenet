@@ -12,44 +12,62 @@ train.py resume [options]
 # Training options common to both "new" and "resume" training modes
 def train_parser():
     train = argparse.ArgumentParser(add_help=False)
-    train.add_argument('--n-batch', '-nb', type=int, metavar='INT',
-            default=16, help='Batch size')
-    train.add_argument('--n-win-batch', '-nw', type=int, metavar='INT',
-            default=100, help='# of consecutive window samples in one slice' )
-    train.add_argument('--max-steps', '-ms', type=int, metavar='INT', default=1e20,
-            help='Maximum number of training steps')
-    train.add_argument('--save-interval', '-si', type=int, default=1000, metavar='INT',
-            help='Save a checkpoint after this many steps each time')
-    train.add_argument('--progress-interval', '-pi', type=int, default=1, metavar='INT',
-            help='Print a progress message at this interval')
-    train.add_argument('--hwtype', '-hw', type=str, default='GPU',
-            help='Harware target, one of CPU, GPU, or TPU')
-    train.add_argument('--learning-rate-steps', '-lrs', type=int, nargs='+',
-            metavar='INT', default=[0, 4e6, 6e6, 8e6],
-            help='Learning rate starting steps to apply --learning-rate-rates')
-    train.add_argument('--learning-rate-rates', '-lrr', type=float, nargs='+',
-            metavar='FLOAT', default=[4e-4, 2e-4, 1e-4, 5e-5],
-            help='Each of these learning rates will be applied at the '
-            'corresponding value for --learning-rate-steps')
-    train.add_argument('--random-seed', '-rnd', type=int, metavar='INT',
-            default=2507,
-            help='Random seed for weights initialization etc')
-    train.add_argument('ckpt_template', type=str, metavar='CHECKPOINT_TEMPLATE',
+
+    # integer arguments
+    iargs = [ 
+        ('nb', 'n-batch', 16),
+        ('nw', 'n-win-batch', 100),
+        ('ms', 'max-steps', 1e20),
+        ('si', 'save-interval', 1000),
+        ('pi', 'progress-interval', 1),
+        ('rnd', 'random-seed', 2507),
+        # VAE-specific Bottleneck
+        ('fn', 'bn-free-nats', 9)
+    ]
+    
+
+    # other arguments
+    args = [ 
+        ('hw', 'hwtype', str, None, 'STR', 'GPU'),
+        ('lrs', 'learning-rate-steps', int, '+', 'INT', [0, 4e6, 6e6, 8e6]),
+        ('lrr', 'learning-rate-rates', float, '+', 'FLOAT', [4e-4, 2e-4, 1e-4, 5e-5]),
+        ('aws', 'bn-anneal-weight-steps', int, '+',
+            'INT', [0, 2e3, 4e3, 6e3, 8e3, 1e4, 2e4, 3e4, 4e4, 5e4, 6e4]),
+        ('awv', 'bn-anneal-weight-vals', float, '+',
+            'FLOAT', [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+            )
+    ]
+
+    # help messages
+    hmsg = {
+        'nb': 'Batch size',
+        'nw': '# of consecutive window samples in one slice',
+        'ms': 'Maximum number of training steps',
+        'si': 'Save a checkpoint after this many steps each time',
+        'pi': 'Print a progress message at this interval',
+        'rnd': 'Random seed for weights initialization etc',
+        'fn': 'number of free nats in KL divergence that are not penalized',
+        'hw': 'Harware target, one of CPU, GPU, or TPU',
+        'lrs': 'Learning rate starting steps to apply --learning-rate-rates',
+        'lrr': 'Each of these learning rates will be applied at the '
+                'corresponding value for --learning-rate-steps',
+        'aws': 'Learning rate starting steps to apply --anneal-weight-vals',
+        'awv': 'Each of these anneal weights will be applied at the '
+               'corresponding step for --anneal-weight-steps'
+    }
+
+    for sopt, lopt, t, n, meta, d in args:
+        train.add_argument('--' + lopt, '-' + sopt, type=t, nargs=n,
+                metavar=meta, default=d, help=hmsg[sopt])
+
+    for sopt, lopt, d in iargs:
+        train.add_argument('--' + lopt, '-' + sopt, type=int, nargs=None,
+                metavar='INT', default=d, help=hmsg[sopt])
+
+    train.add_argument('ckpt_template', type=str,
+            metavar='CHECKPOINT_TEMPLATE',
             help="Full or relative path, including a filename template, containing "
             "a single %%, which will be replaced by the step number.")
-    # VAE-specific Bottleneck
-    train.add_argument('--bn-free-nats', '-fn', type=int, metavar='INT',
-            default=9, help='number of free nats in KL divergence that are '
-            'not penalized')
-    train.add_argument('--bn-anneal-weight-steps', '-aws', type=int, nargs='+',
-            metavar='INT', default=[0, 2e3, 4e3, 6e3, 8e3, 1e4, 2e4, 3e4, 4e4,
-                5e4, 6e4],
-            help='Learning rate starting steps to apply --anneal-weight-vals')
-    train.add_argument('--bn-anneal-weight-vals', '-awv', type=float, nargs='+',
-            metavar='FLOAT', default=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7,
-                0.8, 0.9, 1.0],
-            help='Each of these anneal weights will be applied at the '
-            'corresponding step for --anneal-weight-steps')
 
     return train
 
@@ -80,6 +98,10 @@ def cold_parser():
     cold.add_argument('--enc-n-out', '-no', type=int, metavar='INT', default=768,
             help='number of output channels')
 
+    cold.add_argument('--global-model', '-gm', type=str, metavar='STR',
+            default='autoencoder',
+            help='type of model (autoencoder or mfcc_inverter)')
+
     # Bottleneck architectural parameters
     cold.add_argument('--bn-type', '-bt', type=str, metavar='STR', default='ae',
             help='bottleneck type (one of "ae", "vae", or "vqvae")')
@@ -90,16 +112,17 @@ def cold_parser():
     cold.add_argument('--bn-vq-n-embed', '-vqn', type=int, metavar='INT', default=4096,
             help='number of embedding vectors, K, in section 3.1 of VQVAE paper')
 
+    # Parameters exclusive to Mfcc Inverter
+    cold.add_argument('--mi-n-lc-in', '-mli', type=int, metavar='INT', default=-1,
+            help='decoder number of local conditioning input channels')
 
-    # Decoder architectural parameters
-    cold.add_argument('--dec-jitter-prob', '-djp', type=float, metavar='FLOAT',
+    # Decoder architectural parameters (also used for mfccInverter)
+    cold.add_argument('--jitter-prob', '-jp', type=float, metavar='FLOAT',
             default=0.12,
             help='replacement probability for time-jitter regularization')
     cold.add_argument('--dec-filter-sz', '-dfs', type=int, metavar='INT', default=2,
             help='decoder number of dilation kernel elements')
     # !!! This is set equal to --bn-n-out
-    #cold.add_argument('--dec-n-lc-in', '-dli', type=int, metavar='INT', default=-1,
-    #        help='decoder number of local conditioning input channels')
     cold.add_argument('--dec-n-lc-out', '-dlo', type=int, metavar='INT', default=-1,
             help='decoder number of local conditioning output channels')
     cold.add_argument('--dec-n-res', '-dnr', type=int, metavar='INT', default=-1,

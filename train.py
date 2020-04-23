@@ -3,7 +3,8 @@ from sys import stderr
 from pprint import pprint
 import torch
 
-import model as ae
+import autoencoder_model as ae
+import chassis as ch
 import parse_tools  
 import netmisc
 
@@ -46,14 +47,14 @@ def main():
     netmisc.set_print_iter(0)
 
     if opts.hwtype == 'GPU':
-        ae.Metrics(mode, opts).train(0)
+        ch.Chassis(mode, opts).train(0)
     elif opts.hwtype == 'TPU':
         def _mp_fn(index, mode, opts):
-            m = ae.Metrics(mode, opts)
+            m = ch.Chassis(mode, opts)
             m.train(index)
         xmp.spawn(_mp_fn, args=(mode, opts), nprocs=1, start_method='fork')
     elif opts.hwtype == 'TPU-single':
-        ae.Metrics(mode, opts).train(0)
+        ch.Chassis(mode, opts).train(0)
 
 
 if __name__ == '__main__':

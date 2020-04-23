@@ -1,23 +1,15 @@
+from sys import stderr
+import torch
+import data
+import autoencoder_model as ae
+import mfcc_inverter as mi
+import checkpoint
+import util
+import netmisc
 
 
-class GPULoaderIter(object):
-    def __init__(self, data_iter):
-        self.data_iter = data_iter
 
-    def __next__(self):
-        return self.data_iter.__next__()[0]
-
-
-class TPULoaderIter(object):
-    def __init__(self, parallel_loader, device):
-        self.per_dev_loader = parallel_loader.per_device_loader(device)
-
-    def __next__(self):
-        vb = self.per_dev_loader.__next__()[0]
-        return vb
-
-
-class Metrics(object):
+class Chassis(object):
     """
     Coordinates the construction of the model, dataset, optimizer,
     checkpointing state, and GPU/TPU iterator wrappers.
@@ -26,6 +18,23 @@ class Metrics(object):
     setup. 
 
     """
+    class GPULoaderIter(object):
+        def __init__(self, data_iter):
+            self.data_iter = data_iter
+
+        def __next__(self):
+            return self.data_iter.__next__()[0]
+
+
+    class TPULoaderIter(object):
+        def __init__(self, parallel_loader, device):
+            self.per_dev_loader = parallel_loader.per_device_loader(device)
+
+        def __next__(self):
+            vb = self.per_dev_loader.__next__()[0]
+            return vb
+
+
     def __init__(self, mode, opts):
         print('Initializing model and data source...', end='', file=stderr)
         stderr.flush()
@@ -35,21 +44,16 @@ class Metrics(object):
 
         if mode == 'new':
             torch.manual_seed(opts.random_seed)
-            pre_par = parse_tools.get_prefixed_items(vars(opts), 'pre_')
-            enc_par = parse_tools.get_prefixed_items(vars(opts), 'enc_')
-            bn_par = parse_tools.get_prefixed_items(vars(opts), 'bn_')
-            dec_par = parse_tools.get_prefixed_items(vars(opts), 'dec_')
 
             # Initialize data
-            jprob = dec_par.pop('jitter_prob')
-            dataset = data.Slice(opts.n_batch, opts.n_win_batch, jprob,
-                    pre_par['sample_rate'], pre_par['mfcc_win_sz'],
-                    pre_par['mfcc_hop_sz'], pre_par['n_mels'],
-                    pre_par['n_mfcc'])
+            dataset = data.Slice(opts)
             dataset.load_data(opts.dat_file)
-            dec_par['n_speakers'] = dataset.num_speakers()
-            model = ae.AutoEncoder(pre_par, enc_par, bn_par, dec_par,
-                    dataset.num_mel_chan(), training=True)
+            opts.training = True
+            if opts.global_model == 'autoencoder':
+                model = ae.AutoEncoder(opts, dataset)
+            elif opts.global_model == 'mfcc_inverter':
+                model = mi.MfccInverter(opts, dataset)
+
             model.post_init(dataset)
             dataset.post_init(model)
             optim = torch.optim.Adam(params=model.parameters(), lr=self.learning_rates[0])
@@ -80,13 +84,13 @@ class Metrics(object):
             self.data_loader = self.state.data_loader
             self.data_loader.set_target_device(self.device)
             self.optim_step_fn = (lambda: self.state.optim.step(self.loss_fn))
-            self.data_iter = GPULoaderIter(iter(self.data_loader))
+            self.data_iter = self.GPULoaderIter(iter(self.data_loader))
         else:
             import torch_xla.core.xla_model as xm
             import torch_xla.distributed.parallel_loader as pl
             self.device = xm.xla_device()
             self.data_loader = pl.ParallelLoader(self.state.data_loader, [self.device])
-            self.data_iter = TPULoaderIter(self.data_loader, self.device)
+            self.data_iter = self.TPULoaderIter(self.data_loader, self.device)
             self.optim_step_fn = (lambda : xm.optimizer_step(self.state.optim,
                     optimizer_args={'closure': self.loss_fn}))
 
