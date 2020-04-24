@@ -103,8 +103,9 @@ def cold_parser():
             help='type of model (autoencoder or mfcc_inverter)')
 
     # Bottleneck architectural parameters
-    cold.add_argument('--bn-type', '-bt', type=str, metavar='STR', default='ae',
-            help='bottleneck type (one of "ae", "vae", or "vqvae")')
+    cold.add_argument('--bn-type', '-bt', type=str, metavar='STR',
+            default='none',
+            help='bottleneck type (one of "ae", "vae", "vqvae", or "none")')
     cold.add_argument('--bn-n-out', '-bo', type=int, metavar='INT', default=64,
             help='number of output channels for the bottleneck')
     cold.add_argument('--bn-vq-gamma', '-vqb', type=float, metavar='FLOAT', default=0.25,

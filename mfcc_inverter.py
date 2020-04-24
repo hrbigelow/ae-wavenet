@@ -26,7 +26,7 @@ class MfccInverter(nn.Module):
         super(MfccInverter, self).__init__()
         dec_params = self.init_args['dec_params']
         mi_params = self.init_args['mi_params']
-        self.bn_type = None
+        self.bn_type = 'none' 
 
         self.preprocess = wn.PreProcess(n_quant=dec_params['n_quant'])  
         self.wavenet = wn.WaveNet(**dec_params, parent_vc=None,
@@ -106,6 +106,15 @@ class MfccInverter(nn.Module):
         self.wav_onehot_dec = wav_onehot_dec
         quant = self.forward(vbatch.mel_enc_input, wav_onehot_dec,
                 vbatch.voice_index, vbatch.jitter_index)
-        return quant[...,:-1], wav_batch_out[...,1:]
+
+        pred, target = quant[...,:-1], wav_batch_out[...,1:]
+
+        loss = self.objective(pred, target)
+        ag_inputs = (vbatch.mel_enc_input)
+        (mel_grad, ) = torch.autograd.grad(loss, ag_inputs, retain_graph=True)
+        self.objective.metrics.update({
+            'mel_grad_sd': mel_grad.std()
+            })
+        return pred, target, loss 
 
     

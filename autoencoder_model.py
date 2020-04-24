@@ -251,6 +251,16 @@ class AutoEncoder(nn.Module):
 
         quant = self.forward(vbatch.mel_enc_input, wav_onehot_dec,
                 vbatch.voice_index, vbatch.jitter_index)
-        # quant_pred[:,:,0] is a prediction for wav_compand_out[:,1] 
-        return quant[...,:-1], wav_batch_out[...,1:]
+
+        pred, target = quant[...,:-1], wav_batch_out[...,1:]
+
+        loss = self.objective(pred, target)
+        ag_inputs = (vbatch.mel_enc_input, self.encoding_bn)
+        mel_grad, bn_grad = torch.autograd.grad(loss, ag_inputs, retain_graph=True)
+        self.objective.metrics.update({
+            'mel_grad_sd': mel_grad.std(),
+            'bn_grad_sd': bn_grad.std()
+            })
+        # loss.backward(create_graph=True, retain_graph=True)
+        return pred, target, loss 
 

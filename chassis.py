@@ -109,7 +109,7 @@ class Chassis(object):
         lr_index = util.greatest_lower_bound(sorted_lr_steps, ss.step)
         ss.update_learning_rate(self.learning_rates[sorted_lr_steps[lr_index]])
 
-        if ss.model.bn_type is not None:
+        if ss.model.bn_type != 'none':
             sorted_as_steps = sorted(self.anneal_schedule.keys())
             as_index = util.greatest_lower_bound(sorted_as_steps, ss.step)
             ss.model.objective.update_anneal_weight(self.anneal_schedule[sorted_as_steps[as_index]])
@@ -137,15 +137,15 @@ class Chassis(object):
                         'tprb_m': self.avg_prob_target(),
                         # 'pk_d_m': avg_peak_dist
                         })
+                current_stats.update(ss.model.objective.metrics)
+
                 if ss.model.bn_type in ('vae'):
                     current_stats['free_nats'] = ss.model.objective.free_nats
                     current_stats['anneal_weight'] = \
                             ss.model.objective.anneal_weight.item()
 
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
-                    current_stats.update(ss.model.objective.metrics)
                     current_stats.update(ss.model.encoder.metrics)
-
 
                 netmisc.print_metrics(current_stats, index, 100)
                 stderr.flush()
@@ -168,9 +168,7 @@ class Chassis(object):
         loss.
         """
         batch = next(self.data_iter)
-        quant_pred_snip, wav_compand_out_snip = self.state.model.run(batch) 
-        self.quant = quant_pred_snip
-        self.target = wav_compand_out_snip
+        self.quant, self.target, self.loss = self.state.model.run(batch) 
         self.probs = self.softmax(self.quant)
         self.mel_enc_input = batch.mel_enc_input
         
@@ -178,17 +176,9 @@ class Chassis(object):
     def loss_fn(self):
         """This is the closure needed for the optimizer"""
         self.run_batch()
-        loss = self.state.model.objective(self.quant, self.target)
-        inputs = (self.mel_enc_input, self.state.model.encoding_bn)
-        mel_grad, bn_grad = torch.autograd.grad(loss, inputs, retain_graph=True)
-        self.state.model.objective.metrics.update({
-            'mel_grad_sd': mel_grad.std(),
-            'bn_grad_sd': bn_grad.std()
-            })
-        # loss.backward(create_graph=True, retain_graph=True)
         self.state.optim.zero_grad()
-        loss.backward()
-        return loss
+        self.loss.backward()
+        return self.loss
     
     def peak_dist(self):
         """Average distance between the indices of the peaks in pred and

@@ -1,6 +1,7 @@
 {
     "n_batch": 16,
     "n_win_batch": 100,
+    "jitter_prob": 0.0,
     "learning_rate_steps": [ 0, 4e6, 6e6, 8e6 ],
     "learning_rate_rates": [ 2e-5, 2e-4, 1e-4, 5e-5 ]
 }
