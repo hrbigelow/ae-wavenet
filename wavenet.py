@@ -231,6 +231,10 @@ class WaveNet(nn.Module):
         self.logsoftmax = nn.LogSoftmax(1) # (B, Q, N)
         self.vc['main'] = cur_vc
 
+    def set_parent_vc(self, parent_vc):
+        self.vc['beg'].parent = parent_vc
+        parent_vc.child = self.vc['beg']
+
     def post_init(self):
         for grc in self.conv_layers:
             grc.post_init()
@@ -282,3 +286,21 @@ class WaveNet(nn.Module):
         # logits = self.logsoftmax(quant) 
         return quant
 
+
+class RecLoss(nn.Module):
+    def __init__(self):
+        super(RecLoss, self).__init__()
+        self.logsoftmax = nn.LogSoftmax(1) # input is (B, Q, N)
+
+    def forward(self, quant_pred, target_wav):
+
+        log_pred = self.logsoftmax(quant_pred)
+        target_wav_gather = target_wav.long().unsqueeze(1)
+        log_pred_target = torch.gather(log_pred, 1, target_wav_gather)
+
+        rec_loss = - log_pred_target.mean()
+        self.metrics = {
+                'rec': rec_loss
+                }
+
+        return rec_loss 

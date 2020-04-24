@@ -47,7 +47,9 @@ def main():
     netmisc.set_print_iter(0)
 
     if opts.hwtype == 'GPU':
-        ch.Chassis(mode, opts).train(0)
+        chs = ch.Chassis(mode, opts)
+        chs.state.model.print_geometry()
+        chs.train(0)
     elif opts.hwtype == 'TPU':
         def _mp_fn(index, mode, opts):
             m = ch.Chassis(mode, opts)

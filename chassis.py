@@ -109,9 +109,10 @@ class Chassis(object):
         lr_index = util.greatest_lower_bound(sorted_lr_steps, ss.step)
         ss.update_learning_rate(self.learning_rates[sorted_lr_steps[lr_index]])
 
-        sorted_as_steps = sorted(self.anneal_schedule.keys())
-        as_index = util.greatest_lower_bound(sorted_as_steps, ss.step)
-        ss.model.objective.update_anneal_weight(self.anneal_schedule[sorted_as_steps[as_index]])
+        if ss.model.bn_type is not None:
+            sorted_as_steps = sorted(self.anneal_schedule.keys())
+            as_index = util.greatest_lower_bound(sorted_as_steps, ss.step)
+            ss.model.objective.update_anneal_weight(self.anneal_schedule[sorted_as_steps[as_index]])
 
         if ss.model.bn_type in ('vqvae', 'vqvae-ema'):
             ss.model.init_codebook(self.data_iter, 10000)
@@ -177,7 +178,6 @@ class Chassis(object):
     def loss_fn(self):
         """This is the closure needed for the optimizer"""
         self.run_batch()
-        self.state.optim.zero_grad()
         loss = self.state.model.objective(self.quant, self.target)
         inputs = (self.mel_enc_input, self.state.model.encoding_bn)
         mel_grad, bn_grad = torch.autograd.grad(loss, inputs, retain_graph=True)
@@ -186,6 +186,7 @@ class Chassis(object):
             'bn_grad_sd': bn_grad.std()
             })
         # loss.backward(create_graph=True, retain_graph=True)
+        self.state.optim.zero_grad()
         loss.backward()
         return loss
     

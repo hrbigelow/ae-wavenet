@@ -97,12 +97,14 @@ class AutoEncoder(nn.Module):
 
     def _init_geometry(self, batch_win_size):
         """
-        Initializes:
-        self.enc_in_len - timesteps of encoder input needed to
-                          produce batch_win_size decoder output timesteps
-        self.trim_ups_out - offsets for trimming the upsampler output tensor
-        self.trim_dec_out - offsets for trimming the decoder output
-        self.trim_dec_in  - offsets for trimming the decoder input
+        Initializes lengths and trimming needed to produce batch_win_size
+        output
+        
+        self.enc_in_len - encoder input length (timesteps)
+        self.dec_in_len - decoder input length (timesteps)
+        self.trim_ups_out - trims decoder lc_dense before use  
+        self.trim_dec_out - trims wav_dec_input to wav_dec_output
+        self.trim_dec_in  - trims wav_enc_input to wav_dec_input
 
         The trimming vectors are needed because, due to striding geometry,
         output tensors cannot be produced in single-increment sizes, therefore
@@ -111,10 +113,10 @@ class AutoEncoder(nn.Module):
         # Calculate max length of mfcc encoder input and wav decoder input
         w = batch_win_size
         mfcc_vc = self.encoder.vc['beg'].parent
+        end_enc_vc = self.encoder.vc['end']
+        end_ups_vc = self.decoder.vc['last_upsample']
         beg_grcc_vc = self.decoder.vc['beg_grcc']
         end_grcc_vc = self.decoder.vc['end_grcc']
-        end_ups_vc = self.decoder.vc['last_upsample']
-        end_enc_vc = self.encoder.vc['end']
 
         # naming: (d: decoder, e: encoder, u: upsample), (o: output, i:input)
         do = vconv.GridRange((0, 100000), (0, w), 1)
@@ -127,15 +129,33 @@ class AutoEncoder(nn.Module):
         # Needed for trimming various tensors
         self.enc_in_len = ei.sub_length()
         self.enc_in_mel_len = mi.sub_length()
+        # used by jitter_index
         self.embed_len = eo.sub_length() 
+
+        # sets size for wav_dec_in
         self.dec_in_len = di.sub_length()
+
+        # trims wav_enc_input to wav_dec_input
         self.trim_dec_in = torch.tensor([di.sub[0] - ei.sub[0], di.sub[1] -
             ei.sub[0]], dtype=torch.long)
+
+        # needed by wavenet to trim upsampled local conditioning tensor
         self.decoder.trim_ups_out = torch.tensor([di.sub[0] - uo.sub[0],
             di.sub[1] - uo.sub[0]], dtype=torch.long)
+
+        # 
         self.trim_dec_out = torch.tensor(
                 [do.sub[0] - di.sub[0], do.sub[1] - di.sub[0]],
                 dtype=torch.long)
+
+    def print_geometry(self):
+        """
+        Print the convolutional geometry
+        """
+        vc = self.encoder.vc['beg'].parent
+        while vc is not None:
+            print(vc)
+            vc = vc.child
 
 
     def __getstate__(self):
@@ -202,9 +222,8 @@ class AutoEncoder(nn.Module):
         quant_pred (B, Q, N) # predicted wav amplitudes
         """
         encoding = self.encoder(mels)
-        encoding_bn = self.bottleneck(encoding)
-        self.encoding_bn = encoding_bn
-        quant = self.decoder(wav_onehot_dec, encoding_bn, voice_inds,
+        self.encoding_bn = self.bottleneck(encoding)
+        quant = self.decoder(wav_onehot_dec, self.encoding_bn, voice_inds,
                 jitter_index)
         return quant
 

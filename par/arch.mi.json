@@ -8,7 +8,7 @@
     "mi_n_lc_in": 39,
     "dec_filter_sz": 2,
     "dec_n_lc_out": 128,
-    "dec_lc_upsample_strides": [5, 4, 4, 4],
+    "dec_lc_upsample_strides": [5, 4, 4, 2],
     "dec_lc_upsample_filt_sizes": [25, 16, 16, 16],
     "dec_n_res": 368,
     "dec_n_dil": 256,
