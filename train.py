@@ -48,7 +48,7 @@ def main():
 
     if opts.hwtype == 'GPU':
         chs = ch.Chassis(mode, opts)
-        chs.state.model.print_geometry()
+        # chs.state.model.print_geometry()
         chs.train(0)
     elif opts.hwtype == 'TPU':
         def _mp_fn(index, mode, opts):

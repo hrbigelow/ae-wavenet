@@ -53,11 +53,14 @@ class VirtualConv(object):
     output size, and offsets relative to the input.
     '''
     def __init__(self, filter_info, padding=(0, 0), stride=1,
-            is_downsample=True, name=None, parent=None):
+            is_downsample=True, do_trim_input=False, name=None, parent=None):
         self.parent = parent
         self.child = None
         self.l_pad = padding[0]
         self.r_pad = padding[1]
+        self.input_gr = None
+        self.input_trim = None
+        self.do_trim_input = do_trim_input
         self.name = name
         self.stride = stride
         self.is_downsample = is_downsample
@@ -86,14 +89,28 @@ class VirtualConv(object):
         
 
     def __repr__(self):
-        fmt = '[{}^{}, {}/{}, {}--{}, "{}"]'
+        fmt = '[{}^{}, {}/{}, {}--{}, {}, [in: {}, trim: {}] "{}"]'
         if self.is_downsample:
             n, d = self.stride, 1
         else:
             n, d = 1, self.stride
 
         return fmt.format(self.l_wing_sz, self.r_wing_sz, n, d, self.l_pad,
-                self.r_pad, self.name)
+                self.r_pad, 'T' if self.do_trim_input else '-',
+                self.in_len(), self.input_trim, self.name)
+
+    def in_len(self):
+        return self.input_gr.sub_length() if self.input_gr else None
+
+    def get_index_trim(self):
+        """
+        Compute input trim as a [start, end) index range 
+        """
+        if self.input_trim is None:
+            return [0, self.input_gr.sub_length()]
+        else:
+            return [self.input_trim[0], self.input_gr.sub_length() -
+                    self.input_trim[1]]
 
     # @profile
     def _output_range(self, full_in, sub_in, gs_in):
@@ -120,7 +137,7 @@ class VirtualConv(object):
             # an empty or reverse range
             sub_out_b = sub_out_pre_b + (full_out_e - sub_out_pre_b) % gs_out
             sub_out_e = sub_out_pre_e - (sub_out_pre_e - full_out_b) % gs_out
-            if sub_out_e - sub_out_b <= 0:
+            if sub_out_e - sub_out_b < 0:
                 return None
 
         else:
@@ -208,7 +225,7 @@ class VirtualConv(object):
             assert (full_in_e - full_in_b) % gs_in == 0
             sub_in_b = sub_in_adj_b + (full_in_e - sub_in_adj_b) % gs_in
             sub_in_e = sub_in_adj_e - (sub_in_adj_e - full_in_b) % gs_in
-            if sub_in_e - sub_in_b <= 0:
+            if sub_in_e - sub_in_b < 0:
                 return None
 
         #print('{} {} {}'.format((full_in_b, full_in_e), (sub_in_b, sub_in_e),
@@ -345,4 +362,36 @@ def max_spacing(source, dest, initial_gs):
             break
         vc = vc.child
     return max_gs
+
+
+def compute_inputs(end_vc, end_gr):
+    """
+    Initializes input_gr and input_trim for each predecessor
+    of end_vc including end_vc.
+    Returns the actual gr that would be returned, which may
+    be larger than end_gr if upsampling is done with no trimming
+    """
+    vc = end_vc
+    gr = end_gr
+
+    # compute initial required inputs, traversing backwards
+    while True:
+        gr = input_range(vc, vc, gr)
+        vc.input_gr = gr
+        if vc.parent is None:
+            break
+        vc = vc.parent
+
+    # compute actual inputs, arising from feeding first required input
+    # forward
+    while True:
+        gr = output_range(vc, vc, vc.input_gr)
+        if vc.child is None:
+            break
+        vc = vc.child
+        if vc.do_trim_input:
+            vc.input_trim = [vc.input_gr.sub[0] - gr.sub[0], gr.sub[1] - vc.input_gr.sub[1]]
+        else:
+            vc.input_gr = gr
+    return gr  
 

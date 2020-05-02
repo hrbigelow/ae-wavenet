@@ -225,6 +225,8 @@ class WaveNet(nn.Module):
         self.vc['beg_grcc'] = self.conv_layers[0].vc
         self.vc['end_grcc'] = self.conv_layers[-1].vc 
 
+        self.vc['beg_grcc'].do_trim_input = True
+
         self.relu = nn.ReLU()
         self.post1 = Conv1dWrap(n_skp, n_post, 1, bias=bias)
         self.post2 = Conv1dWrap(n_post, n_quant, 1, bias=bias)
@@ -304,3 +306,4 @@ class RecLoss(nn.Module):
                 }
 
         return rec_loss 
+

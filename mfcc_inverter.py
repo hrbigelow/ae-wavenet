@@ -36,48 +36,48 @@ class MfccInverter(nn.Module):
     def post_init(self, dataset):
         self.wavenet.set_parent_vc(dataset.mfcc_vc)
         self._init_geometry(dataset.window_batch_size)
+        self.print_geometry()
+
 
     def _init_geometry(self, batch_win_size):
-        w = batch_win_size
+        end_gr = vconv.GridRange((0, 100000), (0, batch_win_size), 1)
+        end_vc = self.wavenet.vc['end_grcc']
+        end_gr_actual = vconv.compute_inputs(end_vc, end_gr)
+
         mfcc_vc = self.wavenet.vc['beg'].parent
         beg_grcc_vc = self.wavenet.vc['beg_grcc']
-        end_grcc_vc = self.wavenet.vc['end_grcc']
-        end_ups_vc = self.wavenet.vc['last_upsample']
 
-        # (d: decoder, m: mfcc, u: upsample), (o: output, i: input)
-        do = vconv.GridRange((0, 100000), (0, w), 1)
-        di = vconv.input_range(beg_grcc_vc, end_grcc_vc, do)
-        wi = vconv.input_range(mfcc_vc, end_grcc_vc, do)
-        mi = vconv.input_range(mfcc_vc.child, end_grcc_vc, do)
-        uo = vconv.output_range(mfcc_vc.child, end_ups_vc, mi)
+        self.enc_in_len = mfcc_vc.in_len()
+        self.enc_in_mel_len = self.embed_len = mfcc_vc.child.in_len()
+        self.dec_in_len = beg_grcc_vc.in_len()
 
-        self.enc_in_len = wi.sub_length()
-        self.enc_in_mel_len = mi.sub_length()
-        self.embed_len = mi.sub_length()
-        self.dec_in_len = di.sub_length()
+        di = beg_grcc_vc.input_gr
+        wi = mfcc_vc.input_gr
 
-        # trims wav_enc_input to wav_dec_input
         self.trim_dec_in = torch.tensor(
                 [di.sub[0] - wi.sub[0], di.sub[1] - wi.sub[0] ],
                 dtype=torch.long)
 
-        # needed by wavenet to trim upsampled local conditioning tensor
-        self.wavenet.trim_ups_out = torch.tensor([di.sub[0] - uo.sub[0],
-            di.sub[1] - uo.sub[0]], dtype=torch.long)
-
         self.trim_dec_out = torch.tensor(
-                [do.sub[0] - di.sub[0], do.sub[1] - di.sub[0]],
+                [end_gr.sub[0] - di.sub[0], end_gr.sub[1] - di.sub[0]],
                 dtype=torch.long)
+
+        self.wavenet.trim_ups_out = torch.tensor([0, beg_grcc_vc.in_len()],
+                dtype=torch.long)
+
         self.wavenet.post_init()
 
+
     def print_geometry(self):
-        """
-        Print the convolutional geometry
-        """
         vc = self.wavenet.vc['beg'].parent
-        while vc is not None:
+        while vc:
             print(vc)
             vc = vc.child
+
+        print('trim_dec_in: {}'.format(self.trim_dec_in))
+        print('trim_dec_out: {}'.format(self.trim_dec_out))
+        print('trim_ups_out: {}'.format(self.wavenet.trim_ups_out))
+
 
     def __getstate__(self):
         state = { 
@@ -113,7 +113,8 @@ class MfccInverter(nn.Module):
         ag_inputs = (vbatch.mel_enc_input)
         (mel_grad, ) = torch.autograd.grad(loss, ag_inputs, retain_graph=True)
         self.objective.metrics.update({
-            'mel_grad_sd': mel_grad.std()
+            'mel_grad_sd': mel_grad.std(),
+            'mel_grad_mean': mel_grad.mean()
             })
         return pred, target, loss 
 
