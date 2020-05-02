@@ -1,0 +1,96 @@
+the plan would be:
+
+1. produce labeled data (x, y) pairs, where x is MFCC coefficients, and y is
+the wave window they are derived from.
+2. feed wavenet the wave window as input, and use the MFCC coefficients as the
+local conditioning.  
+3. since the goal is to learn an NN version that inverts the function, train
+this to zero error.
+
+Potentially we could re-use the data.py module, and just not use the
+wav_dec_input.
+
+
+factor out of model.py the architecture of the model from the API.
+
+class Metrics is a nice encapsulation.  it should be its own class.
+
+
+model.Preprocess is just one of the modules needed by WaveNet, but it is
+not part of the model in the sense of having any learnable parameters.
+Not sure why it needs to be an nn.Module.
+
+model.AutoEncoder is the main model, with a forward method.  It also provides a
+'run' method, which coordinates the actual and target output.
+
+****
+model.Metrics manages the coordinated construction of the data, model, 
+checkpoint state, data_loader and data_iter.
+
+it provides a main method called 'train', which encapsulates all that is needed
+during the training
+
+How does Metrics interact with the model?  It calls:
+
+model.post_init
+model.objective.update_anneal_weight
+model.init_codebook
+model.bottleneck.update_codebook
+model.objectivve.metrics.update
+model.run
+
+dataset calls: dataset.post_init(model)
+
+
+Metrics provides several metrics functions, including:
+
+peak_dist, avg_max, avg_prob_target
+
+These are specific to WaveNet.  
+
+Some good new names for 'Metrics'
+
+Chassis
+
+Is it possible to really do this?
+It doesn't seem so, because there are too many idiosyncrasies of the
+initialization.
+
+We need the post_init function in both the model and data.  One could ask:
+why not just for the data.  In that way, we would have:
+
+partially construct data object
+fully construct model object, using partially constructed data object
+post-initialize data object using fully constructed model object
+
+However, we want to be able to save a model trained with one window batch size,
+and then resume it and train with another window batch size.  Since the data
+is 
+
+
+Perhaps the easiest would be to just accept an option, and explicitly use
+whatever appropriate constructor
+
+The _init_geometry method of autoencoder_model mostly initializes geometry
+within the decoder, and most of this is needed for the 
+
+
+
+chassis.loss_fn:
+calls run_batch
+calls model.objective
+computes gradients
+sets metrics
+calls loss.backward()
+
+
+chassis.run_batch:
+gets batch
+calls model.run
+collects output
+
+
+model.run: 
+consumes batch
+outputs y', y pairs
+

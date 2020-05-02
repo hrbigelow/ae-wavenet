@@ -1,0 +1,122 @@
+NOTES on vconv module
+
+The vconv module contains two functions, output_range and input_range.
+
+Note that for convolutions of stride S > 1, there are S different inputs which
+all produce the same output.  These different inputs differ by having [0, ...,
+S - 1) extra elements on the end relative to a minimal input.  One feature of
+input_range is that it reports this minimal input when given an output.
+
+For convolutions of inverse stride, where the reciprocal S > 1, there are S
+different outputs which all *could* be prodouced from the same input
+information.  However, the one among those which is produced by PyTorch or
+TensorFlow convolutions is the maximal one.
+
+So, when computing geometries, the following workflow is used:
+
+1. Start with the total available input, and call output_range.
+
+stride        remark
+1             one possible output geometry
+S/1           one possible output geometry; up to S-1 input elements may be
+              unused
+1/S           maximal output among S possible outputs that use the same input
+
+2. Call input_range on the resulting output geometry. 
+
+stride        remark
+1             one possible input geometry
+S/1           the minimal input among the S possible inputs is reported 
+1/S           one possible input geometry, but up to S-1 additional output
+              elements may be missing from the maximal output for this input
+              geometry
+
+what happens in each of these three cases when we complete a round trip:
+
+x = initial input range
+y = output_range(x)
+xp = input_range(y)
+
+Stride 1:
+x == input_range(output_range(x)) for all x
+
+Stride S/1: 
+Let x = input_range(output_range(x_initial))
+Then: x == input_range(output_range(x)) 
+x will be smaller than x_initial by [0, S) elements
+
+Stride 1/S:
+x == input_range(output_range(x)) for all x
+
+
+I believe these identities should be valid not just for the full range,
+but for any subranges as well.  So, what regression tests do we need?
+
+Inputs 1: range of (lp, rp, lw, rw) for (full, sub, gs)
+Inputs 2: given (lp, rp, lw, rw), range of (full, sub, gs)
+
+Test 1 (strides 1, 1/S)
+xn = input_range(output_range(x))
+assert xn.full == x.full
+assert xn.sub == x.sub
+
+Test 2 (strides S/1)
+xn = input_range(output_range(x))
+xt = input_range(output_range(xn))
+assert xn.full == xt.full
+assert xn.sub == xt.sub
+
+1. test 1: stride = 1, inputs 1 
+2. test 1: stride = 1, inputs 2 
+3. test 2: stride = S, inputs 1
+4. test 2: stride = S, inputs 2
+5. test 1: stride = 1/S, inputs 1
+6. test 1: stride = 1/S, inputs 2
+
+
+
+PROCEDURE FOR PREPARING WINDOW SLICES
+# define the convolutional chains
+# Note: the upsampling block is considered part of the encoder for these
+purposes
+enc = (mfcc_vc, last_upsample_vc)
+dec = (wavenet_beg_vc, wavenet_end_vc)
+autoenc = (mfcc_vc, wavenet_end_vc)
+
+# define complete input and output dimensions
+# This can be done during Slice initialization
+w = 2568938
+full_in = ((0, w), (0, w), 1)
+full_out = output_range(autoenc, *full_in)
+
+# decide on some desired slice of the output
+s = 1028539
+out_req = (full_out[0], (s, s + 100), 1)
+
+# decoder required input
+mid_req = input_range(dec, *out_req)
+
+# encoder required input
+in_req = input_range(enc, *mid_req)
+
+in_act = in_req
+
+# encoder actual output
+mid_act = output_range(enc, *in_act)
+
+# wav -> wav_mid 
+trim_b, trim_e = tensor_slice(in_act, mid_act)
+wav_mid_ten = wav_ten[trim_b:trim_e]
+
+# lcond -> lcond_trim
+trim_b, trim_e = tensor_slice(mid_act, mid_req)
+lcond_trim_ten = lcond_ten[trim_b:trim_e]
+    
+# wav -> wav_out 
+# +1 since it is predicting the next step
+trim_b, trim_e = tensor_slice(out_req, out_req)
+wav_out_ten = wav_ten[trim_b+1:trim_e+1]
+
+
+
+

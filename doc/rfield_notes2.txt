@@ -1,0 +1,54 @@
+I believe that by PyTorch and Tensorflow treat transpose convolutions as
+follows:
+
+1. For S=inverse_stride, add S-1 zero-valued spacing elements between each
+pair of input elements.
+2. Add the desired left and right padding elements to each end.
+
+For example:
+
+@@@#***#***#***#***#***#@@@@
+
+What they do NOT do is something like:
+
+@@@*#***#***#***#***#***#*@@@@
+
+In other words, the non-padded region always begins and ends with a value
+element '#'.
+
+This creates the following problem.  Suppose I want to calculate the receptive
+field of a length 1 output for a transpose convolution with: 
+
+left_wing_size=12
+right_wing_size=12
+left_pad = 4
+right_pad = 4
+stride = 1/5
+
+We would have:
+
+@@@@#****#****#****#@@@@
+[           |           ]
+l           k           r
+
+This would not accommodate an output of 1 since the total input size is one
+smaller than the filter size of 25.  However:
+
+@@@@#****#****#****#*@@@@
+@@@@#****#****#****#****#@@@@
+[           |           ]
+l           k           r
+
+Both of these would.  And, note that the receptive fields for them would be:
+
+[0,4)
+[0,5)
+
+In the first case, all of the padding is used, and in the second, one
+additional value element is used, and padding is ignored.
+
+In computing receptive fields and influence fields, we adopt the assumption
+that spacing is only applied between pairs of input value elements.
+
+
+

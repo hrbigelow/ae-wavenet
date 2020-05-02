@@ -1,0 +1,55 @@
+What is shadow doing?
+
+It first calculates the induced field range, then
+calculates the position offsets.  It's probably best to redo this.
+
+Steps needed to calculate induced field:
+
+For a given input range, the induced field range is also expressed as a range on the input.  
+It is the set of elements in the input that are "covered" by the output.  Covered means
+that the key element of the filter is above them.
+
+It is also known as the shadow.  
+
+The IFR of a single element i, which is "far" from the edges, is [i-rw, i+lw].
+The IFR of the entire range [o, l) is [lw, l-1-rw].  (Note the closed interval style)
+
+The IFR of a general single element, which may be close to the edges, is:
+[max(lw, i-rw), min(l-1-rw, i+lw)]
+
+If this range is empty (or inverted), there is no output.
+
+So, now that we have the IFR, we need to translate it into the output
+element.  The output is related to the input in an affine way.  It is
+first offset by lw, then spaced by osp.  For the begin element,
+we want to choose the 
+
+
+1. translate the input index in_b to the spaced index si_b
+2. calculate the induced field range of the entire spaced input, if_min, if_max
+3. calculate the induced field range of the begin element, [bf_min, bf_max]
+4. take the minimum position in the intersection, which is:
+   max(if_min, bf_min), min(if_max, bf_max)
+   bf_min_adj
+   if it is empty, return the empty set
+5.  
+
+
+Steps for rfield:
+
+1. calculate the maximal shadow in index coordinates:
+   [if_min, if_max] = [lw, (in_l-1) * isp - rw]
+
+2. for out_b, calculate its shadow, assuming no limits:
+   [b_si_min0, b_si_max0] = [out_b * osp, out_b * osp + rw + lw]
+
+3. calculate the restricted range of out_b's shadow:
+   [b_si_min, b_si_max] = [max(if_min, b_si_min0), min(if_max, b_si_max0)]
+
+4. for out_e - 1, calculate its shadow, assuming no limits:
+   [e_si_min0, e_si_max0] = [(out_e - 1) * osp, (out_e - 1) * osp + rw + lw]
+
+5. calculate the restricted range 
+   
+
+
