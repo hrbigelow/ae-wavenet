@@ -6,7 +6,10 @@ import util
 import data
 
 class State(object):
-    '''Encapsulates full state of training'''
+    '''
+    Encapsulates full state of training
+    '''
+
     def __init__(self, step=0, model=None, dataset=None, optim=None):
         self.model = model 
         self.data_loader = data.WavLoader(dataset)
@@ -93,4 +96,26 @@ class State(object):
         for g in self.optim.param_groups:
             g['lr'] = learning_rate
 
+
+class InferenceState(object):
+    """
+    Restores a trained model for inference
+    """
+
+    def __init__(self, model=None, dataset=None):
+        self.model = model 
+        self.data_loader = data.WavLoader(dataset)
+        self.device = None
+
+    def load(self, ckpt_file, dat_file):
+        sinfo = torch.load(ckpt_file)
+
+        # This is the required order for model and data init 
+        self.model = pickle.loads(sinfo['model'])
+        dataset = pickle.loads(sinfo['dataset'])
+        dataset.load_data(dat_file)
+        self.model.post_init(dataset)
+        self.model.load_state_dict(sinfo['model_state_dict'])
+        dataset.post_init(self.model)
+        self.data_loader = data.WavLoader(dataset)
 

@@ -44,13 +44,18 @@ class GridRange(object):
 
 class VirtualConv(object):
     '''
-    An instance of Rfield describes one 1D scanning-window transformation
+    An instance of VirtualConv describes one 1D scanning-window transformation
     such as a convolution, transpose convolution or fourier transform.  Chain
     instances together with the 'parent' field, to represent a feed-forward
     chain of transformations.
 
     Then, use the final child to calculate needed input size for a desired
     output size, and offsets relative to the input.
+
+    VirtualConv's form a doubly-linked list.  The parent's output is the
+    child's input.  Each VirtualConv stores input_gr, the GridRange
+    representing the input tensor *after* trimming.  input_trim is the number
+    of elements trimmed on the left and right
     '''
     def __init__(self, filter_info, padding=(0, 0), stride=1,
             is_downsample=True, do_trim_input=False, name=None, parent=None):
@@ -89,7 +94,7 @@ class VirtualConv(object):
         
 
     def __repr__(self):
-        fmt = '[{}^{}, {}/{}, {}--{}, {}, [in: {}, trim: {}] "{}"]'
+        fmt = '[{}^{}, {}/{}, {}--{}, {}, [sub: [{}, {}), in: {}, trim: {}] "{}"]'
         if self.is_downsample:
             n, d = self.stride, 1
         else:
@@ -97,6 +102,7 @@ class VirtualConv(object):
 
         return fmt.format(self.l_wing_sz, self.r_wing_sz, n, d, self.l_pad,
                 self.r_pad, 'T' if self.do_trim_input else '-',
+                self.input_gr.sub[0], self.input_gr.sub[1],
                 self.in_len(), self.input_trim, self.name)
 
     def in_len(self):

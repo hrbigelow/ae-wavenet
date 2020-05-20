@@ -136,6 +136,43 @@ class VirtualBatch(object):
         self.mel_enc_input = self.mel_enc_input.to(device)
 
 
+class MfccBatch(object):
+    """
+    Yield a batch of wav and accompanying mfcc input
+    from a full, continuous recording.
+    - Given the varying lengths of different recordings,
+    - this can only handle a batch size of 1
+    """
+    def __init__(self, dataset):
+        super(MfccBatch, self).__init__()
+        assert ds.batch_size == 1, 'Mfcc only supports batch size 1'
+        self.pos = 0
+        self.valid = False
+        self.voice_index = torch.empty((ds.batch_size,), dtype=torch.long)
+
+    def populate(self, dataset):
+        self.valid = False
+        self.pos += 1
+        if self.pos == len(ds.samples):
+            return
+
+        ds = dataset
+        sam = ds.samples[self.pos]
+        __, self.voice_index[0] = ds.in_start[self.pos] 
+        self.wav_enc_input = ds.snd_data[sam.wav_b:sam.wav_e]
+        _mel_enc_input = ds.mfcc_proc.func(self.wav_enc_input) 
+        self.mel_enc_input = (_mel_enc_input /
+                _mel_enc_input.std(dim=(1,2)).unsqueeze(1).unsqueeze(1)
+                )
+        embed_len = self.mel_enc_input.size()[0]
+        self.jitter_index = torch.tensor(ds.jitter.gen_indices(embed_len))
+        self.valid = True
+
+    def to(self, device):
+        self.mel_enc_input = self.mel_enc_input.to(device)
+        self.wav_enc_input = self.wav_enc_input.to(device)
+        self.voice_index = self.voice_index.to(device)
+        self.jitter_index = self.jitter_index.to(device)
 
 class Slice(torch.utils.data.IterableDataset):
     """
@@ -253,12 +290,41 @@ class Slice(torch.utils.data.IterableDataset):
         return vb 
 
 
+class MfccInference(Slice):
+    """
+    The data iterator for training the mfcc inverter model.
+    Yields MfccBatch
+    """
+    def __init__(self):
+        raise NotImplementedError('Can only instantiate from checkpoint file')
+
+
+    def __next__(self):
+        """
+        Get a random slice of a file, together with its start position and ID.
+        Random state is from torch.{get,set}_rng_state().  It is on the CPU,
+        not GPU.
+        """
+        mb = MfccBatch(self)
+        # mb.mel_enc_input.detach_()
+        # mb.mel_enc_input.requires_grad_(False)
+        mb.populate(self)
+        if not mb.valid:
+            raise StopIteration
+
+        if self.target_device:
+            mb.to(self.target_device)
+        # mb.mel_enc_input.requires_grad_(True)
+
+        return mb 
+
+
 class WavLoader(torch.utils.data.DataLoader):
     """
-    Data loader which may be wrapped by a
-    torch_xla.distributed.parallel_loader.
-    This loader returns batches of tensors on cpu, optionally
-    pushing them to target_device if provided
+    - Wrapper to convert a Slice to a DataLoader.
+    - May be wrapped with torch_xla.distributed.parallel_loader.
+    - returns batches of tensors on cpu, optionally pushing them to
+    - target_device if provided
     """
     @staticmethod
     def ident(x):
@@ -274,5 +340,6 @@ class WavLoader(torch.utils.data.DataLoader):
 
     def set_target_device(self, target_device):
         self.dataset.set_target_device(target_device)
+
 
 

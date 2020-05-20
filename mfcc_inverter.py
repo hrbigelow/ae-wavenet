@@ -34,6 +34,9 @@ class MfccInverter(nn.Module):
         self.objective = wn.RecLoss()
 
     def post_init(self, dataset):
+        """
+        further initializations needed in case we are training the model
+        """
         self.wavenet.set_parent_vc(dataset.mfcc_vc)
         self._init_geometry(dataset.window_batch_size)
         self.print_geometry()
@@ -117,5 +120,10 @@ class MfccInverter(nn.Module):
             'mel_grad_mean': mel_grad.mean()
             })
         return pred, target, loss 
+
+    def infer(self, mfcc):
+        """
+        Given an MFCC vector, produce n samples from the model
+        """
 
     

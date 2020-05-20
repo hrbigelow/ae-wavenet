@@ -14,8 +14,8 @@ def make_parser():
             help='File containing lines:\n'
             + '<id1>\t/path/to/sample1.flac\n'
             + '<id2>\t/path/to/sample2.flac\n')
-    p.add_argument('dat_file', type=str, metavar='DAT_FILE',
-            help='Specify prefix for creating {dat_file}')
+    p.add_argument('dat_file', type=str, metavar='OUTPUT_DAT_FILENAME',
+            help='Name for output file to produce')
     return p
 
 def main():

@@ -9,6 +9,14 @@ train.py resume [options]
    -- resume training from .ckpt file 
 """
 
+test_usage = """
+Usage: test.py {inverter} [options]
+
+test.py inverter [options]
+   -- generate samples from the mfcc_inverter model
+"""
+
+
 # Training options common to both "new" and "resume" training modes
 def train_parser():
     train = argparse.ArgumentParser(add_help=False)
@@ -168,6 +176,29 @@ def resume_parser():
             help='File created by preprocess.py')
     resume.prog += ' resume'
     return resume
+
+
+
+def wav_gen_parser():
+    wp = argparse.ArgumentParser(parents=[])
+    wp.add_argument('ckpt_file', type=str, metavar='CHECKPOINT_FILE',
+            help="""Checkpoint file generated from a previous run.  Restores model
+            architecture, model parameters, and data generator state.""")
+    wp.add_argument('dat_file', type=str, metavar='DAT_FILE',
+            help='File created by preprocess.py')
+    wp.add_argument('--n-sample-replicas', '-nsr', type=int, metavar='INT',
+            default=1,
+            help='Number of output to generate for each input datum')
+    wp.add_argument('--output-template', '-ot', type=str, metavar='STR',
+            default='{}_{}.wav',
+            help="""String format template with voice_index and replica
+            placeholders""")
+    wp.add_argument('--hwtype', '-hw', type=str, metavar='STR',
+            default='GPU',
+            help='Hardware type (GPU, TPU-single or TPU)')
+
+    return wp
+
 
 def two_stage_parse(cold_parser, args=None):  
     '''wrapper for parse_args for overriding options from file'''

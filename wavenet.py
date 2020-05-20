@@ -35,6 +35,8 @@ class PreProcess(nn.Module):
         return in_snd_slice_onehot
 
 
+
+
 class GatedResidualCondConv(nn.Module):
     def __init__(self, wavenet_vc, n_cond, n_res, n_dil, n_skp, stride, dil,
             filter_sz=2, bias=True, parent_vc=None, name=None):
@@ -287,6 +289,78 @@ class WaveNet(nn.Module):
         # we only need this for inference time
         # logits = self.logsoftmax(quant) 
         return quant
+
+
+    def sample(self, init_wav_onehot, lc_sparse, speaker_inds, jitter_index, n_rep):
+        """
+        Generate n_rep samples, using lc_sparse and speaker_inds for local and global
+        conditioning.  
+
+        lc_sparse: full length local conditioning vector
+        init_wav_onehot: initial context, matching the beginning of lc_sparse
+
+        """
+        # assume this is already done before calling 'sample'
+        # vconv.compute_inputs(end_vc, out_gr)
+        
+        # use the beginning of an actual sound recording as initial context
+        mfcc_vc = self.vc['beg'].parent
+        up_vc = self.vc['upsample']
+        end_vc = self.vc['end']
+
+        assert init_wav_onehot.size() == mfcc_vc.in_len()
+        assert lc_sparse.size() == beg_vc.in_len()
+
+        # initialize model geometry
+        n_lc = lc_sparse.size()[1]
+        lc_gr = vconv.GridRange((0, 100000), (0, n_lc), up_vc.input_gr.gs)
+        out_gr = vconv.output_range(up_vc, end_vc, lc_gr)
+        vconv.compute_inputs(end_vc, out_gr)
+
+        # n_ts = out_gr.sub_length()
+        n_init_ts = init_wav_onehot.size()[1]
+        
+        lc_sparse = lc_sparse.repeat(n_rep)
+
+        # precalculate conditioning vector for all timesteps
+        D1 = lc_sparse.size()[1]
+        lc_jitter = torch.take(lc_sparse,
+                jitter_index.unsqueeze(1).expand(-1, D1, -1))
+        lc_conv = self.lc_conv(lc_jitter) 
+        lc_dense = self.lc_upsample(lc_conv)
+        cond = self.cond(lc_dense, speaker_inds)
+        n_ts = cond.size()[1]
+
+        cond_loff, cond_roff = vconv.output_offsets(mfcc_vc, up_end_vc)
+
+        # prepare wav_onehot (add zeros and repeats)
+        wav_onehot = torch.concat(init_wav_onehot, torch.zeros(n_ts -
+            n_init_ts)).repeat(n_rep)
+
+        # loop through timesteps
+        inrange = torch.tensor((0, n_init_ts), dtype=torch.int32)
+        end_ind = torch.tensor(n_ts)
+
+        # inefficient - this recalculates intermediate activations for the
+        # entire receptive fields, rather than just the advancing front
+        while inrange[1] != end_ind:
+            sig = self.base_layer(wav_onehot[inrange[0]:inrange[1]]) 
+            sig, skp_sum = self.conv_layers[0](sig, cond[inrange[0]:inrange[1]])
+            for layer in self.conv_layers[1:]:
+                sig, skp = layer(sig, cond[inrange[0]:inrange[1]])
+                skp_sum += skp
+
+            post1 = self.post1(self.relu(skp_sum))
+            quant = self.post2(self.relu(post1))
+            cat = dist.categorical.Categorical(logits=quant)
+            wav_onehot[inrange[1] + 1,:] = cat.sample()
+            inrange += 1
+
+        # convert to value format
+        quant_range = torch.arange(self.n_quant, dtype=torch.float32)
+        wav = torch.matmul(wav_onehot, quant_range)
+        return wav
+
 
 
 class RecLoss(nn.Module):
