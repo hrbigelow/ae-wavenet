@@ -125,8 +125,8 @@ class VirtualBatch(object):
             self.voice_index[b] = voice_ind 
             self.jitter_index[b,:] = \
                     torch.tensor(ds.jitter.gen_indices(nz) + b * nz) 
-        self.mel_enc_input /= \
-            self.mel_enc_input.std(dim=(1,2)).unsqueeze(1).unsqueeze(1)
+        # self.mel_enc_input /= \
+        #    self.mel_enc_input.std(dim=(1,2)).unsqueeze(1).unsqueeze(1)
 
 
     def to(self, device):
@@ -163,9 +163,8 @@ class MfccBatch(object):
         self.wav_enc_input = \
                 torch.tensor(ds.snd_data[sam.wav_b:sam.wav_e]).unsqueeze(0)
         _mel_enc_input = ds.mfcc_proc.func(self.wav_enc_input[0]).unsqueeze(0)
-        self.mel_enc_input = (_mel_enc_input /
-                _mel_enc_input.std(dim=(1,2)).unsqueeze(1).unsqueeze(1)
-                ).type(torch.float32)
+        # _mel_enc_input /= _mel_enc_input.std(dim=(1,2)).unsqueeze(1).unsqueeze(1)
+        self.mel_enc_input = _mel_enc_input.type(torch.float32)
         embed_len = self.mel_enc_input.size()[2]
         self.jitter_index = torch.tensor(ds.jitter.gen_indices(embed_len),
                 dtype=torch.long)

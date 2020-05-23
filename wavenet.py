@@ -341,7 +341,7 @@ class WaveNet(nn.Module):
 
         # zero out  
         start_pos = 24000
-        n_samples = 1000
+        n_samples = 8000
         end_pos = start_pos + n_samples
 
         # wav_onehot[...,n_init_ts:] = 0
