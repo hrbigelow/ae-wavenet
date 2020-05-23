@@ -121,9 +121,16 @@ class MfccInverter(nn.Module):
             })
         return pred, target, loss 
 
-    def infer(self, mfcc):
+    def infer(self, mbatch, n_replicas):
         """
-        Given an MFCC vector, produce n samples from the model
+        Produce n_replicas samples from this mbatch
         """
+        mb = mbatch
+        wav_onehot_enc = self.preprocess(mbatch.wav_enc_input)
+        wav_sample = self.wavenet.sample(wav_onehot_enc, mb.mel_enc_input,
+                mb.voice_index, mb.jitter_index, n_replicas)
+        return wav_sample
+
+
 
     

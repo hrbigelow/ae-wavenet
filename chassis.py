@@ -6,6 +6,31 @@ import mfcc_inverter as mi
 import checkpoint
 import util
 import netmisc
+import librosa
+
+
+
+class GPULoaderIter(object):
+    def __init__(self, data_iter):
+        self.data_iter = data_iter
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self.data_iter.__next__()[0]
+
+
+class TPULoaderIter(object):
+    def __init__(self, parallel_loader, device):
+        self.per_dev_loader = parallel_loader.per_device_loader(device)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        vb = self.per_dev_loader.__next__()[0]
+        return vb
 
 
 
@@ -18,21 +43,6 @@ class Chassis(object):
     setup. 
 
     """
-    class GPULoaderIter(object):
-        def __init__(self, data_iter):
-            self.data_iter = data_iter
-
-        def __next__(self):
-            return self.data_iter.__next__()[0]
-
-
-    class TPULoaderIter(object):
-        def __init__(self, parallel_loader, device):
-            self.per_dev_loader = parallel_loader.per_device_loader(device)
-
-        def __next__(self):
-            vb = self.per_dev_loader.__next__()[0]
-            return vb
 
 
     def __init__(self, mode, opts):
@@ -84,13 +94,13 @@ class Chassis(object):
             self.data_loader = self.state.data_loader
             self.data_loader.set_target_device(self.device)
             self.optim_step_fn = (lambda: self.state.optim.step(self.loss_fn))
-            self.data_iter = self.GPULoaderIter(iter(self.data_loader))
+            self.data_iter = GPULoaderIter(iter(self.data_loader))
         else:
             import torch_xla.core.xla_model as xm
             import torch_xla.distributed.parallel_loader as pl
             self.device = xm.xla_device()
             self.data_loader = pl.ParallelLoader(self.state.data_loader, [self.device])
-            self.data_iter = self.TPULoaderIter(self.data_loader, self.device)
+            self.data_iter = TPULoaderIter(self.data_loader, self.device)
             self.optim_step_fn = (lambda : xm.optimizer_step(self.state.optim,
                     optimizer_args={'closure': self.loss_fn}))
 
@@ -201,4 +211,41 @@ class Chassis(object):
         return mean
 
 
+class InferenceChassis(object):
+    """
+    Coordinates construction of model and dataset for running inference
+    """
+    def __init__(self, mode, opts):
+        self.state = checkpoint.InferenceState()
+        self.state.load(opts.ckpt_file, opts.dat_file)
+        self.output_template = opts.output_template
+        self.n_replicas = opts.n_sample_replicas
+
+        if opts.hwtype == 'GPU':
+            self.device = torch.device('cuda')
+            self.data_loader = self.state.data_loader
+            self.data_loader.set_target_device(self.device)
+            self.data_iter = GPULoaderIter(iter(self.data_loader))
+        else:
+            import torch_xla.core.xla_model as xm
+            import torch_xla.distributed.parallel_loader as pl
+            self.device = xm.xla_device()
+            self.data_loader = pl.ParallelLoader(self.state.data_loader, [self.device])
+            self.data_iter = TPULoaderIter(self.data_loader, self.device)
+
+    def infer(self):
+        self.state.to(self.device)
+        sample_rate = self.state.data_loader.dataset.sample_rate
+        n_quant = self.state.model.wavenet.n_quant
+
+        for mb in self.data_iter:
+            wav_sample = self.state.model.infer(mb, self.n_replicas)
+
+            # save results to specified files
+            for i in range(self.n_replicas):
+                wav_final = util.mu_decode_torch(wav_sample[i], n_quant)
+                path = self.output_template.format(mb.voice_index[0], i)
+                librosa.output.write_wav(path, wav_final.cpu().numpy(), sample_rate) 
+
+            print('wrote {}'.format(path))
 

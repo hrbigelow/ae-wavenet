@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from torch import distributions as dist
+from torch.distributions import one_hot_categorical as dcat
 import vconv
 import numpy as np
 from numpy import prod as np_prod
@@ -188,7 +188,7 @@ class WaveNet(nn.Module):
         self.vc = dict()
         self.vc['beg'] = cur_vc
         
-        # This RF is the first processing of the local conditioning after the
+        # This VC is the first processing of the local conditioning after the
         # Jitter. It is the starting point for the commitment loss aggregation
         self.vc['pre_upsample'] = cur_vc
         self.lc_upsample = nn.Sequential()
@@ -291,36 +291,41 @@ class WaveNet(nn.Module):
         return quant
 
 
-    def sample(self, init_wav_onehot, lc_sparse, speaker_inds, jitter_index, n_rep):
+    def sample(self, wav_onehot, lc_sparse, speaker_inds, jitter_index, n_rep):
         """
         Generate n_rep samples, using lc_sparse and speaker_inds for local and global
         conditioning.  
 
-        lc_sparse: full length local conditioning vector
-        init_wav_onehot: initial context, matching the beginning of lc_sparse
-
+        wav_onehot: full length wav vector
+        lc_sparse: full length local conditioning vector derived from full
+        wav_onehot
         """
-        # assume this is already done before calling 'sample'
-        # vconv.compute_inputs(end_vc, out_gr)
-        
-        # use the beginning of an actual sound recording as initial context
-        mfcc_vc = self.vc['beg'].parent
-        up_vc = self.vc['upsample']
-        end_vc = self.vc['end']
-
-        assert init_wav_onehot.size() == mfcc_vc.in_len()
-        assert lc_sparse.size() == beg_vc.in_len()
-
         # initialize model geometry
-        n_lc = lc_sparse.size()[1]
-        lc_gr = vconv.GridRange((0, 100000), (0, n_lc), up_vc.input_gr.gs)
-        out_gr = vconv.output_range(up_vc, end_vc, lc_gr)
-        vconv.compute_inputs(end_vc, out_gr)
+        mfcc_vc = self.vc['beg'].parent
+        up_vc = self.vc['pre_upsample'].child
+        beg_grcc_vc = self.vc['beg_grcc']
+        end_vc = self.vc['end_grcc']
 
-        # n_ts = out_gr.sub_length()
-        n_init_ts = init_wav_onehot.size()[1]
-        
-        lc_sparse = lc_sparse.repeat(n_rep)
+        # calculate full output range
+        wav_gr = vconv.GridRange((0, 1e12), (0, wav_onehot.size()[2]), 1)
+        full_out_gr = vconv.output_range(mfcc_vc, end_vc, wav_gr)
+        n_ts = full_out_gr.sub_length()
+
+        # calculate starting input range for single timestep
+        one_gr = vconv.GridRange((0, 1e12), (0, 1), 1)
+        vconv.compute_inputs(end_vc, one_gr)
+
+        # calculate starting position of wav
+        wav_beg = int(beg_grcc_vc.input_gr.sub[0] - mfcc_vc.input_gr.sub[0])
+        # wav_end = int(beg_grcc_vc.input_gr.sub[1] - mfcc_vc.input_gr.sub[0])
+        wav_onehot = wav_onehot[:,:,wav_beg:]
+
+        # !!! hack - I'm not sure why the int() cast is necessary
+        n_init_ts = int(beg_grcc_vc.in_len())
+
+        lc_sparse = lc_sparse.repeat(n_rep, 1, 1)
+        jitter_index = jitter_index.repeat(n_rep, 1)
+        speaker_inds = speaker_inds.repeat(n_rep)
 
         # precalculate conditioning vector for all timesteps
         D1 = lc_sparse.size()[1]
@@ -329,36 +334,63 @@ class WaveNet(nn.Module):
         lc_conv = self.lc_conv(lc_jitter) 
         lc_dense = self.lc_upsample(lc_conv)
         cond = self.cond(lc_dense, speaker_inds)
-        n_ts = cond.size()[1]
+        n_ts = cond.size()[2]
 
-        cond_loff, cond_roff = vconv.output_offsets(mfcc_vc, up_end_vc)
+        
+        # cond_loff, cond_roff = vconv.output_offsets(mfcc_vc, up_end_vc)
 
-        # prepare wav_onehot (add zeros and repeats)
-        wav_onehot = torch.concat(init_wav_onehot, torch.zeros(n_ts -
-            n_init_ts)).repeat(n_rep)
+        # zero out  
+        start_pos = 24000
+        n_samples = 1000
+        end_pos = start_pos + n_samples
+
+        # wav_onehot[...,n_init_ts:] = 0
+        wav_onehot = wav_onehot.repeat(n_rep, 1, 1)
+        # wav_onehot[...,start_pos:end_pos] = 0
+
+        # assert cond.size()[2] == wav_onehot.size()[2]
 
         # loop through timesteps
-        inrange = torch.tensor((0, n_init_ts), dtype=torch.int32)
-        end_ind = torch.tensor(n_ts)
+        # inrange = torch.tensor((0, n_init_ts), dtype=torch.int32)
+        inrange = torch.tensor((start_pos - n_init_ts, start_pos), dtype=torch.int32)
+        # end_ind = torch.tensor([n_ts], dtype=torch.int32)
+        end_ind = torch.tensor([end_pos], dtype=torch.int32)
 
         # inefficient - this recalculates intermediate activations for the
         # entire receptive fields, rather than just the advancing front
-        while inrange[1] != end_ind:
-            sig = self.base_layer(wav_onehot[inrange[0]:inrange[1]]) 
-            sig, skp_sum = self.conv_layers[0](sig, cond[inrange[0]:inrange[1]])
+        while not torch.equal(inrange[1], end_ind[0]):
+        # while inrange[1] != end_ind[0]:
+            sig = self.base_layer(wav_onehot[:,:,inrange[0]:inrange[1]]) 
+            sig, skp_sum = self.conv_layers[0](sig, cond[:,:,inrange[0]:inrange[1]])
             for layer in self.conv_layers[1:]:
-                sig, skp = layer(sig, cond[inrange[0]:inrange[1]])
+                sig, skp = layer(sig, cond[:,:,inrange[0]:inrange[1]])
                 skp_sum += skp
 
             post1 = self.post1(self.relu(skp_sum))
             quant = self.post2(self.relu(post1))
-            cat = dist.categorical.Categorical(logits=quant)
-            wav_onehot[inrange[1] + 1,:] = cat.sample()
+            cat = dcat.OneHotCategorical(logits=quant.squeeze(2))
+            wav_onehot[1:,:,inrange[1]] = cat.sample()[1:,...]
             inrange += 1
+            if inrange[0] % 100 == 0:
+                print(inrange, end_ind[0])
 
+        
         # convert to value format
-        quant_range = torch.arange(self.n_quant, dtype=torch.float32)
-        wav = torch.matmul(wav_onehot, quant_range)
+        quant_range = wav_onehot.new(list(range(self.n_quant)))
+        wav = torch.matmul(wav_onehot.permute(0,2,1), quant_range)
+        torch.set_printoptions(threshold=100000)
+        pad = 5
+        print('padding = {}'.format(pad))
+        print('original')
+        print(wav[0,start_pos-pad:end_pos+pad])
+        print('synth')
+        print(wav[1,start_pos-pad:end_pos+pad])
+
+        # print(wav[:,end_pos:end_pos + 10000])
+        print('synth range std: {}, baseline std: {}'.format(
+            wav[:,start_pos:end_pos].std(), wav[:,end_pos:].std()
+            ))
+
         return wav
 
 

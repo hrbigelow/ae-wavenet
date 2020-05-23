@@ -145,27 +145,30 @@ class MfccBatch(object):
     """
     def __init__(self, dataset):
         super(MfccBatch, self).__init__()
+        ds = dataset
         assert ds.batch_size == 1, 'Mfcc only supports batch size 1'
         self.pos = 0
         self.valid = False
         self.voice_index = torch.empty((ds.batch_size,), dtype=torch.long)
 
     def populate(self, dataset):
+        ds = dataset
         self.valid = False
         self.pos += 1
         if self.pos == len(ds.samples):
             return
 
-        ds = dataset
         sam = ds.samples[self.pos]
         __, self.voice_index[0] = ds.in_start[self.pos] 
-        self.wav_enc_input = ds.snd_data[sam.wav_b:sam.wav_e]
-        _mel_enc_input = ds.mfcc_proc.func(self.wav_enc_input) 
+        self.wav_enc_input = \
+                torch.tensor(ds.snd_data[sam.wav_b:sam.wav_e]).unsqueeze(0)
+        _mel_enc_input = ds.mfcc_proc.func(self.wav_enc_input[0]).unsqueeze(0)
         self.mel_enc_input = (_mel_enc_input /
                 _mel_enc_input.std(dim=(1,2)).unsqueeze(1).unsqueeze(1)
-                )
-        embed_len = self.mel_enc_input.size()[0]
-        self.jitter_index = torch.tensor(ds.jitter.gen_indices(embed_len))
+                ).type(torch.float32)
+        embed_len = self.mel_enc_input.size()[2]
+        self.jitter_index = torch.tensor(ds.jitter.gen_indices(embed_len),
+                dtype=torch.long)
         self.valid = True
 
     def to(self, device):
@@ -295,9 +298,9 @@ class MfccInference(Slice):
     The data iterator for training the mfcc inverter model.
     Yields MfccBatch
     """
-    def __init__(self):
-        raise NotImplementedError('Can only instantiate from checkpoint file')
-
+    def __init__(self, slice_dataset):
+        self.__dict__.update(vars(slice_dataset))
+        self.batch_size = 1
 
     def __next__(self):
         """

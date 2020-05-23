@@ -107,12 +107,18 @@ class InferenceState(object):
         self.data_loader = data.WavLoader(dataset)
         self.device = None
 
+    def to(self, device):
+        """Hack to move both model and optimizer to device"""
+        self.device = device
+        self.model.to(device)
+
     def load(self, ckpt_file, dat_file):
         sinfo = torch.load(ckpt_file)
 
         # This is the required order for model and data init 
         self.model = pickle.loads(sinfo['model'])
-        dataset = pickle.loads(sinfo['dataset'])
+        # ignore the pickled dataset characteristics
+        dataset = data.MfccInference(pickle.loads(sinfo['dataset']))
         dataset.load_data(dat_file)
         self.model.post_init(dataset)
         self.model.load_state_dict(sinfo['model_state_dict'])

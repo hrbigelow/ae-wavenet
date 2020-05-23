@@ -1,32 +1,13 @@
 # Test trained MFCC inverter model
 # Initialize the geometry so that the trim_ups_out is zero
 
-"""
-Start with 20 Mel vectors, which is the number required to have at least
-one output wav timestep.  However,
-"""
-
-# Initialize model with a "white noise seed", consisting of white noise wav
-# content, together with the MFCC's computed for that white noise.
-
-# Initialize
-# Rotate the MFCC input tensor (add one to the end, take one off the beginning)
-# Rotate WAV tensor (subtract 160 from beginning)
-# Set trim_ups_out to 159
-
-# Loop 160 iterations
-# Run input
-# Sample from output
-# Rotate input wav tensor by 1, adding sampled output to end
-# Advance trim_ups_out by 1
-
-
-
 
 import sys
 from sys import stderr
 import torch
 import parse_tools
+import checkpoint
+import chassis
 
 
 def main():
@@ -54,30 +35,24 @@ def main():
     print('Using {}'.format(opts.hwtype), file=stderr)
     stderr.flush()
 
-    # load the trained model
-    state = checkpoint.InferenceState()
-    state.load(opts.ckpt_file, opts.dat_file)
-
     # generate requested data
-    n_quant = state.model.n_quant
+    # n_quant = ch.state.model.wavenet.n_quant
 
     assert opts.hwtype == 'GPU', 'Currently, Only GPU supported for sampling'
 
-    for mb in state.data_loader:
-        init_wav = mb.wav_enc_input[:wav_in_end]
-        wav_sample = state.model.sample(init_wav, mb.mel_enc_input,
-                mb.voice_index, mb.jitter_index, opts.n_sample_replicas)
-
-        # save results to specified files
-        for i in opts.n_rep:
-            wav_final = util.mu_decode_torch(wav_sample[i], n_quant)
-            with open(opts.out_template.format(mb.voice_index, i)) as fh:
-                torch.save(wav_final, fh)
-
     if opts.hwtype == 'GPU':
-        pass
+        chs = chassis.InferenceChassis(mode, opts)
+        # chs.state.model.print_geometry()
+        chs.infer()
+    elif opts.hwtype == 'TPU':
+        def _mp_fn(index, mode, opts):
+            m = chassis.InferenceChassis(mode, opts)
+            m.infer(index)
+        xmp.spawn(_mp_fn, args=(mode, opts), nprocs=1, start_method='fork')
     elif opts.hwtype == 'TPU-single':
-        pass
+        chs = chassis.InferenceChassis(mode, opts)
+        chs.infer()
+
 
 if __name__ == '__main__':
     main()

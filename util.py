@@ -86,7 +86,7 @@ def mu_encode_torch(x, n_quanta):
 def mu_decode_torch(quant, n_quanta):
     '''accept an integer mu-law encoded quant, and convert
     it back to the pre-encoded value'''
-    mu = torch.tensor(float(n_quanta - 1), device=quanta.device)
+    mu = torch.tensor(float(n_quanta - 1), device=quant.device)
     qf = quant.to(dtype=torch.float32)
     inv_mu = mu.reciprocal()
     a = (2 * qf - 1) * inv_mu - 1
