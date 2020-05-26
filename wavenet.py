@@ -340,8 +340,8 @@ class WaveNet(nn.Module):
         # cond_loff, cond_roff = vconv.output_offsets(mfcc_vc, up_end_vc)
 
         # zero out  
-        start_pos = 24000
-        n_samples = 8000
+        start_pos = 26000
+        n_samples = 20000
         end_pos = start_pos + n_samples
 
         # wav_onehot[...,n_init_ts:] = 0
