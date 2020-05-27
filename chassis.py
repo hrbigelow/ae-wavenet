@@ -221,8 +221,11 @@ class InferenceChassis(object):
         self.output_template = opts.output_template
         self.n_replicas = opts.n_sample_replicas
 
-        if opts.hwtype == 'GPU':
-            self.device = torch.device('cuda')
+        if opts.hwtype in ('GPU', 'CPU'):
+            if opts.hwtype == 'GPU':
+                self.device = torch.device('cuda')
+            else:
+                self.device = torch.device('cpu')
             self.data_loader = self.state.data_loader
             self.data_loader.set_target_device(self.device)
             self.data_iter = GPULoaderIter(iter(self.data_loader))

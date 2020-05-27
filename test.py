@@ -27,6 +27,8 @@ def main():
             raise RuntimeError('GPU requested but not available')
     elif opts.hwtype in ('TPU', 'TPU-single'):
         import torch_xla.distributed.xla_multiprocessing as xmp
+    elif opts.hwtype == 'CPU':
+        pass
     else:
         raise RuntimeError(
                 ('Invalid device {} requested.  ' 
@@ -38,9 +40,9 @@ def main():
     # generate requested data
     # n_quant = ch.state.model.wavenet.n_quant
 
-    assert opts.hwtype == 'GPU', 'Currently, Only GPU supported for sampling'
+    assert opts.hwtype in ('GPU', 'CPU'), 'Currently, Only GPU or CPU supported for sampling'
 
-    if opts.hwtype == 'GPU':
+    if opts.hwtype in ('CPU', 'GPU'):
         chs = chassis.InferenceChassis(mode, opts)
         # chs.state.model.print_geometry()
         chs.infer()
