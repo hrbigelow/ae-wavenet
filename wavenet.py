@@ -157,9 +157,28 @@ class Conv1dWrap(nn.Conv1d):
     """
     Simple wrapper that ensures initialization
     """
-    def __init__(self, *args, **kwargs):
-        super(Conv1dWrap, self).__init__(*args, **kwargs)
+    def __init__(self, name, parent_vc, **kwargs):
+        super(Conv1dWrap, self).__init__(**kwargs)
         self.apply(netmisc.xavier_init)
+        self.vc = vconv.VirtualConv(filter_info=kwargs['kernel_size'],
+                stride=kwargs['stride'],
+                name=name, parent=parent_vc)
+
+
+class ArchConfig(object):
+    def __init__(self, n_lc_in, n_lc_out, n_res, n_dil, n_skp, n_post, n_quant,
+            n_blocks, n_block_layers, n_speakers, n_global_embed):
+        self.n_lc_in = n_lc_in
+        self.n_lc_out = n_lc_out
+        self.n_res = n_res
+        self.n_dil = n_dil
+        self.n_skp = n_skp
+        self.n_post = n_post
+        self.n_quant = n_quant
+        self.n_blocks = n_blocks
+        self.n_block_layers = n_block_layers
+        self.n_speakers = n_speakers,
+        self.n_global_embed = n_global_embed
 
 
 
@@ -170,6 +189,9 @@ class WaveNet(nn.Module):
             bias=True, parent_vc=None):
         super(WaveNet, self).__init__()
 
+        self.ac = ArchConfig(n_lc_in, n_lc_out, n_res, n_dil, n_skp, n_post,
+                n_quant, n_blocks, n_block_layers, n_speakers, n_global_embed)
+
         self.n_blocks = n_blocks
         self.n_block_layers = n_block_layers
         self.n_quant = n_quant
@@ -179,18 +201,19 @@ class WaveNet(nn.Module):
         lc_input_stepsize = np_prod(lc_upsample_strides) 
 
         lc_conv_name = 'LC_Conv(filter_size={})'.format(post_jitter_filt_sz) 
-        self.lc_conv = Conv1dWrap(n_lc_in, n_lc_out,
-                kernel_size=post_jitter_filt_sz, stride=1, bias=self.bias)
+        self.lc_conv = Conv1dWrap(lc_conv_name, parent_vc, in_channels=n_lc_in,
+                out_channels=n_lc_out, kernel_size=post_jitter_filt_sz,
+                stride=1, bias=self.bias)
 
-        cur_vc = vconv.VirtualConv(filter_info=post_jitter_filt_sz,
-                stride=1, parent=parent_vc, name=lc_conv_name)
+        # cur_vc = vconv.VirtualConv(filter_info=post_jitter_filt_sz,
+        #         stride=1, parent=parent_vc, name=lc_conv_name)
 
         self.vc = dict()
-        self.vc['beg'] = cur_vc
+        self.vc['beg'] = self.lc_conv.vc 
+        cur_vc = self.vc['beg']
         
         # This VC is the first processing of the local conditioning after the
         # Jitter. It is the starting point for the commitment loss aggregation
-        self.vc['pre_upsample'] = cur_vc
         self.lc_upsample = nn.Sequential()
 
         # WaveNet is a stand-alone model, so parent_vc is None
@@ -206,8 +229,12 @@ class WaveNet(nn.Module):
         # local conditioning vectors
         self.vc['last_upsample'] = cur_vc
         self.cond = Conditioning(n_speakers, n_global_embed)
-        self.base_layer = Conv1dWrap(n_quant, n_res, kernel_size=1, stride=1,
-                dilation=1, bias=self.bias)
+        self.base_layer = Conv1dWrap('Base Layer', cur_vc, in_channels=n_quant,
+                out_channels=n_res, kernel_size=1, stride=1, dilation=1,
+                bias=self.bias)
+
+        self.base_layer.vc.do_trim_input = True
+        cur_vc = self.base_layer.vc
 
         self.conv_layers = nn.ModuleList() 
         n_cond = n_lc_out + n_global_embed
@@ -227,13 +254,14 @@ class WaveNet(nn.Module):
         self.vc['beg_grcc'] = self.conv_layers[0].vc
         self.vc['end_grcc'] = self.conv_layers[-1].vc 
 
-        self.vc['beg_grcc'].do_trim_input = True
-
         self.relu = nn.ReLU()
-        self.post1 = Conv1dWrap(n_skp, n_post, 1, bias=bias)
-        self.post2 = Conv1dWrap(n_post, n_quant, 1, bias=bias)
+        self.post1 = Conv1dWrap('Post1', cur_vc, in_channels=n_skp,
+                out_channels=n_post, kernel_size=1, stride=1, bias=bias)
+
+        self.post2 = Conv1dWrap('Post2', self.post1.vc, in_channels=n_post,
+                out_channels=n_quant, kernel_size=1, stride=1, bias=bias)
         self.logsoftmax = nn.LogSoftmax(1) # (B, Q, N)
-        self.vc['main'] = cur_vc
+        self.vc['main'] = self.post2.vc 
 
     def set_parent_vc(self, parent_vc):
         self.vc['beg'].parent = parent_vc
@@ -302,7 +330,7 @@ class WaveNet(nn.Module):
         """
         # initialize model geometry
         mfcc_vc = self.vc['beg'].parent
-        up_vc = self.vc['pre_upsample'].child
+        up_vc = self.vc['beg'].child
         beg_grcc_vc = self.vc['beg_grcc']
         end_vc = self.vc['end_grcc']
 
@@ -341,7 +369,7 @@ class WaveNet(nn.Module):
 
         # zero out  
         start_pos = 26000
-        n_samples = 90000
+        n_samples = 8000
         end_pos = start_pos + n_samples
 
         # wav_onehot[...,n_init_ts:] = 0
@@ -354,10 +382,72 @@ class WaveNet(nn.Module):
         # inrange = torch.tensor((0, n_init_ts), dtype=torch.int32)
         inrange = torch.tensor((start_pos - n_init_ts, start_pos), dtype=torch.int32)
         # end_ind = torch.tensor([n_ts], dtype=torch.int32)
-        end_ind = torch.tensor([end_pos], dtype=torch.int32)
+        end_ind = torch.tensor([end_pos], dtype=torch.int32,
+                device=wav_onehot.device)
 
         # inefficient - this recalculates intermediate activations for the
         # entire receptive fields, rather than just the advancing front
+        
+        n_layers = self.ac.n_blocks * self.ac.n_block_layers
+
+        # sig[0] is output of base_layer, sig[l] is output of conv_layer[l-1]
+        sig = wav_onehot.new_empty(n_layers + 1, n_rep, self.ac.n_res,
+                n_samples)
+        # irng[l] is the input range for layer 
+        irng = wav_onehot.new_empty(n_layers, 2, dtype=torch.int32)
+        orng = wav_onehot.new_empty(n_layers, 2, dtype=torch.int32)
+        skp_sum = wav_onehot.new_zeros(n_rep, self.ac.n_skp, 1)
+
+        # initialize rng
+        vc = self.vc['beg_grcc']
+        start_pos = vc.in_len()
+
+        for i in range(n_layers):
+            irng[i,0] = start_pos - vc.parent.in_len()
+            irng[i,1] = start_pos
+            orng[i,0] = start_pos - vc.in_len()
+            orng[i,1] = start_pos
+            vc = vc.child
+
+        
+        while not torch.equal(rng[0,1], end_ind[0]):
+            # base_layer is a 1x1 convolution, so uses irng[0] 
+            # for both input and output
+            ir = irng[0]
+            sig[0,:,:,ir[0]:ir[1]] = self.base_layer(wav_onehot[:,:,ir[0]:ir[1]]) 
+
+            for i, layer in enumerate(self.conv_layers):
+                # last iteration reassigns to same sig slot (unused) 
+                l, ln = i+1, min(i+2, n_layers)
+                p, q = irng[l], orng[ln]
+                sig[ln,:,:,q[0]:q[1]], skp = layer(
+                        sig[l,:,:,p[0]:p[1]],
+                        cond[:,:,irng[0,0]:irng[0,1]]
+                    )
+                skp_sum += skp
+
+            post1 = self.post1(self.relu(skp_sum))
+            quant = self.post2(self.relu(post1))
+            cat = dcat.OneHotCategorical(logits=quant.squeeze(2))
+            wav_onehot[1:,:,rng[0,1]] = cat.sample()[1:,...]
+
+            if irng[0,1] == start_pos:
+                # finished initialization, now incremental
+                # initialize all irngs to filter size
+                # initialize all orng to 1
+                vc = self.vc['beg_grcc']
+                for i in range(n_layers):
+                    irng[i,0] = start_pos
+                    irng[i,1] = start_pos
+                    orng[i,0] = start_pos - 1
+                    orng[i,1] = start_pos
+                    
+            orng += 1
+            irng += 1
+            if irng[0,0] % 100 == 0:
+                print(irng[0], end_ind[0])
+
+        """
         while not torch.equal(inrange[1], end_ind[0]):
         # while inrange[1] != end_ind[0]:
             sig = self.base_layer(wav_onehot[:,:,inrange[0]:inrange[1]]) 
@@ -373,6 +463,7 @@ class WaveNet(nn.Module):
             inrange += 1
             if inrange[0] % 100 == 0:
                 print(inrange, end_ind[0])
+        """
 
         
         # convert to value format
