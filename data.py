@@ -234,7 +234,8 @@ class Slice(torch.utils.data.IterableDataset):
 
 
     def num_speakers(self):
-        return max(map(lambda s: s.voice_index, self.samples)) + 1
+        ns = max(s.voice_index for s in self.samples) + 1
+        return ns
 
     def num_mel_chan(self):
         return self.mfcc_proc.n_out

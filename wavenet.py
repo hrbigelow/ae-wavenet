@@ -69,10 +69,21 @@ class GatedResidualCondConv(nn.Module):
         """
         Initialize offset tensors
         """
+        self.register_buffer('cond_lead', torch.empty(1, dtype=torch.int32))
+        self.register_buffer('skip_lead', torch.empty(1, dtype=torch.int32))
+        self.register_buffer('left_wing_size',
+                torch.tensor([self.vc.l_wing_sz], dtype=torch.int32))
+        self.update_leads()
+
+    def update_leads(self):
+        """
+        Update skip_lead and cond_lead to reflect changed geometry
+        or chunk size.  Call this after vconv.compute_inputs is called
+        """
         cond_lead, r_off = vconv.output_offsets(self.wavenet_vc['beg_grcc'],
                 self.vc)
         assert r_off == 0
-        self.register_buffer('cond_lead', torch.tensor(cond_lead))
+        self.cond_lead[0] = cond_lead
 
         if self.vc == self.wavenet_vc['end_grcc']:
             skip_lead = 0
@@ -81,8 +92,14 @@ class GatedResidualCondConv(nn.Module):
                     self.wavenet_vc['end_grcc'])
             assert r_off == 0
 
-        self.register_buffer('skip_lead', torch.tensor(skip_lead))
-        self.register_buffer('left_wing_size', torch.tensor(self.vc.l_wing_sz))
+        self.skip_lead[0] = skip_lead
+
+    def set_incremental(self):
+        """
+        Set skip_lead and cond_lead for incremental operation
+        """
+        self.skip_lead[0] = 0
+        self.cond_lead[0] = 0 
 
     def forward(self, x, cond):
         """
@@ -92,12 +109,14 @@ class GatedResidualCondConv(nn.Module):
         cond: (B, C, T) (necessary shape for Conv1d)
         returns: sig: (B, R, T), skp: (B, S, T) 
         """
-        filt = self.conv_signal(x) + self.proj_signal(cond[:,:,self.cond_lead:])
-        gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.cond_lead:])
+        filt = self.conv_signal(x) + \
+                self.proj_signal(cond[:,:,self.cond_lead[0]:])
+        gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.cond_lead[0]:])
         z = torch.tanh(filt) * torch.sigmoid(gate)
         sig = self.dil_res(z)
-        skp = self.dil_skp(z[:,:,self.skip_lead:])
-        sig += x[:,:,self.left_wing_size:]
+        skp = self.dil_skp(z[:,:,self.skip_lead[0]:])
+        sig += x[:,:,self.left_wing_size[0]:]
+
         return sig, skp 
 
 
@@ -271,6 +290,16 @@ class WaveNet(nn.Module):
         for grc in self.conv_layers:
             grc.post_init()
 
+    def update_leads(self):
+        for grc in self.conv_layers:
+            grc.update_leads()
+
+    def set_incremental(self):
+        """
+        Set cond_lead and skip_leads for incremental mode
+        """
+        for grc in self.conv_layers:
+            grc.set_incremental()
 
     def forward(self, wav_onehot, lc_sparse, speaker_inds, jitter_index):
         """
@@ -335,12 +364,12 @@ class WaveNet(nn.Module):
         end_vc = self.vc['end_grcc']
 
         # calculate full output range
-        wav_gr = vconv.GridRange((0, 1e12), (0, wav_onehot.size()[2]), 1)
+        wav_gr = vconv.GridRange((0, int(1e12)), (0, wav_onehot.size()[2]), 1)
         full_out_gr = vconv.output_range(mfcc_vc, end_vc, wav_gr)
         n_ts = full_out_gr.sub_length()
 
         # calculate starting input range for single timestep
-        one_gr = vconv.GridRange((0, 1e12), (0, 1), 1)
+        one_gr = vconv.GridRange((0, int(1e12)), (0, 1), 1)
         vconv.compute_inputs(end_vc, one_gr)
 
         # calculate starting position of wav
@@ -364,88 +393,131 @@ class WaveNet(nn.Module):
         cond = self.cond(lc_dense, speaker_inds)
         n_ts = cond.size()[2]
 
-        
-        # cond_loff, cond_roff = vconv.output_offsets(mfcc_vc, up_end_vc)
-
-        # zero out  
+        chunk_size = 10000
         start_pos = 26000
-        n_samples = 8000
-        end_pos = start_pos + n_samples
+        n_samples = 30000
 
-        # wav_onehot[...,n_init_ts:] = 0
-        wav_onehot = wav_onehot.repeat(n_rep, 1, 1)
-        # wav_onehot[...,start_pos:end_pos] = 0
-
-        # assert cond.size()[2] == wav_onehot.size()[2]
-
-        # loop through timesteps
-        # inrange = torch.tensor((0, n_init_ts), dtype=torch.int32)
-        inrange = torch.tensor((start_pos - n_init_ts, start_pos), dtype=torch.int32)
-        # end_ind = torch.tensor([n_ts], dtype=torch.int32)
-        end_ind = torch.tensor([end_pos], dtype=torch.int32,
+        cur_pos = torch.tensor([start_pos], dtype=torch.int32,
+                device=wav_onehot.device)
+        end_pos = torch.tensor([start_pos + n_samples], dtype=torch.int32,
                 device=wav_onehot.device)
 
-        # inefficient - this recalculates intermediate activations for the
-        # entire receptive fields, rather than just the advancing front
-        
+        wav_onehot = wav_onehot.repeat(n_rep, 1, 1)
         n_layers = self.ac.n_blocks * self.ac.n_block_layers
 
-        # sig[0] is output of base_layer, sig[l] is output of conv_layer[l-1]
-        sig = wav_onehot.new_empty(n_layers + 1, n_rep, self.ac.n_res,
-                n_samples)
-        # irng[l] is the input range for layer 
+        # sig[0] is the output of the base_layer
+        # sig[i] is the output of the conv_layer[i-1]
+        # there is no sig to hold the output of conv_layer[-1]
+        # instead, it is directed to sig[n_layers-1]
+
+        # wav_irng slices wav_onehot when used as input, and
+        # we derive the single position output from wav_irng
         irng = wav_onehot.new_empty(n_layers, 2, dtype=torch.int32)
-        orng = wav_onehot.new_empty(n_layers, 2, dtype=torch.int32)
+
+        # orng[l] is the output range of layer l, which populates sig[l]
+        # except that orng[-2] and orng[-1] both populate sig[-1]
+        # because
+        orng = wav_onehot.new_empty(n_layers + 1, 2, dtype=torch.int32)
+
+        # the one  
+        cond_rng = wav_onehot.new_empty(2, dtype=torch.int32)
+
+        # input range for the wav_onehot vector
+        wav_ir = wav_onehot.new_empty(2, dtype=torch.int32)
+
         skp_sum = wav_onehot.new_zeros(n_rep, self.ac.n_skp, 1)
 
-        # initialize rng
-        vc = self.vc['beg_grcc']
-        start_pos = vc.in_len()
+        # receptive field of a layer i relative to single output element
+        # in final layer
+        global_rf = []
 
-        for i in range(n_layers):
-            irng[i,0] = start_pos - vc.parent.in_len()
-            irng[i,1] = start_pos
-            orng[i,0] = start_pos - vc.in_len()
-            orng[i,1] = start_pos
+        # receptive field size of layer i relative to single output element
+        # in next layer
+        local_rf = []
+
+        vc = self.vc['beg_grcc'] 
+        while vc != self.vc['end_grcc'].child:
+            global_rf.append(vc.in_len())
+            local_rf.append(vc.filter_size())
             vc = vc.child
 
+        wav_ir[0] = cur_pos[0]
+        wav_ir[1] = cur_pos[0] + global_rf[0]
+
+        sig = [None] * n_layers
+        for i in range(n_layers):
+            sig[i] = wav_onehot.new_empty(n_rep, self.ac.n_res, global_rf[i] 
+                + chunk_size - 1)
+            irng[i,0] = 0 
+            irng[i,1] = global_rf[i] 
+            orng[i,0] = 0 
+            orng[i,1] = global_rf[i]
+
+        orng[-1,0] = 0
+        orng[-1,1] = 1
+        cond_rng[0] = 0
+        cond_rng[1] = global_rf[0]
         
-        while not torch.equal(rng[0,1], end_ind[0]):
-            # base_layer is a 1x1 convolution, so uses irng[0] 
-            # for both input and output
-            ir = irng[0]
-            sig[0,:,:,ir[0]:ir[1]] = self.base_layer(wav_onehot[:,:,ir[0]:ir[1]]) 
+        while not torch.equal(end_pos, cur_pos):
+            chunk_size = min(chunk_size, end_pos - cur_pos)
 
-            for i, layer in enumerate(self.conv_layers):
-                # last iteration reassigns to same sig slot (unused) 
-                l, ln = i+1, min(i+2, n_layers)
-                p, q = irng[l], orng[ln]
-                sig[ln,:,:,q[0]:q[1]], skp = layer(
-                        sig[l,:,:,p[0]:p[1]],
-                        cond[:,:,irng[0,0]:irng[0,1]]
-                    )
-                skp_sum += skp
+            for i in range(chunk_size):
+                # base_layer is a 1x1 convolution, so uses irng[0] 
+                # for both input and output
+                ir = irng[0]
+                sig[0][:,:,ir[0]:ir[1]] = \
+                        self.base_layer(wav_onehot[:,:,wav_ir[0]:wav_ir[1]]) 
 
-            post1 = self.post1(self.relu(skp_sum))
-            quant = self.post2(self.relu(post1))
-            cat = dcat.OneHotCategorical(logits=quant.squeeze(2))
-            wav_onehot[1:,:,rng[0,1]] = cat.sample()[1:,...]
+                for i, layer in enumerate(self.conv_layers):
+                    # last iteration reassigns to same sig slot (unused) 
+                    i_out = min(i+1, n_layers - 1)
+                    p, q = irng[i], orng[i+1]
+                    sig[i_out][:,:,q[0]:q[1]], skp = layer(
+                            sig[i][:,:,p[0]:p[1]],
+                            cond[:,:,cond_rng[0]:cond_rng[1]]
+                        )
+                    skp_sum += skp
 
-            if irng[0,1] == start_pos:
-                # finished initialization, now incremental
-                # initialize all irngs to filter size
-                # initialize all orng to 1
-                vc = self.vc['beg_grcc']
-                for i in range(n_layers):
-                    irng[i,0] = start_pos
-                    irng[i,1] = start_pos
-                    orng[i,0] = start_pos - 1
-                    orng[i,1] = start_pos
-                    
-            orng += 1
-            irng += 1
-            if irng[0,0] % 100 == 0:
-                print(irng[0], end_ind[0])
+                post1 = self.post1(self.relu(skp_sum))
+                quant = self.post2(self.relu(post1))
+                cat = dcat.OneHotCategorical(logits=quant.squeeze(2))
+                wav_onehot[:,:,wav_ir[1]] = cat.sample()
+
+                if irng[0,0] == 0:
+                    # finished initialization, now incremental mode
+                    # we only really need 1 new element, but computing two
+                    # nicely fits with sig[0]
+                    self.set_incremental()
+                    cond_rng[0] = cond_rng[1] - 1
+                    wav_ir[0] = wav_ir[1] - local_rf[0]
+
+                    vc = self.vc['beg_grcc']
+                    for i in range(n_layers):
+                        irng[i,0] = global_rf[i] - local_rf[i] 
+                        irng[i,1] = global_rf[i]
+                        orng[i,0] = global_rf[i] - 1 
+                        orng[i,1] = global_rf[i]
+                        
+                orng += 1
+                irng += 1
+                wav_ir += 1
+                cond_rng += 1
+
+                if irng[0,0] % 100 == 0:
+                    print(irng[0], end_pos[0])
+
+            # reset windows
+            cur_pos += chunk_size
+            for i in range(n_layers):
+                sig[i][:,:,0:global_rf[i]] = \
+                        sig[i][:,:,global_rf[i] + chunk_size]
+                irng[i,0] = 0
+                irng[i,1] = global_rf[i]
+                orng[i,0] = 0
+                orng[i,1] = global_rf[i]
+
+            cond_rng -= chunk_size
+
 
         """
         while not torch.equal(inrange[1], end_ind[0]):

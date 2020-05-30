@@ -12,14 +12,26 @@ class GridRange(object):
     The subrange has elements at positions range(sub[0], sub[1], gs)
     """
     def __init__(self, full, sub, gs):
+        if not (isinstance(sub[0], int) and
+                isinstance(sub[1], int) and
+                isinstance(full[0], int) and
+                isinstance(full[1], int)):
+            raise ValueError('Only integer ranges supported')
+        
         self.full = list(full)
         self.sub = list(sub)
         self.gs = gs
 
     def sub_length(self):
+        """
+        total number of grid elements occupied by the subrange
+        """
         return (self.sub[1] - self.sub[0] - 1) // self.gs + 1
 
     def full_length(self):
+        """
+        total number of grid elements occupied by the full range
+        """
         return (self.full[1] - self.full[0] - 1) // self.gs + 1
 
     def valid(self):
@@ -108,6 +120,13 @@ class VirtualConv(object):
     def in_len(self):
         return self.input_gr.sub_length() if self.input_gr else None
 
+
+    def out_len(self):
+        return self.child.in_len() if self.child else None
+
+    def filter_size(self):
+        return self.l_wing_sz + 1 + self.r_wing_sz
+
     def get_index_trim(self):
         """
         Compute input trim as a [start, end) index range 
@@ -145,6 +164,7 @@ class VirtualConv(object):
             sub_out_e = sub_out_pre_e - (sub_out_pre_e - full_out_b) % gs_out
             if sub_out_e - sub_out_b < 0:
                 return None
+            assert isinstance(sub_out_b, int)
 
         else:
             inv_st = self.stride
@@ -172,6 +192,7 @@ class VirtualConv(object):
             full_out_e = full_in_adj_e - rwg
             sub_out_b = sub_in_adj_b + lwg
             sub_out_e = sub_in_adj_e - rwg
+            assert isinstance(sub_out_b, int)
 
         return (full_out_b, full_out_e), (sub_out_b, sub_out_e), gs_out
 
