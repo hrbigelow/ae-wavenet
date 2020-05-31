@@ -393,9 +393,9 @@ class WaveNet(nn.Module):
         cond = self.cond(lc_dense, speaker_inds)
         n_ts = cond.size()[2]
 
-        chunk_size = 10000
+        chunk_size = 500
         start_pos = 26000
-        n_samples = 30000
+        n_samples = 100000 
 
         cur_pos = torch.tensor([start_pos], dtype=torch.int32,
                 device=wav_onehot.device)
@@ -455,10 +455,14 @@ class WaveNet(nn.Module):
 
         orng[-1,0] = 0
         orng[-1,1] = 1
-        cond_rng[0] = 0
-        cond_rng[1] = global_rf[0]
-        
-        while not torch.equal(end_pos, cur_pos):
+        cond_rng[0] = wav_ir[0] 
+        cond_rng[1] = wav_ir[1]
+
+        # for converting from one-hot to value format
+        quant_range = wav_onehot.new(list(range(self.n_quant)))
+
+        self.update_leads() 
+        while not torch.equal(cur_pos, end_pos):
             chunk_size = min(chunk_size, end_pos - cur_pos)
 
             for i in range(chunk_size):
@@ -467,6 +471,7 @@ class WaveNet(nn.Module):
                 ir = irng[0]
                 sig[0][:,:,ir[0]:ir[1]] = \
                         self.base_layer(wav_onehot[:,:,wav_ir[0]:wav_ir[1]]) 
+                skp_sum[...] = 0
 
                 for i, layer in enumerate(self.conv_layers):
                     # last iteration reassigns to same sig slot (unused) 
@@ -481,7 +486,15 @@ class WaveNet(nn.Module):
                 post1 = self.post1(self.relu(skp_sum))
                 quant = self.post2(self.relu(post1))
                 cat = dcat.OneHotCategorical(logits=quant.squeeze(2))
+
+                # pre_val = int(torch.matmul(wav_onehot[0,:,wav_ir[1]],
+                #     quant_range))
                 wav_onehot[:,:,wav_ir[1]] = cat.sample()
+
+                # post_val = int(torch.matmul(wav_onehot[0,:,wav_ir[1]],
+                #     quant_range))
+                # print('{}: {} - {}'.format(post_val - pre_val, pre_val,
+                #     post_val))
 
                 if irng[0,0] == 0:
                     # finished initialization, now incremental mode
@@ -502,21 +515,24 @@ class WaveNet(nn.Module):
                 irng += 1
                 wav_ir += 1
                 cond_rng += 1
+                cur_pos += 1
 
-                if irng[0,0] % 100 == 0:
-                    print(irng[0], end_pos[0])
+                if wav_ir[1] % 1000 == 0:
+                    print('On timestep {} out of {}'.format(wav_ir[1].item(),
+                        end_pos[0].item()))
+                    #print('cond_rng[1]: {}, wav_ir[1]: {}'.format(
+                    #    cond_rng[1].item(),
+                    #    wav_ir[1].item()
+                    #    ))
 
             # reset windows
             cur_pos += chunk_size
             for i in range(n_layers):
-                sig[i][:,:,0:global_rf[i]] = \
-                        sig[i][:,:,global_rf[i] + chunk_size]
-                irng[i,0] = 0
-                irng[i,1] = global_rf[i]
-                orng[i,0] = 0
-                orng[i,1] = global_rf[i]
+                sig[i][:,:,:-chunk_size] = sig[i][:,:,chunk_size:]
+                irng[i] -= chunk_size
+                orng[i] -= chunk_size
 
-            cond_rng -= chunk_size
+            # cond_rng += chunk_size
 
 
         """
@@ -539,15 +555,14 @@ class WaveNet(nn.Module):
 
         
         # convert to value format
-        quant_range = wav_onehot.new(list(range(self.n_quant)))
         wav = torch.matmul(wav_onehot.permute(0,2,1), quant_range)
         torch.set_printoptions(threshold=100000)
         pad = 5
-        print('padding = {}'.format(pad))
-        print('original')
-        print(wav[0,start_pos-pad:end_pos+pad])
-        print('synth')
-        print(wav[1,start_pos-pad:end_pos+pad])
+        # print('padding = {}'.format(pad))
+        # print('original')
+        # print(wav[0,start_pos-pad:end_pos+pad])
+        # print('synth')
+        # print(wav[1,start_pos-pad:end_pos+pad])
 
         # print(wav[:,end_pos:end_pos + 10000])
         print('synth range std: {}, baseline std: {}'.format(

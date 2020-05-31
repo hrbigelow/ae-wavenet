@@ -267,7 +267,7 @@ class VirtualConv(object):
         """
         if (self.l_pad != 0 or self.r_pad != 0 or self.stride != 1):
             raise RuntimeError(
-            'Can only call output_offset with no padding and' +
+            'Can only call output_offset with no padding and ' +
             'unit stride')
         return self.l_wing_sz, -self.r_wing_sz
 
