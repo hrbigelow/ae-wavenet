@@ -33,7 +33,7 @@ class State(object):
         self.model.post_init(dataset)
         sub_state = { k: v for k, v in sinfo['model_state_dict'].items() if '_lead' not
                 in k and 'left_wing_size' not in k }
-        self.model.load_state_dict(sub_state)
+        self.model.load_state_dict(sub_state, strict=False)
         dataset.post_init(self.model)
 
         self.data_loader = data.WavLoader(dataset)
