@@ -168,6 +168,7 @@ class MfccBatch(object):
         embed_len = self.mel_enc_input.size()[2]
         self.jitter_index = torch.tensor(ds.jitter.gen_indices(embed_len),
                 dtype=torch.long)
+        self.file_path = sam.file_path
         self.valid = True
 
     def to(self, device):
@@ -301,6 +302,7 @@ class MfccInference(Slice):
     def __init__(self, slice_dataset):
         self.__dict__.update(vars(slice_dataset))
         self.batch_size = 1
+        self.mb = MfccBatch(self)
 
     def __next__(self):
         """
@@ -308,18 +310,17 @@ class MfccInference(Slice):
         Random state is from torch.{get,set}_rng_state().  It is on the CPU,
         not GPU.
         """
-        mb = MfccBatch(self)
         # mb.mel_enc_input.detach_()
         # mb.mel_enc_input.requires_grad_(False)
-        mb.populate(self)
-        if not mb.valid:
+        self.mb.populate(self)
+        if not self.mb.valid:
             raise StopIteration
 
         if self.target_device:
-            mb.to(self.target_device)
+            self.mb.to(self.target_device)
         # mb.mel_enc_input.requires_grad_(True)
 
-        return mb 
+        return self.mb 
 
 
 class WavLoader(torch.utils.data.DataLoader):

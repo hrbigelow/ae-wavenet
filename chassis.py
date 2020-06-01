@@ -7,6 +7,7 @@ import checkpoint
 import util
 import netmisc
 import librosa
+import os.path
 
 
 
@@ -218,7 +219,7 @@ class InferenceChassis(object):
     def __init__(self, mode, opts):
         self.state = checkpoint.InferenceState()
         self.state.load(opts.ckpt_file, opts.dat_file)
-        self.output_template = opts.output_template
+        self.output_dir = opts.output_dir
         self.n_replicas = opts.n_sample_replicas
 
         if opts.hwtype in ('GPU', 'CPU'):
@@ -242,13 +243,18 @@ class InferenceChassis(object):
         n_quant = self.state.model.wavenet.n_quant
 
         for mb in self.data_iter:
+            out_template = os.path.join(self.output_dir,
+                    os.path.basename(os.path.splitext(mb.file_path)[0])
+                    + '.rep{}.wav')
+
             wav_sample = self.state.model.infer(mb, self.n_replicas)
 
             # save results to specified files
             for i in range(self.n_replicas):
                 wav_final = util.mu_decode_torch(wav_sample[i], n_quant)
-                path = self.output_template.format(mb.voice_index[0], i)
+                path = out_template.format(i) 
                 librosa.output.write_wav(path, wav_final.cpu().numpy(), sample_rate) 
 
-            print('wrote {}'.format(path))
+            print('Wrote {}'.format(
+                out_template.format('0-'+str(self.n_replicas-1))))
 

@@ -189,10 +189,9 @@ def wav_gen_parser():
     wp.add_argument('--n-sample-replicas', '-nsr', type=int, metavar='INT',
             default=1,
             help='Number of output to generate for each input datum')
-    wp.add_argument('--output-template', '-ot', type=str, metavar='STR',
-            default='{}_{}.wav',
-            help="""String format template with voice_index and replica
-            placeholders""")
+    wp.add_argument('--output-dir', '-od', type=str, metavar='STR',
+            default='.',
+            help="Directory to write output .wav files")
     wp.add_argument('--hwtype', '-hw', type=str, metavar='STR',
             default='GPU',
             help='Hardware type (GPU, TPU-single or TPU)')

@@ -394,13 +394,6 @@ class WaveNet(nn.Module):
         n_ts = cond.size()[2]
 
         chunk_size = 500
-        start_pos = 26000
-        n_samples = 100000 
-
-        cur_pos = torch.tensor([start_pos], dtype=torch.int32,
-                device=wav_onehot.device)
-        end_pos = torch.tensor([start_pos + n_samples], dtype=torch.int32,
-                device=wav_onehot.device)
 
         wav_onehot = wav_onehot.repeat(n_rep, 1, 1)
         n_layers = self.ac.n_blocks * self.ac.n_block_layers
@@ -441,8 +434,16 @@ class WaveNet(nn.Module):
             local_rf.append(vc.filter_size())
             vc = vc.child
 
-        wav_ir[0] = cur_pos[0]
-        wav_ir[1] = cur_pos[0] + global_rf[0]
+        # forward-most index element in wave input
+        cur_pos = torch.tensor([global_rf[0]], dtype=torch.int32,
+                device=wav_onehot.device)
+        # end_pos = torch.tensor([global_rf[0] + 3000], dtype=torch.int32,
+        #         device=wav_onehot.device)
+        end_pos = torch.tensor([n_ts], dtype=torch.int32,
+                device=wav_onehot.device)
+
+        wav_ir[0] = 0 
+        wav_ir[1] = cur_pos[0]
 
         sig = [None] * n_layers
         for i in range(n_layers):
@@ -526,13 +527,10 @@ class WaveNet(nn.Module):
                     #    ))
 
             # reset windows
-            cur_pos += chunk_size
             for i in range(n_layers):
                 sig[i][:,:,:-chunk_size] = sig[i][:,:,chunk_size:]
                 irng[i] -= chunk_size
                 orng[i] -= chunk_size
-
-            # cond_rng += chunk_size
 
 
         """
@@ -556,8 +554,8 @@ class WaveNet(nn.Module):
         
         # convert to value format
         wav = torch.matmul(wav_onehot.permute(0,2,1), quant_range)
-        torch.set_printoptions(threshold=100000)
-        pad = 5
+        # torch.set_printoptions(threshold=100000)
+        # pad = 5
         # print('padding = {}'.format(pad))
         # print('original')
         # print(wav[0,start_pos-pad:end_pos+pad])
@@ -566,7 +564,7 @@ class WaveNet(nn.Module):
 
         # print(wav[:,end_pos:end_pos + 10000])
         print('synth range std: {}, baseline std: {}'.format(
-            wav[:,start_pos:end_pos].std(), wav[:,end_pos:].std()
+            wav[:,:end_pos].std(), wav[:,end_pos:].std()
             ))
 
         return wav
