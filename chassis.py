@@ -245,15 +245,19 @@ class InferenceChassis(object):
         for mb in self.data_iter:
             out_template = os.path.join(self.output_dir,
                     os.path.basename(os.path.splitext(mb.file_path)[0])
-                    + '.rep{}.wav')
+                    + '.{}.wav')
 
-            wav_sample = self.state.model.infer(mb, self.n_replicas)
+            wav_orig, wav_sample = self.state.model.infer(mb, self.n_replicas)
 
             # save results to specified files
             for i in range(self.n_replicas):
                 wav_final = util.mu_decode_torch(wav_sample[i], n_quant)
-                path = out_template.format(i) 
+                path = out_template.format('rep' + str(i)) 
                 librosa.output.write_wav(path, wav_final.cpu().numpy(), sample_rate) 
+
+            wav_final = util.mu_decode_torch(wav_orig, n_quant)
+            path = out_template.format('orig') 
+            librosa.output.write_wav(path, wav_final.cpu().numpy(), sample_rate) 
 
             print('Wrote {}'.format(
                 out_template.format('0-'+str(self.n_replicas-1))))

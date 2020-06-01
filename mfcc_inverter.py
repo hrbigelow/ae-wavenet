@@ -128,9 +128,9 @@ class MfccInverter(nn.Module):
         mb = mbatch
         wav_onehot_enc = self.preprocess(mbatch.wav_enc_input)
         with torch.no_grad():
-            wav_sample = self.wavenet.sample(wav_onehot_enc, mb.mel_enc_input,
+            wav_orig, wav_sample = self.wavenet.sample(wav_onehot_enc, mb.mel_enc_input,
                     mb.voice_index, mb.jitter_index, n_replicas)
-        return wav_sample
+        return wav_orig, wav_sample
 
 
 

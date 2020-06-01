@@ -377,6 +377,9 @@ class WaveNet(nn.Module):
         # wav_end = int(beg_grcc_vc.input_gr.sub[1] - mfcc_vc.input_gr.sub[0])
         wav_onehot = wav_onehot[:,:,wav_beg:]
 
+        # for converting from one-hot to value format
+        quant_range = wav_onehot.new(list(range(self.n_quant)))
+
         # !!! hack - I'm not sure why the int() cast is necessary
         n_init_ts = int(beg_grcc_vc.in_len())
 
@@ -395,7 +398,8 @@ class WaveNet(nn.Module):
 
         chunk_size = 500
 
-        wav_onehot = wav_onehot.repeat(n_rep, 1, 1)
+        # first slot is to report the original 
+        wav_onehot = wav_onehot.repeat(n_rep + 1, 1, 1)
         n_layers = self.ac.n_blocks * self.ac.n_block_layers
 
         # sig[0] is the output of the base_layer
@@ -437,7 +441,7 @@ class WaveNet(nn.Module):
         # forward-most index element in wave input
         cur_pos = torch.tensor([global_rf[0]], dtype=torch.int32,
                 device=wav_onehot.device)
-        # end_pos = torch.tensor([global_rf[0] + 3000], dtype=torch.int32,
+        # end_pos = torch.tensor([global_rf[0] + 1000], dtype=torch.int32,
         #         device=wav_onehot.device)
         end_pos = torch.tensor([n_ts], dtype=torch.int32,
                 device=wav_onehot.device)
@@ -459,9 +463,6 @@ class WaveNet(nn.Module):
         cond_rng[0] = wav_ir[0] 
         cond_rng[1] = wav_ir[1]
 
-        # for converting from one-hot to value format
-        quant_range = wav_onehot.new(list(range(self.n_quant)))
-
         self.update_leads() 
         while not torch.equal(cur_pos, end_pos):
             chunk_size = min(chunk_size, end_pos - cur_pos)
@@ -471,7 +472,7 @@ class WaveNet(nn.Module):
                 # for both input and output
                 ir = irng[0]
                 sig[0][:,:,ir[0]:ir[1]] = \
-                        self.base_layer(wav_onehot[:,:,wav_ir[0]:wav_ir[1]]) 
+                        self.base_layer(wav_onehot[1:,:,wav_ir[0]:wav_ir[1]]) 
                 skp_sum[...] = 0
 
                 for i, layer in enumerate(self.conv_layers):
@@ -490,7 +491,7 @@ class WaveNet(nn.Module):
 
                 # pre_val = int(torch.matmul(wav_onehot[0,:,wav_ir[1]],
                 #     quant_range))
-                wav_onehot[:,:,wav_ir[1]] = cat.sample()
+                wav_onehot[1:,:,wav_ir[1]] = cat.sample()
 
                 # post_val = int(torch.matmul(wav_onehot[0,:,wav_ir[1]],
                 #     quant_range))
@@ -567,7 +568,7 @@ class WaveNet(nn.Module):
             wav[:,:end_pos].std(), wav[:,end_pos:].std()
             ))
 
-        return wav
+        return wav[0,...], wav[1:,...]
 
 
 
