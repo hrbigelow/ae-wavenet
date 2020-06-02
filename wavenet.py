@@ -459,10 +459,10 @@ class WaveNet(nn.Module):
         # forward-most index element in wave input
         cur_pos = torch.tensor([global_rf[0]], dtype=torch.long,
                 device=wav_onehot.device)
-        end_pos = torch.tensor([global_rf[0] + 1000], dtype=torch.long,
-                device=wav_onehot.device)
-        # end_pos = torch.tensor([n_ts], dtype=torch.long,
+        # end_pos = torch.tensor([global_rf[0] + 1000], dtype=torch.long,
         #         device=wav_onehot.device)
+        end_pos = torch.tensor([n_ts], dtype=torch.long,
+                device=wav_onehot.device)
 
         wav_ir[0] = 0 
         wav_ir[1] = cur_pos[0]
