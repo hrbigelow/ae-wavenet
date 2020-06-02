@@ -391,7 +391,9 @@ class WaveNet(nn.Module):
         # calculate starting position of wav
         wav_beg = int(beg_grcc_vc.input_gr.sub[0] - mfcc_vc.input_gr.sub[0])
         # wav_end = int(beg_grcc_vc.input_gr.sub[1] - mfcc_vc.input_gr.sub[0])
-        wav_onehot = wav_onehot[:,:,wav_beg:]
+
+        # !!! this may be where a huge bug is
+        # wav_onehot = wav_onehot[:,:,wav_beg:]
 
         # for converting from one-hot to value format
         quant_range = wav_onehot.new(list(range(self.ac.n_quant)))
