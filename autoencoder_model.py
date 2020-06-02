@@ -206,7 +206,7 @@ class AutoEncoder(nn.Module):
         return util.tensor_digest(self.parameters())
         
 
-    def forward(self, mels, wav_onehot_dec, voice_inds, jitter_index):
+    def forward(self, mels, wav_dec, voice_inds, jitter_index):
         """
         B: n_batch
         M: n_mels
@@ -217,13 +217,13 @@ class AutoEncoder(nn.Module):
         Q: n_quant
         mels: (B, M, T)
         wav_compand: (B, T)
-        wav_onehot_dec: (B, T')  
+        wav_dec: (B, T')  
         Outputs: 
         quant_pred (B, Q, N) # predicted wav amplitudes
         """
         encoding = self.encoder(mels)
         self.encoding_bn = self.bottleneck(encoding)
-        quant = self.decoder(wav_onehot_dec, self.encoding_bn, voice_inds,
+        quant = self.decoder(wav_dec, self.encoding_bn, voice_inds,
                 jitter_index)
         return quant
 
@@ -236,7 +236,7 @@ class AutoEncoder(nn.Module):
         quant_pred: (B, Q, T) (the prediction from the model)
         wav_batch_out: (B, T) (the actual data from the same timesteps)
         """
-        wav_onehot_dec = self.preprocess(vbatch.wav_dec_input)
+        # wav_onehot_dec = self.preprocess(vbatch.wav_dec_input)
         # grad = torch.autograd.grad(wav_onehot_dec, vbatch.wav_dec_input).data
 
         # Slice each wav input
@@ -247,9 +247,9 @@ class AutoEncoder(nn.Module):
         #    wav_batch_out[b] = vbatch.wav_dec_input[b,sl_b:sl_e]
 
         # self.wav_batch_out = wav_batch_out
-        self.wav_onehot_dec = wav_onehot_dec
+        # self.wav_onehot_dec = wav_onehot_dec
 
-        quant = self.forward(vbatch.mel_enc_input, wav_onehot_dec,
+        quant = self.forward(vbatch.mel_enc_input, vbatch.wav_dec_input,
                 vbatch.voice_index, vbatch.jitter_index)
 
         pred, target = quant[...,:-1], wav_batch_out[...,1:]

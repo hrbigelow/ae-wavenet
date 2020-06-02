@@ -186,7 +186,7 @@ def wav_gen_parser():
             architecture, model parameters, and data generator state.""")
     wp.add_argument('dat_file', type=str, metavar='DAT_FILE',
             help='File created by preprocess.py')
-    wp.add_argument('--n-sample-replicas', '-nsr', type=int, metavar='INT',
+    wp.add_argument('--dec-n-replicas', '-nsr', type=int, metavar='INT',
             default=1,
             help='Number of output to generate for each input datum')
     wp.add_argument('--output-dir', '-od', type=str, metavar='STR',

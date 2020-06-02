@@ -45,7 +45,6 @@ class Chassis(object):
 
     """
 
-
     def __init__(self, mode, opts):
         print('Initializing model and data source...', end='', file=stderr)
         stderr.flush()
@@ -219,8 +218,9 @@ class InferenceChassis(object):
     def __init__(self, mode, opts):
         self.state = checkpoint.InferenceState()
         self.state.load(opts.ckpt_file, opts.dat_file)
+        self.state.model.eval()
         self.output_dir = opts.output_dir
-        self.n_replicas = opts.n_sample_replicas
+        self.n_replicas = opts.dec_n_replicas
 
         if opts.hwtype in ('GPU', 'CPU'):
             if opts.hwtype == 'GPU':
@@ -240,14 +240,17 @@ class InferenceChassis(object):
     def infer(self):
         self.state.to(self.device)
         sample_rate = self.state.data_loader.dataset.sample_rate
-        n_quant = self.state.model.wavenet.n_quant
+        n_quant = self.state.model.wavenet.ac.n_quant
+        n_rep = torch.tensor(self.n_replicas, device=self.device)
 
         for mb in self.data_iter:
             out_template = os.path.join(self.output_dir,
                     os.path.basename(os.path.splitext(mb.file_path)[0])
                     + '.{}.wav')
 
-            wav_orig, wav_sample = self.state.model.infer(mb, self.n_replicas)
+            wav_orig, wav_sample = self.state.model(mb.mel_enc_input,
+                    mb.wav_enc_input, mb.voice_index,
+                    mb.jitter_index, n_rep)
 
             # save results to specified files
             for i in range(self.n_replicas):
@@ -260,5 +263,5 @@ class InferenceChassis(object):
             librosa.output.write_wav(path, wav_final.cpu().numpy(), sample_rate) 
 
             print('Wrote {}'.format(
-                out_template.format('0-'+str(self.n_replicas-1))))
+                out_template.format('0-'+str(n_rep-1))))
 

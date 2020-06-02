@@ -23,6 +23,10 @@ class MfccInverter(nn.Module):
         self._initialize()
 
     def _initialize(self):
+        """
+        May be called either by __init__ (if running in 'new' mode) or
+        by __setstate__ (if running in 'resume' mode)
+        """
         super(MfccInverter, self).__init__()
         dec_params = self.init_args['dec_params']
         mi_params = self.init_args['mi_params']
@@ -94,20 +98,21 @@ class MfccInverter(nn.Module):
         self._initialize()
         # self.load_state_dict(state['state_dict'])
 
-    def forward(self, mels, wav_onehot_dec, voice_inds, jitter_index):
-        """
-        """
-        quant = self.wavenet(wav_onehot_dec, mels, voice_inds, jitter_index)
-        return quant
+    def forward(self, mels, wav, voice_inds, jitter_index, n_rep=None):
+        # bla = torch.jit.trace(self.wavenet, (wav, mels, voice_inds, jitter_index, n_rep))       
+        # print(type(bla))
+        return self.wavenet(wav, mels, voice_inds, jitter_index, n_rep)
+
+
 
     def run(self, vbatch):
         """
         """
-        wav_onehot_dec = self.preprocess(vbatch.wav_dec_input)
+        # wav_onehot_dec = self.preprocess(vbatch.wav_dec_input)
         trim = self.trim_dec_out
         wav_batch_out = vbatch.wav_dec_input[:,trim[0]:trim[1]]
-        self.wav_onehot_dec = wav_onehot_dec
-        quant = self.forward(vbatch.mel_enc_input, wav_onehot_dec,
+        # self.wav_onehot_dec = wav_onehot_dec
+        quant = self.forward(vbatch.mel_enc_input, vbatch.wav_dec_input,
                 vbatch.voice_index, vbatch.jitter_index)
 
         pred, target = quant[...,:-1], wav_batch_out[...,1:]
@@ -121,17 +126,3 @@ class MfccInverter(nn.Module):
             })
         return pred, target, loss 
 
-    def infer(self, mbatch, n_replicas):
-        """
-        Produce n_replicas samples from this mbatch
-        """
-        mb = mbatch
-        wav_onehot_enc = self.preprocess(mbatch.wav_enc_input)
-        with torch.no_grad():
-            wav_orig, wav_sample = self.wavenet.sample(wav_onehot_enc, mb.mel_enc_input,
-                    mb.voice_index, mb.jitter_index, n_replicas)
-        return wav_orig, wav_sample
-
-
-
-    

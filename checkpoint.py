@@ -87,12 +87,13 @@ class State(object):
         #    util.tensor_digest(self.torch_cuda_rng_states)))
         #torch.cuda.set_rng_state_all(self.torch_cuda_rng_states)
         if torch.cuda.is_available():
-            torch.cuda.set_rng_state(self.torch_cuda_rng_states[0])
-            ndiff = torch.cuda.get_rng_state().ne(self.torch_cuda_rng_states[0]).sum()
-            if ndiff != 0:
-                print(('Warning: restored and checkpointed '
-                'GPU state differs in {} positions').format(ndiff), file=stderr)
-                stderr.flush()
+            if self.torch_cuda_rng_states is not None:
+                torch.cuda.set_rng_state(self.torch_cuda_rng_states[0])
+                ndiff = torch.cuda.get_rng_state().ne(self.torch_cuda_rng_states[0]).sum()
+                if ndiff != 0:
+                    print(('Warning: restored and checkpointed '
+                    'GPU state differs in {} positions').format(ndiff), file=stderr)
+                    stderr.flush()
 
     def update_learning_rate(self, learning_rate):
         for g in self.optim.param_groups:
@@ -108,6 +109,11 @@ class InferenceState(object):
         self.model = model 
         self.data_loader = data.WavLoader(dataset)
         self.device = None
+        self.torch_rng_state = torch.get_rng_state()
+        if torch.cuda.is_available():
+            self.torch_cuda_rng_states = torch.cuda.get_rng_state_all()
+        else:
+            self.torch_cuda_rng_states = None
 
     def to(self, device):
         """Hack to move both model and optimizer to device"""

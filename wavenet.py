@@ -211,9 +211,6 @@ class WaveNet(nn.Module):
         self.ac = ArchConfig(n_lc_in, n_lc_out, n_res, n_dil, n_skp, n_post,
                 n_quant, n_blocks, n_block_layers, n_speakers, n_global_embed)
 
-        self.n_blocks = n_blocks
-        self.n_block_layers = n_block_layers
-        self.n_quant = n_quant
         self.quant_onehot = None 
         self.bias = bias
         post_jitter_filt_sz = 3
@@ -230,6 +227,8 @@ class WaveNet(nn.Module):
         self.vc = dict()
         self.vc['beg'] = self.lc_conv.vc 
         cur_vc = self.vc['beg']
+
+        self.preprocess = PreProcess(self.ac.n_quant) 
         
         # This VC is the first processing of the local conditioning after the
         # Jitter. It is the starting point for the commitment loss aggregation
@@ -258,8 +257,8 @@ class WaveNet(nn.Module):
         self.conv_layers = nn.ModuleList() 
         n_cond = n_lc_out + n_global_embed
 
-        for b in range(self.n_blocks):
-            for bl in range(self.n_block_layers):
+        for b in range(self.ac.n_blocks):
+            for bl in range(self.ac.n_block_layers):
                 dil = 2**bl
                 name = 'GRCC_{},{}(dil={})'.format(b, bl, dil)
                 grc = GatedResidualCondConv(self.vc, n_cond, n_res, n_dil,
@@ -301,7 +300,18 @@ class WaveNet(nn.Module):
         for grc in self.conv_layers:
             grc.set_incremental()
 
-    def forward(self, wav_onehot, lc_sparse, speaker_inds, jitter_index):
+
+    def forward(self, wav, lc_sparse, speaker_inds, jitter_index, n_rep = None):
+        if self.training:
+            return self.forward_train(wav, lc_sparse, speaker_inds,
+                    jitter_index)
+        else:
+            with torch.no_grad():
+                return self.forward_test(wav, lc_sparse, speaker_inds,
+                        jitter_index, n_rep)
+
+
+    def forward_train(self, wav, lc_sparse, speaker_inds, jitter_index):
         """
         B: n_batch (# of separate wav streams being processed)
         T1: n_wav_timesteps
@@ -335,6 +345,8 @@ class WaveNet(nn.Module):
         # But, this means wavenet's parameters would have N_s baked in, and wouldn't
         # be able to operate with a new speaker ID.
 
+        wav_onehot = self.preprocess(wav)
+
         sig = self.base_layer(wav_onehot) 
         sig, skp_sum = self.conv_layers[0](sig, cond)
         for layer in self.conv_layers[1:]:
@@ -348,7 +360,8 @@ class WaveNet(nn.Module):
         return quant
 
 
-    def sample(self, wav_onehot, lc_sparse, speaker_inds, jitter_index, n_rep):
+    # @torch.jit.script
+    def forward_test(self, wav, lc_sparse, speaker_inds, jitter_index, n_rep):
         """
         Generate n_rep samples, using lc_sparse and speaker_inds for local and global
         conditioning.  
@@ -363,8 +376,11 @@ class WaveNet(nn.Module):
         beg_grcc_vc = self.vc['beg_grcc']
         end_vc = self.vc['end_grcc']
 
+        wav_onehot = self.preprocess(wav)
+
         # calculate full output range
         wav_gr = vconv.GridRange((0, int(1e12)), (0, wav_onehot.size()[2]), 1)
+
         full_out_gr = vconv.output_range(mfcc_vc, end_vc, wav_gr)
         n_ts = full_out_gr.sub_length()
 
@@ -378,7 +394,7 @@ class WaveNet(nn.Module):
         wav_onehot = wav_onehot[:,:,wav_beg:]
 
         # for converting from one-hot to value format
-        quant_range = wav_onehot.new(list(range(self.n_quant)))
+        quant_range = wav_onehot.new(list(range(self.ac.n_quant)))
 
         # !!! hack - I'm not sure why the int() cast is necessary
         n_init_ts = int(beg_grcc_vc.in_len())
@@ -409,18 +425,18 @@ class WaveNet(nn.Module):
 
         # wav_irng slices wav_onehot when used as input, and
         # we derive the single position output from wav_irng
-        irng = wav_onehot.new_empty(n_layers, 2, dtype=torch.int32)
+        irng = wav_onehot.new_empty(n_layers, 2, dtype=torch.long)
 
         # orng[l] is the output range of layer l, which populates sig[l]
         # except that orng[-2] and orng[-1] both populate sig[-1]
         # because
-        orng = wav_onehot.new_empty(n_layers + 1, 2, dtype=torch.int32)
+        orng = wav_onehot.new_empty(n_layers + 1, 2, dtype=torch.long)
 
         # the one  
-        cond_rng = wav_onehot.new_empty(2, dtype=torch.int32)
+        cond_rng = wav_onehot.new_empty(2, dtype=torch.long)
 
         # input range for the wav_onehot vector
-        wav_ir = wav_onehot.new_empty(2, dtype=torch.int32)
+        wav_ir = wav_onehot.new_empty(2, dtype=torch.long)
 
         skp_sum = wav_onehot.new_zeros(n_rep, self.ac.n_skp, 1)
 
@@ -439,12 +455,12 @@ class WaveNet(nn.Module):
             vc = vc.child
 
         # forward-most index element in wave input
-        cur_pos = torch.tensor([global_rf[0]], dtype=torch.int32,
+        cur_pos = torch.tensor([global_rf[0]], dtype=torch.long,
                 device=wav_onehot.device)
-        # end_pos = torch.tensor([global_rf[0] + 1000], dtype=torch.int32,
+        end_pos = torch.tensor([global_rf[0] + 1000], dtype=torch.long,
+                device=wav_onehot.device)
+        # end_pos = torch.tensor([n_ts], dtype=torch.long,
         #         device=wav_onehot.device)
-        end_pos = torch.tensor([n_ts], dtype=torch.int32,
-                device=wav_onehot.device)
 
         wav_ir[0] = 0 
         wav_ir[1] = cur_pos[0]
@@ -462,6 +478,10 @@ class WaveNet(nn.Module):
         orng[-1,1] = 1
         cond_rng[0] = wav_ir[0] 
         cond_rng[1] = wav_ir[1]
+
+        report_interval = torch.tensor(1000, dtype=torch.long,
+                device=wav_onehot.device)
+        zero = torch.tensor(0, dtype=torch.long, device=wav_onehot.device)
 
         self.update_leads() 
         while not torch.equal(cur_pos, end_pos):
@@ -498,7 +518,7 @@ class WaveNet(nn.Module):
                 # print('{}: {} - {}'.format(post_val - pre_val, pre_val,
                 #     post_val))
 
-                if irng[0,0] == 0:
+                if torch.equal(irng[0,0], zero):
                     # finished initialization, now incremental mode
                     # we only really need 1 new element, but computing two
                     # nicely fits with sig[0]
@@ -519,7 +539,8 @@ class WaveNet(nn.Module):
                 cond_rng += 1
                 cur_pos += 1
 
-                if wav_ir[1] % 1000 == 0:
+                if torch.equal(torch.fmod(wav_ir[1], report_interval), zero):
+                # if wav_ir[1] % 1000 == 0:
                     print('On timestep {} out of {}'.format(wav_ir[1].item(),
                         end_pos[0].item()))
                     #print('cond_rng[1]: {}, wav_ir[1]: {}'.format(
