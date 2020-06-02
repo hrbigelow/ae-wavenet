@@ -393,7 +393,7 @@ class WaveNet(nn.Module):
         # wav_end = int(beg_grcc_vc.input_gr.sub[1] - mfcc_vc.input_gr.sub[0])
 
         # !!! this may be where a huge bug is
-        # wav_onehot = wav_onehot[:,:,wav_beg:]
+        wav_onehot = wav_onehot[:,:,wav_beg:]
 
         # for converting from one-hot to value format
         quant_range = wav_onehot.new(list(range(self.ac.n_quant)))
@@ -459,7 +459,7 @@ class WaveNet(nn.Module):
         # forward-most index element in wave input
         cur_pos = torch.tensor([global_rf[0]], dtype=torch.long,
                 device=wav_onehot.device)
-        # end_pos = torch.tensor([global_rf[0] + 1000], dtype=torch.long,
+        # end_pos = torch.tensor([global_rf[0] + 20000], dtype=torch.long,
         #         device=wav_onehot.device)
         end_pos = torch.tensor([n_ts], dtype=torch.long,
                 device=wav_onehot.device)
