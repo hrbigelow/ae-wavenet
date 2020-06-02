@@ -263,5 +263,5 @@ class InferenceChassis(object):
             librosa.output.write_wav(path, wav_final.cpu().numpy(), sample_rate) 
 
             print('Wrote {}'.format(
-                out_template.format('0-'+str(n_rep-1))))
+                out_template.format('0-'+str(n_rep.item()-1))))
 
