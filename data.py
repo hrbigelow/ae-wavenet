@@ -160,8 +160,7 @@ class MfccBatch(object):
 
         sam = ds.samples[self.pos]
         __, self.voice_index[0] = ds.in_start[self.pos] 
-        self.wav_enc_input = \
-                torch.tensor(ds.snd_data[sam.wav_b:sam.wav_e]).unsqueeze(0)
+        self.wav_enc_input = ds.snd_data[sam.wav_b:sam.wav_e].unsqueeze(0)
         _mel_enc_input = ds.mfcc_proc.func(self.wav_enc_input[0]).unsqueeze(0)
         # _mel_enc_input /= _mel_enc_input.std(dim=(1,2)).unsqueeze(1).unsqueeze(1)
         self.mel_enc_input = _mel_enc_input.type(torch.float32)

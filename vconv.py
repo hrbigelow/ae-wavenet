@@ -114,7 +114,8 @@ class VirtualConv(object):
 
         return fmt.format(self.l_wing_sz, self.r_wing_sz, n, d, self.l_pad,
                 self.r_pad, 'T' if self.do_trim_input else '-',
-                self.input_gr.sub[0], self.input_gr.sub[1],
+                self.input_gr.sub[0] if self.input_gr is not None else None, 
+                self.input_gr.sub[1] if self.input_gr is not None else None,
                 self.in_len(), self.input_trim, self.name)
 
     def in_len(self):
@@ -344,6 +345,10 @@ def output_range(source, dest, gin):
 
 
 def output_offsets(source, dest):
+    """
+    compute left and right indices into input tensor which grid-align
+    with the 
+    """
     vc = source
     lo, ro = 0, 0
     while True:

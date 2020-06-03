@@ -2,6 +2,7 @@ from hashlib import md5
 from pickle import dumps
 import numpy as np
 import torch
+from typing import Tuple
 
 def digest(obj):
     return md5(dumps(obj)).hexdigest()
@@ -151,6 +152,35 @@ torch.gather(input, d, query), expressed as SQL:
     It's like a multi-dimensional version of torch.take.
 """
 
+# !!! this doesn't generalize to other dimensions anymore
+def gather_md_jit(input, dim: int, perm: Tuple[int, int], query):
+    """
+    torchscript jit version
+    """
+    k = input.dim()
+    if dim < 0 or dim >= k:
+        raise ValueError('dim {} must be in [0, {})'.format(dim, k))
+
+    # Q = prod(q_(1..m))
+    # x: (i_1..i_k Q/i_d)
+    x = torch.index_select(input, dim, query.flatten())
+
+    # print('type of dim is: ', type(dim))
+    # x_perm: (i_1..i_k / q) + Q.  In other words, move dimension Q to the end
+    # t = list(range(dim)) + list(range(dim+1, k)) + [dim]
+    # t = (0,1)
+    # t = tuple(range(dim)) + tuple(range(dim+1, k)) + (dim,)
+    # x_perm = x.permute(*t)
+    # !!! original
+    # t = tuple(range(dim)) + tuple(range(dim+1, k)) + (dim,)
+    # print('permutation:', *perm)
+    x_perm = x.permute(*perm)
+
+    # for example, expand (i_1, i_2, i_3, Q) to (i_1, i_2, i_3, q_1, q_2, q_3)
+    out_size = input.size()[:dim] + input.size()[dim+1:] + query.size()
+    return x_perm.reshape(out_size) 
+
+
 def gather_md(input, dim, query):
     '''
     You can view a K-dimensional tensor entry: input[i1,i2,...,ik] = cell_value
@@ -172,20 +202,10 @@ def gather_md(input, dim, query):
     than one dimension, and its dimension(s) are placed at the end of the
     result tensor rather than replacing input dimension 'dim'
     '''
-    if not 0 <= dim < len(input.size()):
-        raise ValueError('dim {} must be in [0, {})'.format(dim, len(input.size())))
+    k = input.dim()
+    tup = tuple(range(dim)) + tuple(range(dim+1, k)) + (dim,)
+    return gather_md_scriptable(input, dim, tup, query)
 
-    # Q = prod(q_(1..m))
-    # x: (i_1..i_k Q/i_d)
-    k = len(input.size())
-    x = torch.index_select(input, dim, query.flatten())
-
-    # x_perm: (i_1..i_k / q) + Q.  In other words, move dimension Q to the end
-    x_perm = x.permute(tuple(range(dim)) + tuple(range(dim+1, k)) + (dim,))
-
-    # for example, expand (i_1, i_2, i_3, Q) to (i_1, i_2, i_3, q_1, q_2, q_3)
-    out_size = input.size()[:dim] + input.size()[dim+1:] + query.size()
-    return x_perm.reshape(out_size) 
 
 def greatest_lower_bound(a, q): 
     '''return largest i such that a[i] <= q.  assume a is sorted.

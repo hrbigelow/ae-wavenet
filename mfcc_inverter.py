@@ -35,6 +35,7 @@ class MfccInverter(nn.Module):
         self.preprocess = wn.PreProcess(n_quant=dec_params['n_quant'])  
         self.wavenet = wn.WaveNet(**dec_params, parent_vc=None,
                 n_lc_in=mi_params['n_lc_in'])
+
         self.objective = wn.RecLoss()
 
     def post_init(self, dataset):
@@ -72,7 +73,7 @@ class MfccInverter(nn.Module):
         self.wavenet.trim_ups_out = torch.tensor([0, beg_grcc_vc.in_len()],
                 dtype=torch.long)
 
-        self.wavenet.post_init()
+        self.wavenet.post_init(batch_win_size)
 
 
     def print_geometry(self):

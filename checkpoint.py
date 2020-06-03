@@ -135,3 +135,8 @@ class InferenceState(object):
         dataset.post_init(self.model)
         self.data_loader = data.WavLoader(dataset)
 
+        model_scr = torch.jit.script(self.model.wavenet)
+        model_scr.save('model_scr.zip')
+        print('saved model_scr.zip')
+
+

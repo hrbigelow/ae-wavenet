@@ -6,6 +6,7 @@ import numpy as np
 from numpy import prod as np_prod
 import util
 import netmisc
+from collections import namedtuple
 
 # from numpy import vectorize as np_vectorize
 class PreProcess(nn.Module):
@@ -16,6 +17,7 @@ class PreProcess(nn.Module):
         super(PreProcess, self).__init__()
         self.n_quant = n_quant
         self.register_buffer('quant_onehot', torch.eye(self.n_quant))
+        self.register_buffer('quant_range', torch.arange(0, self.n_quant))
 
     def one_hot(self, wav_compand):
         """
@@ -24,8 +26,11 @@ class PreProcess(nn.Module):
         returns: (B, Q, T)
         """
         wav_compand_tmp = wav_compand.long()
-        wav_one_hot = util.gather_md(self.quant_onehot, 0, wav_compand_tmp).permute(1,0,2)
+        wav_one_hot = util.gather_md_jit(self.quant_onehot, 0, (1,0),
+                wav_compand_tmp).permute(1,0,2)
         return wav_one_hot
+
+    
 
     def forward(self, in_snd_slice):
         """
@@ -69,13 +74,11 @@ class GatedResidualCondConv(nn.Module):
         """
         Initialize offset tensors
         """
-        self.register_buffer('cond_lead', torch.empty(1, dtype=torch.int32))
-        self.register_buffer('skip_lead', torch.empty(1, dtype=torch.int32))
-        self.register_buffer('left_wing_size',
-                torch.tensor([self.vc.l_wing_sz], dtype=torch.int32))
-        self.update_leads()
+        self.register_buffer('leads', torch.empty(4, dtype=torch.long))
+        self.init_leads()
+        self.set_full()
 
-    def update_leads(self):
+    def init_leads(self):
         """
         Update skip_lead and cond_lead to reflect changed geometry
         or chunk size.  Call this after vconv.compute_inputs is called
@@ -83,7 +86,6 @@ class GatedResidualCondConv(nn.Module):
         cond_lead, r_off = vconv.output_offsets(self.wavenet_vc['beg_grcc'],
                 self.vc)
         assert r_off == 0
-        self.cond_lead[0] = cond_lead
 
         if self.vc == self.wavenet_vc['end_grcc']:
             skip_lead = 0
@@ -92,14 +94,27 @@ class GatedResidualCondConv(nn.Module):
                     self.wavenet_vc['end_grcc'])
             assert r_off == 0
 
-        self.skip_lead[0] = skip_lead
+        self.leads[0] = cond_lead
+        self.leads[1] = skip_lead
+        self.leads[2] = self.vc.l_wing_sz
+        self.leads[3] = 0
+
+        self.global_rf = self.vc.in_len()
+        self.local_rf = self.vc.filter_size()
+
 
     def set_incremental(self):
         """
         Set skip_lead and cond_lead for incremental operation
         """
-        self.skip_lead[0] = 0
-        self.cond_lead[0] = 0 
+        self.cond = 3
+        self.skip = 3
+        self.lw = 2
+
+    def set_full(self):
+        self.cond = 0
+        self.skip = 1
+        self.lw = 2
 
     def forward(self, x, cond):
         """
@@ -109,13 +124,13 @@ class GatedResidualCondConv(nn.Module):
         cond: (B, C, T) (necessary shape for Conv1d)
         returns: sig: (B, R, T), skp: (B, S, T) 
         """
-        filt = self.conv_signal(x) + \
-                self.proj_signal(cond[:,:,self.cond_lead[0]:])
-        gate = self.conv_gate(x) + self.proj_gate(cond[:,:,self.cond_lead[0]:])
+        cl, sl, lw = self.leads[self.cond], self.leads[self.skip], self.leads[self.lw]
+        filt = self.conv_signal(x) + self.proj_signal(cond[:,:,cl:])
+        gate = self.conv_gate(x) + self.proj_gate(cond[:,:,cl:])
         z = torch.tanh(filt) * torch.sigmoid(gate)
         sig = self.dil_res(z)
-        skp = self.dil_skp(z[:,:,self.skip_lead[0]:])
-        sig += x[:,:,self.left_wing_size[0]:]
+        skp = self.dil_skp(z[:,:,sl:])
+        sig += x[:,:,lw:]
 
         return sig, skp 
 
@@ -141,7 +156,7 @@ class Conditioning(nn.Module):
         """
         assert speaker_inds.dtype == torch.long
         # one_hot: (B, S)
-        one_hot = util.gather_md(self.eye, 0, speaker_inds).permute(1, 0) 
+        one_hot = util.gather_md_jit(self.eye, 0, (1,0), speaker_inds).permute(1, 0) 
         gc = self.speaker_embedding(one_hot) # gc: (B, G)
         gc_rep = gc.unsqueeze(2).expand(-1, -1, lc.shape[2])
         all_cond = torch.cat((lc, gc_rep), dim=1) 
@@ -184,9 +199,31 @@ class Conv1dWrap(nn.Conv1d):
                 name=name, parent=parent_vc)
 
 
+"""
+Architecture parameters that remain constant across save/restore.
+Note that n_batch and n_batch_win are excluded, since they may
+vary across save/restore cycles
+"""
+ArchConfig = namedtuple('ArchConfig', [
+    'n_lc_in',
+    'n_lc_out',
+    'n_res',
+    'n_dil',
+    'n_skp',
+    'n_post',
+    'n_quant',
+    'n_blocks',
+    'n_block_layers',
+    'n_speakers',
+    'n_global_embed'
+    ]
+    )
+
+"""
 class ArchConfig(object):
-    def __init__(self, n_lc_in, n_lc_out, n_res, n_dil, n_skp, n_post, n_quant,
-            n_blocks, n_block_layers, n_speakers, n_global_embed):
+    def __init__(self, n_lc_in, n_lc_out, n_res, n_dil,
+            n_skp, n_post, n_quant, n_blocks, n_block_layers, n_speakers,
+            n_global_embed):
         self.n_lc_in = n_lc_in
         self.n_lc_out = n_lc_out
         self.n_res = n_res
@@ -198,18 +235,27 @@ class ArchConfig(object):
         self.n_block_layers = n_block_layers
         self.n_speakers = n_speakers,
         self.n_global_embed = n_global_embed
-
+"""
 
 
 class WaveNet(nn.Module):
+    # see https://pytorch.org/docs/stable/jit_language_reference.html \\
+    # #for-loops-over-constant-nn-modulelist
+    __constants__ = ['conv_layers']
+
     def __init__(self, filter_sz, n_lc_in, n_lc_out, lc_upsample_filt_sizes,
             lc_upsample_strides, n_res, n_dil, n_skp, n_post, n_quant,
             n_blocks, n_block_layers, n_speakers, n_global_embed,
             bias=True, parent_vc=None):
         super(WaveNet, self).__init__()
 
-        self.ac = ArchConfig(n_lc_in, n_lc_out, n_res, n_dil, n_skp, n_post,
-                n_quant, n_blocks, n_block_layers, n_speakers, n_global_embed)
+        self.ac = ArchConfig(n_lc_in, n_lc_out, n_res,
+                n_dil, n_skp, n_post, n_quant, n_blocks, n_block_layers,
+                n_speakers, n_global_embed)
+        self.n_blocks = n_blocks
+        self.n_block_layers = n_block_layers
+        self.n_skp = n_skp
+        self.n_res = n_res
 
         self.quant_onehot = None 
         self.bias = bias
@@ -266,6 +312,7 @@ class WaveNet(nn.Module):
                 self.conv_layers.append(grc)
                 cur_vc = grc.vc
 
+
         # Each module in the stack needs to know the dimensions of
         # the input and output of the overall stack, in order to trim
         # residual connections
@@ -285,20 +332,36 @@ class WaveNet(nn.Module):
         self.vc['beg'].parent = parent_vc
         parent_vc.child = self.vc['beg']
 
-    def post_init(self):
-        for grc in self.conv_layers:
-            grc.post_init()
 
-    def update_leads(self):
-        for grc in self.conv_layers:
-            grc.update_leads()
+    def post_init(self, n_batch_win):
+        self.n_batch_win = n_batch_win
+
+        one_gr = vconv.GridRange((0, int(1e12)), (0, 1), 1)
+        vconv.compute_inputs(self.vc['end_grcc'], one_gr)
+
+        mfcc_vc = self.vc['beg'].parent
+        beg_grcc_vc = self.vc['beg_grcc']
+        self.wav_cond_offset = int(beg_grcc_vc.input_gr.sub[0] - mfcc_vc.input_gr.sub[0])
+
+        for layer in self.conv_layers:
+            layer.post_init()
+
+        self.base_global_rf = self.conv_layers[0].global_rf
+
 
     def set_incremental(self):
         """
         Set cond_lead and skip_leads for incremental mode
         """
-        for grc in self.conv_layers:
-            grc.set_incremental()
+        for layer in self.conv_layers:
+            layer.set_incremental()
+
+    def set_full(self):
+        """
+        Set for full inference mode
+        """
+        for layer in self.conv_layers:
+            layer.set_full()  
 
 
     def forward(self, wav, lc_sparse, speaker_inds, jitter_index, n_rep = None):
@@ -306,9 +369,9 @@ class WaveNet(nn.Module):
             return self.forward_train(wav, lc_sparse, speaker_inds,
                     jitter_index)
         else:
-            with torch.no_grad():
-                return self.forward_test(wav, lc_sparse, speaker_inds,
-                        jitter_index, n_rep)
+            # with torch.no_grad():
+            return self.forward_test(wav, lc_sparse, speaker_inds,
+                    jitter_index, n_rep)
 
 
     def forward_train(self, wav, lc_sparse, speaker_inds, jitter_index):
@@ -348,13 +411,16 @@ class WaveNet(nn.Module):
         wav_onehot = self.preprocess(wav)
 
         sig = self.base_layer(wav_onehot) 
-        sig, skp_sum = self.conv_layers[0](sig, cond)
-        for layer in self.conv_layers[1:]:
+        skp_sum = torch.zeros(wav_onehot.shape[0], 256,
+                self.n_batch_win, device=wav_onehot.device)
+
+        for layer in self.conv_layers:
             sig, skp = layer(sig, cond)
             skp_sum += skp
             
         post1 = self.post1(self.relu(skp_sum))
         quant = self.post2(self.relu(post1))
+
         # we only need this for inference time
         # logits = self.logsoftmax(quant) 
         return quant
@@ -370,36 +436,13 @@ class WaveNet(nn.Module):
         lc_sparse: full length local conditioning vector derived from full
         wav_onehot
         """
-        # initialize model geometry
-        mfcc_vc = self.vc['beg'].parent
-        up_vc = self.vc['beg'].child
-        beg_grcc_vc = self.vc['beg_grcc']
-        end_vc = self.vc['end_grcc']
-
         wav_onehot = self.preprocess(wav)
 
-        # calculate full output range
-        wav_gr = vconv.GridRange((0, int(1e12)), (0, wav_onehot.size()[2]), 1)
-
-        full_out_gr = vconv.output_range(mfcc_vc, end_vc, wav_gr)
-        n_ts = full_out_gr.sub_length()
-
-        # calculate starting input range for single timestep
-        one_gr = vconv.GridRange((0, int(1e12)), (0, 1), 1)
-        vconv.compute_inputs(end_vc, one_gr)
-
-        # calculate starting position of wav
-        wav_beg = int(beg_grcc_vc.input_gr.sub[0] - mfcc_vc.input_gr.sub[0])
-        # wav_end = int(beg_grcc_vc.input_gr.sub[1] - mfcc_vc.input_gr.sub[0])
-
         # !!! this may be where a huge bug is
-        wav_onehot = wav_onehot[:,:,wav_beg:]
+        wav_onehot = wav_onehot[:,:,self.wav_cond_offset:]
 
         # for converting from one-hot to value format
-        quant_range = wav_onehot.new(list(range(self.ac.n_quant)))
-
-        # !!! hack - I'm not sure why the int() cast is necessary
-        n_init_ts = int(beg_grcc_vc.in_len())
+        # quant_range = wav_onehot.new(list(range(self.ac.n_quant)))
 
         lc_sparse = lc_sparse.repeat(n_rep, 1, 1)
         jitter_index = jitter_index.repeat(n_rep, 1)
@@ -418,7 +461,8 @@ class WaveNet(nn.Module):
 
         # first slot is to report the original 
         wav_onehot = wav_onehot.repeat(n_rep + 1, 1, 1)
-        n_layers = self.ac.n_blocks * self.ac.n_block_layers
+        n_layers = self.n_blocks * self.n_block_layers
+        # n_layers = len(self.conv_layers)
 
         # sig[0] is the output of the base_layer
         # sig[i] is the output of the conv_layer[i-1]
@@ -440,41 +484,33 @@ class WaveNet(nn.Module):
         # input range for the wav_onehot vector
         wav_ir = wav_onehot.new_empty(2, dtype=torch.long)
 
-        skp_sum = wav_onehot.new_zeros(n_rep, self.ac.n_skp, 1)
-
-        # receptive field of a layer i relative to single output element
-        # in final layer
-        global_rf = []
-
-        # receptive field size of layer i relative to single output element
-        # in next layer
-        local_rf = []
-
-        vc = self.vc['beg_grcc'] 
-        while vc != self.vc['end_grcc'].child:
-            global_rf.append(vc.in_len())
-            local_rf.append(vc.filter_size())
-            vc = vc.child
+        skp_sum = torch.zeros(n_rep, self.n_skp, 1,
+                device=wav_onehot.device)
 
         # forward-most index element in wave input
-        cur_pos = torch.tensor([global_rf[0]], dtype=torch.long,
+        cur_pos = torch.tensor([self.base_global_rf + 20000], dtype=torch.long,
                 device=wav_onehot.device)
-        # end_pos = torch.tensor([global_rf[0] + 20000], dtype=torch.long,
+        end_pos = torch.tensor([self.base_global_rf + 40000], dtype=torch.long,
+                device=wav_onehot.device)
+        # end_pos = torch.tensor([n_ts], dtype=torch.long,
         #         device=wav_onehot.device)
-        end_pos = torch.tensor([n_ts], dtype=torch.long,
-                device=wav_onehot.device)
 
-        wav_ir[0] = 0 
+        wav_ir[0] = cur_pos[0] - self.base_global_rf 
         wav_ir[1] = cur_pos[0]
 
-        sig = [None] * n_layers
-        for i in range(n_layers):
-            sig[i] = wav_onehot.new_empty(n_rep, self.ac.n_res, global_rf[i] 
-                + chunk_size - 1)
+        sig = []
+        i = 0
+        for l in self.conv_layers:
+            # print(n_rep, self.n_res, l.global_rf, chunk_size, 1)
+            sig.append(torch.empty(n_rep, self.n_res, l.global_rf + chunk_size -
+                    1, device=wav_onehot.device))
+            # sig[i] = wav_onehot.new_empty(n_rep, self.n_res, l.global_rf 
+            #     + chunk_size - 1)
             irng[i,0] = 0 
-            irng[i,1] = global_rf[i] 
+            irng[i,1] = l.global_rf 
             orng[i,0] = 0 
-            orng[i,1] = global_rf[i]
+            orng[i,1] = l.global_rf
+            i += 1
 
         orng[-1,0] = 0
         orng[-1,1] = 1
@@ -485,11 +521,11 @@ class WaveNet(nn.Module):
                 device=wav_onehot.device)
         zero = torch.tensor(0, dtype=torch.long, device=wav_onehot.device)
 
-        self.update_leads() 
+        self.set_full() 
         while not torch.equal(cur_pos, end_pos):
             chunk_size = min(chunk_size, end_pos - cur_pos)
 
-            for i in range(chunk_size):
+            for __ in range(chunk_size):
                 # base_layer is a 1x1 convolution, so uses irng[0] 
                 # for both input and output
                 ir = irng[0]
@@ -497,7 +533,8 @@ class WaveNet(nn.Module):
                         self.base_layer(wav_onehot[1:,:,wav_ir[0]:wav_ir[1]]) 
                 skp_sum[...] = 0
 
-                for i, layer in enumerate(self.conv_layers):
+                i = 0
+                for layer in self.conv_layers:
                     # last iteration reassigns to same sig slot (unused) 
                     i_out = min(i+1, n_layers - 1)
                     p, q = irng[i], orng[i+1]
@@ -506,6 +543,7 @@ class WaveNet(nn.Module):
                             cond[:,:,cond_rng[0]:cond_rng[1]]
                         )
                     skp_sum += skp
+                    i += 1
 
                 post1 = self.post1(self.relu(skp_sum))
                 quant = self.post2(self.relu(post1))
@@ -526,14 +564,16 @@ class WaveNet(nn.Module):
                     # nicely fits with sig[0]
                     self.set_incremental()
                     cond_rng[0] = cond_rng[1] - 1
-                    wav_ir[0] = wav_ir[1] - local_rf[0]
+                    # wav_ir[0] = wav_ir[1] - local_rf[0]
 
-                    vc = self.vc['beg_grcc']
-                    for i in range(n_layers):
-                        irng[i,0] = global_rf[i] - local_rf[i] 
-                        irng[i,1] = global_rf[i]
-                        orng[i,0] = global_rf[i] - 1 
-                        orng[i,1] = global_rf[i]
+                    for i, l in enumerate(self.conv_layers):
+                        # hack because we can't index self.conv_layers
+                        if i == 0:
+                            wav_ir[0] = wav_ir[1] - l.local_rf
+                        irng[i,0] = l.global_rf - l.local_rf 
+                        irng[i,1] = l.global_rf 
+                        orng[i,0] = l.global_rf - 1 
+                        orng[i,1] = l.global_rf
                         
                 orng += 1
                 irng += 1
@@ -545,46 +585,16 @@ class WaveNet(nn.Module):
                 # if wav_ir[1] % 1000 == 0:
                     print('On timestep {} out of {}'.format(wav_ir[1].item(),
                         end_pos[0].item()))
-                    #print('cond_rng[1]: {}, wav_ir[1]: {}'.format(
-                    #    cond_rng[1].item(),
-                    #    wav_ir[1].item()
-                    #    ))
 
             # reset windows
             for i in range(n_layers):
                 sig[i][:,:,:-chunk_size] = sig[i][:,:,chunk_size:]
-                irng[i] -= chunk_size
-                orng[i] -= chunk_size
-
-
-        """
-        while not torch.equal(inrange[1], end_ind[0]):
-        # while inrange[1] != end_ind[0]:
-            sig = self.base_layer(wav_onehot[:,:,inrange[0]:inrange[1]]) 
-            sig, skp_sum = self.conv_layers[0](sig, cond[:,:,inrange[0]:inrange[1]])
-            for layer in self.conv_layers[1:]:
-                sig, skp = layer(sig, cond[:,:,inrange[0]:inrange[1]])
-                skp_sum += skp
-
-            post1 = self.post1(self.relu(skp_sum))
-            quant = self.post2(self.relu(post1))
-            cat = dcat.OneHotCategorical(logits=quant.squeeze(2))
-            wav_onehot[1:,:,inrange[1]] = cat.sample()[1:,...]
-            inrange += 1
-            if inrange[0] % 100 == 0:
-                print(inrange, end_ind[0])
-        """
+            irng -= chunk_size
+            orng -= chunk_size
 
         
         # convert to value format
-        wav = torch.matmul(wav_onehot.permute(0,2,1), quant_range)
-        # torch.set_printoptions(threshold=100000)
-        # pad = 5
-        # print('padding = {}'.format(pad))
-        # print('original')
-        # print(wav[0,start_pos-pad:end_pos+pad])
-        # print('synth')
-        # print(wav[1,start_pos-pad:end_pos+pad])
+        wav = torch.matmul(wav_onehot.permute(0,2,1), self.preprocess.quant_range)
 
         # print(wav[:,end_pos:end_pos + 10000])
         print('synth range std: {}, baseline std: {}'.format(
