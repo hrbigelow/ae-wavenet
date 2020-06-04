@@ -116,7 +116,6 @@ class InferenceState(object):
             self.torch_cuda_rng_states = None
 
     def to(self, device):
-        """Hack to move both model and optimizer to device"""
         self.device = device
         self.model.to(device)
 
@@ -134,9 +133,4 @@ class InferenceState(object):
         self.model.load_state_dict(sub_state, strict=False)
         dataset.post_init(self.model)
         self.data_loader = data.WavLoader(dataset)
-
-        model_scr = torch.jit.script(self.model.wavenet)
-        model_scr.save('model_scr.zip')
-        print('saved model_scr.zip')
-
 

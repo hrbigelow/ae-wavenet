@@ -211,16 +211,29 @@ class Chassis(object):
         return mean
 
 
+class DataContainer(torch.nn.Module):
+    def __init__(self, my_values):
+        super().__init__()
+        for key in my_values:
+            setattr(self, key, my_values[key])
+
+    def forward(self):
+        pass
+
+
 class InferenceChassis(object):
     """
     Coordinates construction of model and dataset for running inference
     """
     def __init__(self, mode, opts):
-        self.state = checkpoint.InferenceState()
-        self.state.load(opts.ckpt_file, opts.dat_file)
-        self.state.model.eval()
         self.output_dir = opts.output_dir
         self.n_replicas = opts.dec_n_replicas
+        self.data_write_tmpl = opts.data_write_tmpl
+
+        self.state = checkpoint.InferenceState()
+        self.state.load(opts.ckpt_file, opts.dat_file)
+        self.state.model.wavenet.set_n_replicas(self.n_replicas)
+        self.state.model.eval()
 
         if opts.hwtype in ('GPU', 'CPU'):
             if opts.hwtype == 'GPU':
@@ -237,20 +250,35 @@ class InferenceChassis(object):
             self.data_loader = pl.ParallelLoader(self.state.data_loader, [self.device])
             self.data_iter = TPULoaderIter(self.data_loader, self.device)
 
-    def infer(self):
+    def infer(self, model_scr=None):
         self.state.to(self.device)
         sample_rate = self.state.data_loader.dataset.sample_rate
         n_quant = self.state.model.wavenet.ac.n_quant
-        n_rep = torch.tensor(self.n_replicas, device=self.device)
 
         for mb in self.data_iter:
+            if self.data_write_tmpl:
+                dc = torch.jit.script(DataContainer({
+                    'mel': mb.mel_enc_input,
+                    'wav': mb.wav_enc_input,
+                    'voice': mb.voice_index,
+                    'jitter': mb.jitter_index
+                    }))
+                dc.save(self.data_write_tmpl)
+                print('saved {}'.format(self.data_write_tmpl))
+
             out_template = os.path.join(self.output_dir,
                     os.path.basename(os.path.splitext(mb.file_path)[0])
                     + '.{}.wav')
 
-            wav_orig, wav_sample = self.state.model(mb.mel_enc_input,
-                    mb.wav_enc_input, mb.voice_index,
-                    mb.jitter_index, n_rep)
+            if model_scr:
+                with torch.no_grad():
+                    wav = model_scr(mb.wav_enc_input, mb.mel_enc_input,
+                            mb.voice_index, mb.jitter_index)
+            else:
+                wav = self.state.model(mb.wav_enc_input, mb.mel_enc_input,
+                        mb.voice_index, mb.jitter_index)
+
+            wav_orig, wav_sample = wav[0,...], wav[1:,...]
 
             # save results to specified files
             for i in range(self.n_replicas):
@@ -263,5 +291,5 @@ class InferenceChassis(object):
             librosa.output.write_wav(path, wav_final.cpu().numpy(), sample_rate) 
 
             print('Wrote {}'.format(
-                out_template.format('0-'+str(n_rep.item()-1))))
+                out_template.format('0-'+str(self.n_replicas-1))))
 

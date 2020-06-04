@@ -1,12 +1,12 @@
 import torch
 from torch import nn
-from torch.distributions import one_hot_categorical as dcat
 import vconv
 import numpy as np
 from numpy import prod as np_prod
 import util
 import netmisc
 from collections import namedtuple
+import torch.nn.functional as F
 
 # from numpy import vectorize as np_vectorize
 class PreProcess(nn.Module):
@@ -17,7 +17,8 @@ class PreProcess(nn.Module):
         super(PreProcess, self).__init__()
         self.n_quant = n_quant
         self.register_buffer('quant_onehot', torch.eye(self.n_quant))
-        self.register_buffer('quant_range', torch.arange(0, self.n_quant))
+        self.register_buffer('quant_range', torch.arange(0,
+            self.n_quant).float())
 
     def one_hot(self, wav_compand):
         """
@@ -143,6 +144,7 @@ class Conditioning(nn.Module):
     def __init__(self, n_speakers, n_embed, bias=True):
         super(Conditioning, self).__init__()
         # Look at nn.embedding
+        self.n_speakers = n_speakers
         self.speaker_embedding = nn.Linear(n_speakers, n_embed, bias)
         self.register_buffer('eye', torch.eye(n_speakers))
         self.apply(netmisc.xavier_init)
@@ -154,9 +156,9 @@ class Conditioning(nn.Module):
         speaker_inds: (B)
         returns: (B, T, I+G)
         """
-        assert speaker_inds.dtype == torch.long
         # one_hot: (B, S)
-        one_hot = util.gather_md_jit(self.eye, 0, (1,0), speaker_inds).permute(1, 0) 
+        one_hot = F.one_hot(speaker_inds.long(), self.n_speakers).float()
+        # one_hot2 = util.gather_md_jit(self.eye, 0, (1,0), speaker_inds).permute(1, 0) 
         gc = self.speaker_embedding(one_hot) # gc: (B, G)
         gc_rep = gc.unsqueeze(2).expand(-1, -1, lc.shape[2])
         all_cond = torch.cat((lc, gc_rep), dim=1) 
@@ -256,6 +258,7 @@ class WaveNet(nn.Module):
         self.n_block_layers = n_block_layers
         self.n_skp = n_skp
         self.n_res = n_res
+        self.n_quant = n_quant
 
         self.quant_onehot = None 
         self.bias = bias
@@ -348,6 +351,8 @@ class WaveNet(nn.Module):
 
         self.base_global_rf = self.conv_layers[0].global_rf
 
+    def set_n_replicas(self, n_replicas):
+        self.n_replicas = n_replicas
 
     def set_incremental(self):
         """
@@ -364,14 +369,13 @@ class WaveNet(nn.Module):
             layer.set_full()  
 
 
-    def forward(self, wav, lc_sparse, speaker_inds, jitter_index, n_rep = None):
+    def forward(self, wav, lc_sparse, speaker_inds, jitter_index):
         if self.training:
             return self.forward_train(wav, lc_sparse, speaker_inds,
                     jitter_index)
         else:
-            # with torch.no_grad():
             return self.forward_test(wav, lc_sparse, speaker_inds,
-                    jitter_index, n_rep)
+                    jitter_index)
 
 
     def forward_train(self, wav, lc_sparse, speaker_inds, jitter_index):
@@ -407,8 +411,8 @@ class WaveNet(nn.Module):
         # Oddly, they claim the global signal is just passed in as one-hot vectors.
         # But, this means wavenet's parameters would have N_s baked in, and wouldn't
         # be able to operate with a new speaker ID.
-
-        wav_onehot = self.preprocess(wav)
+        wav_onehot = F.one_hot(wav.long(), self.n_quant).permute(0,2,1)
+        # wav_onehot = self.preprocess(wav)
 
         sig = self.base_layer(wav_onehot) 
         skp_sum = torch.zeros(wav_onehot.shape[0], 256,
@@ -426,8 +430,7 @@ class WaveNet(nn.Module):
         return quant
 
 
-    # @torch.jit.script
-    def forward_test(self, wav, lc_sparse, speaker_inds, jitter_index, n_rep):
+    def forward_test(self, wav, lc_sparse, speaker_inds, jitter_index):
         """
         Generate n_rep samples, using lc_sparse and speaker_inds for local and global
         conditioning.  
@@ -436,7 +439,12 @@ class WaveNet(nn.Module):
         lc_sparse: full length local conditioning vector derived from full
         wav_onehot
         """
-        wav_onehot = self.preprocess(wav)
+        n_rep = torch.tensor(self.n_replicas, device=wav.device)
+
+        # wav_onehot = self.preprocess(wav)
+
+        # assert wav.min().item().toLong() >= 0
+        wav_onehot = F.one_hot(wav.long(), self.n_quant).permute(0,2,1).float()
 
         # !!! this may be where a huge bug is
         wav_onehot = wav_onehot[:,:,self.wav_cond_offset:]
@@ -457,7 +465,7 @@ class WaveNet(nn.Module):
         cond = self.cond(lc_dense, speaker_inds)
         n_ts = cond.size()[2]
 
-        chunk_size = 500
+        chunk_size = 5000
 
         # first slot is to report the original 
         wav_onehot = wav_onehot.repeat(n_rep + 1, 1, 1)
@@ -488,12 +496,12 @@ class WaveNet(nn.Module):
                 device=wav_onehot.device)
 
         # forward-most index element in wave input
-        cur_pos = torch.tensor([self.base_global_rf + 20000], dtype=torch.long,
+        cur_pos = torch.tensor([self.base_global_rf], dtype=torch.long,
                 device=wav_onehot.device)
-        end_pos = torch.tensor([self.base_global_rf + 40000], dtype=torch.long,
-                device=wav_onehot.device)
-        # end_pos = torch.tensor([n_ts], dtype=torch.long,
+        # end_pos = torch.tensor([self.base_global_rf + 30000], dtype=torch.long,
         #         device=wav_onehot.device)
+        end_pos = torch.tensor([n_ts], dtype=torch.long,
+                device=wav_onehot.device)
 
         wav_ir[0] = cur_pos[0] - self.base_global_rf 
         wav_ir[1] = cur_pos[0]
@@ -504,8 +512,6 @@ class WaveNet(nn.Module):
             # print(n_rep, self.n_res, l.global_rf, chunk_size, 1)
             sig.append(torch.empty(n_rep, self.n_res, l.global_rf + chunk_size -
                     1, device=wav_onehot.device))
-            # sig[i] = wav_onehot.new_empty(n_rep, self.n_res, l.global_rf 
-            #     + chunk_size - 1)
             irng[i,0] = 0 
             irng[i,1] = l.global_rf 
             orng[i,0] = 0 
@@ -523,9 +529,9 @@ class WaveNet(nn.Module):
 
         self.set_full() 
         while not torch.equal(cur_pos, end_pos):
-            chunk_size = min(chunk_size, end_pos - cur_pos)
+            chunk_size = min(chunk_size, end_pos[0] - cur_pos[0])
 
-            for __ in range(chunk_size):
+            for _ in range(chunk_size):
                 # base_layer is a 1x1 convolution, so uses irng[0] 
                 # for both input and output
                 ir = irng[0]
@@ -533,25 +539,22 @@ class WaveNet(nn.Module):
                         self.base_layer(wav_onehot[1:,:,wav_ir[0]:wav_ir[1]]) 
                 skp_sum[...] = 0
 
-                i = 0
+                li = 0
                 for layer in self.conv_layers:
                     # last iteration reassigns to same sig slot (unused) 
-                    i_out = min(i+1, n_layers - 1)
-                    p, q = irng[i], orng[i+1]
-                    sig[i_out][:,:,q[0]:q[1]], skp = layer(
-                            sig[i][:,:,p[0]:p[1]],
-                            cond[:,:,cond_rng[0]:cond_rng[1]]
-                        )
+                    li_out = min(li+1, n_layers - 1)
+                    p, q = irng[li], orng[li+1]
+                    sig[li_out][:,:,q[0]:q[1]], skp = \
+                            layer(sig[li][:,:,p[0]:p[1]], cond[:,:,cond_rng[0]:cond_rng[1]])
                     skp_sum += skp
-                    i += 1
+                    li += 1
 
                 post1 = self.post1(self.relu(skp_sum))
-                quant = self.post2(self.relu(post1))
-                cat = dcat.OneHotCategorical(logits=quant.squeeze(2))
-
-                # pre_val = int(torch.matmul(wav_onehot[0,:,wav_ir[1]],
-                #     quant_range))
-                wav_onehot[1:,:,wav_ir[1]] = cat.sample()
+                quant = self.post2(self.relu(post1)).squeeze(2)
+                probs = F.softmax(quant, dim=-1)
+                indices = torch.multinomial(probs, 1, True) 
+                wav_onehot[1:,:,wav_ir[1]] = F.one_hot(indices,
+                        self.n_quant).squeeze(1).float()
 
                 # post_val = int(torch.matmul(wav_onehot[0,:,wav_ir[1]],
                 #     quant_range))
@@ -566,14 +569,16 @@ class WaveNet(nn.Module):
                     cond_rng[0] = cond_rng[1] - 1
                     # wav_ir[0] = wav_ir[1] - local_rf[0]
 
-                    for i, l in enumerate(self.conv_layers):
+                    li = 0
+                    for l in self.conv_layers:
                         # hack because we can't index self.conv_layers
-                        if i == 0:
+                        if li == 0:
                             wav_ir[0] = wav_ir[1] - l.local_rf
-                        irng[i,0] = l.global_rf - l.local_rf 
-                        irng[i,1] = l.global_rf 
-                        orng[i,0] = l.global_rf - 1 
-                        orng[i,1] = l.global_rf
+                        irng[li,0] = l.global_rf - l.local_rf 
+                        irng[li,1] = l.global_rf 
+                        orng[li,0] = l.global_rf - 1 
+                        orng[li,1] = l.global_rf
+                        li += 1
                         
                 orng += 1
                 irng += 1
@@ -598,10 +603,11 @@ class WaveNet(nn.Module):
 
         # print(wav[:,end_pos:end_pos + 10000])
         print('synth range std: {}, baseline std: {}'.format(
-            wav[:,:end_pos].std(), wav[:,end_pos:].std()
+            wav[:,:end_pos[0]].std(), wav[:,end_pos[0]:].std()
             ))
 
-        return wav[0,...], wav[1:,...]
+        return wav
+        # return wav[0,...], wav[1:,...]
 
 
 

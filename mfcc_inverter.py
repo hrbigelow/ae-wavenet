@@ -44,7 +44,7 @@ class MfccInverter(nn.Module):
         """
         self.wavenet.set_parent_vc(dataset.mfcc_vc)
         self._init_geometry(dataset.window_batch_size)
-        self.print_geometry()
+        # self.print_geometry()
 
 
     def _init_geometry(self, batch_win_size):
@@ -99,11 +99,9 @@ class MfccInverter(nn.Module):
         self._initialize()
         # self.load_state_dict(state['state_dict'])
 
-    def forward(self, mels, wav, voice_inds, jitter_index, n_rep=None):
-        # bla = torch.jit.trace(self.wavenet, (wav, mels, voice_inds, jitter_index, n_rep))       
-        # print(type(bla))
-        return self.wavenet(wav, mels, voice_inds, jitter_index, n_rep)
-
+    def forward(self, wav, mels, voice_inds, jitter_index):
+        with torch.no_grad():
+            return self.wavenet(wav, mels, voice_inds, jitter_index)
 
 
     def run(self, vbatch):

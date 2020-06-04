@@ -195,6 +195,12 @@ def wav_gen_parser():
     wp.add_argument('--hwtype', '-hw', type=str, metavar='STR',
             default='GPU',
             help='Hardware type (GPU, TPU-single or TPU)')
+    wp.add_argument('--jit-script-path', '-js', type=str, metavar='STR',
+            default=None,
+            help='If provided, save jit script for the wavenet model here, and exit')
+    wp.add_argument('--data-write-tmpl', '-dw', type=str, metavar='STR',
+            default=None,
+            help='If provided, save data batch tensors here')
 
     return wp
 

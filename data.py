@@ -53,8 +53,10 @@ def convert(catalog, dat_file, n_quant, sample_rate=16000):
         snd_data[wav_b:wav_e] = snd_mu
         samples.append(
                 SpokenSample(
-                    voice_index=speaker_id_map[voice_id], wav_b=wav_b,
-                    wav_e=wav_e, file_path=snd_path
+                    voice_index=speaker_id_map[voice_id],
+                    wav_b=wav_b, wav_e=wav_e,
+                    # mel_b=mel_b, mel_e=mel_e, 
+                    file_path=snd_path
                     )
                 )
         if len(samples) % 100 == 0:

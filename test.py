@@ -44,6 +44,16 @@ def main():
 
     if opts.hwtype in ('CPU', 'GPU'):
         chs = chassis.InferenceChassis(mode, opts)
+        if opts.jit_script_path:
+            # data_scr = torch.jit.script(chs.state.data_loader.dataset)
+            model_scr = torch.jit.script(chs.state.model.wavenet)
+            model_scr.save(opts.jit_script_path)
+            model_scr.to(chs.device)
+            # print(model_scr.code)
+            print('saved {}'.format(opts.jit_script_path))
+            chs.infer(model_scr)
+            return
+
         # chs.state.model.print_geometry()
         chs.infer()
     elif opts.hwtype == 'TPU':
