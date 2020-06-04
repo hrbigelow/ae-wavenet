@@ -465,7 +465,7 @@ class WaveNet(nn.Module):
         cond = self.cond(lc_dense, speaker_inds)
         n_ts = cond.size()[2]
 
-        chunk_size = 5000
+        chunk_size = 1000
 
         # first slot is to report the original 
         wav_onehot = wav_onehot.repeat(n_rep + 1, 1, 1)
