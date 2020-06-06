@@ -3,6 +3,7 @@ import torch
 import vconv
 import parse_tools  
 import wavenet as wn 
+import data
 
 class MfccInverter(nn.Module):
     """
@@ -32,7 +33,6 @@ class MfccInverter(nn.Module):
         mi_params = self.init_args['mi_params']
         self.bn_type = 'none' 
 
-        self.preprocess = wn.PreProcess(n_quant=dec_params['n_quant'])  
         self.wavenet = wn.WaveNet(**dec_params, parent_vc=None,
                 n_lc_in=mi_params['n_lc_in'])
 
@@ -99,20 +99,25 @@ class MfccInverter(nn.Module):
         self._initialize()
         # self.load_state_dict(state['state_dict'])
 
-    def forward(self, wav, mels, voice_inds, jitter_index):
-        with torch.no_grad():
-            return self.wavenet(wav, mels, voice_inds, jitter_index)
+    def forward(self, batch):
+        b = batch
+        if self.training:
+            assert isinstance(b, data.VirtualBatch)
+            return self.wavenet(b.wav_dec_input, b.mel_enc_input,
+                    b.voice_index, b.jitter_index, b)
+        else:
+            assert isinstance(b, data.MfccBatch)
+            with torch.no_grad():
+                return self.wavenet(b.wav_enc_input, b.mel_enc_input,
+                        b.voice_index, b.jitter_index, b)
 
 
     def run(self, vbatch):
         """
         """
-        # wav_onehot_dec = self.preprocess(vbatch.wav_dec_input)
         trim = self.trim_dec_out
         wav_batch_out = vbatch.wav_dec_input[:,trim[0]:trim[1]]
-        # self.wav_onehot_dec = wav_onehot_dec
-        quant = self.forward(vbatch.mel_enc_input, vbatch.wav_dec_input,
-                vbatch.voice_index, vbatch.jitter_index)
+        quant = self.forward(vbatch)
 
         pred, target = quant[...,:-1], wav_batch_out[...,1:]
 

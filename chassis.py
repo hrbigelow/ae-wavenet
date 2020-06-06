@@ -275,8 +275,7 @@ class InferenceChassis(object):
                     wav = model_scr(mb.wav_enc_input, mb.mel_enc_input,
                             mb.voice_index, mb.jitter_index)
             else:
-                wav = self.state.model(mb.wav_enc_input, mb.mel_enc_input,
-                        mb.voice_index, mb.jitter_index)
+                wav = self.state.model(mb)
 
             wav_orig, wav_sample = wav[0,...], wav[1:,...]
 

@@ -1,3 +1,4 @@
+import sys
 import torch
 from torch import nn
 import vconv
@@ -7,39 +8,6 @@ import util
 import netmisc
 from collections import namedtuple
 import torch.nn.functional as F
-
-# from numpy import vectorize as np_vectorize
-class PreProcess(nn.Module):
-    """
-    Perform one-hot encoding
-    """
-    def __init__(self, n_quant):
-        super(PreProcess, self).__init__()
-        self.n_quant = n_quant
-        self.register_buffer('quant_onehot', torch.eye(self.n_quant))
-        self.register_buffer('quant_range', torch.arange(0,
-            self.n_quant).float())
-
-    def one_hot(self, wav_compand):
-        """
-        wav_compand: (B, T)
-        B, Q, T: n_batch, n_quant, n_timesteps
-        returns: (B, Q, T)
-        """
-        wav_compand_tmp = wav_compand.long()
-        wav_one_hot = util.gather_md_jit(self.quant_onehot, 0, (1,0),
-                wav_compand_tmp).permute(1,0,2)
-        return wav_one_hot
-
-    
-
-    def forward(self, in_snd_slice):
-        """
-        Converts the input to a one-hot format
-        """
-        in_snd_slice_onehot = self.one_hot(in_snd_slice)
-        return in_snd_slice_onehot
-
 
 
 
@@ -221,24 +189,6 @@ ArchConfig = namedtuple('ArchConfig', [
     ]
     )
 
-"""
-class ArchConfig(object):
-    def __init__(self, n_lc_in, n_lc_out, n_res, n_dil,
-            n_skp, n_post, n_quant, n_blocks, n_block_layers, n_speakers,
-            n_global_embed):
-        self.n_lc_in = n_lc_in
-        self.n_lc_out = n_lc_out
-        self.n_res = n_res
-        self.n_dil = n_dil
-        self.n_skp = n_skp
-        self.n_post = n_post
-        self.n_quant = n_quant
-        self.n_blocks = n_blocks
-        self.n_block_layers = n_block_layers
-        self.n_speakers = n_speakers,
-        self.n_global_embed = n_global_embed
-"""
-
 
 class WaveNet(nn.Module):
     # see https://pytorch.org/docs/stable/jit_language_reference.html \\
@@ -260,6 +210,8 @@ class WaveNet(nn.Module):
         self.n_res = n_res
         self.n_quant = n_quant
 
+        self.register_buffer('quant_range', torch.arange(0, self.n_quant).float())
+
         self.quant_onehot = None 
         self.bias = bias
         post_jitter_filt_sz = 3
@@ -277,8 +229,6 @@ class WaveNet(nn.Module):
         self.vc['beg'] = self.lc_conv.vc 
         cur_vc = self.vc['beg']
 
-        self.preprocess = PreProcess(self.ac.n_quant) 
-        
         # This VC is the first processing of the local conditioning after the
         # Jitter. It is the starting point for the commitment loss aggregation
         self.lc_upsample = nn.Sequential()
@@ -369,28 +319,21 @@ class WaveNet(nn.Module):
             layer.set_full()  
 
 
-    def forward(self, wav, lc_sparse, speaker_inds, jitter_index):
+    def forward(self, wav, lc_sparse, speaker_inds, jitter_index, batch):
         if self.training:
             return self.forward_train(wav, lc_sparse, speaker_inds,
-                    jitter_index)
+                    jitter_index, batch)
         else:
             return self.forward_test(wav, lc_sparse, speaker_inds,
-                    jitter_index)
+                    jitter_index, batch)
 
 
-    def forward_train(self, wav, lc_sparse, speaker_inds, jitter_index):
+    def forward_train(self, wav, lc_sparse, speaker_inds, jitter_index, batch):
         """
-        B: n_batch (# of separate wav streams being processed)
-        T1: n_wav_timesteps
-        T2: n_conditioning_timesteps
-        I: n_in
-        L: n_lc_in
-        Q: n_quant
-
-        wav: (B, Q, T1)
-        lc: (B, L, T2)
-        speaker_inds: (B, T)
-        outputs: (B, Q, N)
+        wav: (n_batch, n_quant, n_wav_ts)
+        lc: (n_batch, n_lc_in, n_cond_ts)
+        speaker_inds: (n_batch, n_wav_ts(?))
+        outputs: (n_batch, n_quant, ?)
         """
         D1 = lc_sparse.size()[1]
         lc_jitter = torch.take(lc_sparse,
@@ -403,19 +346,18 @@ class WaveNet(nn.Module):
 
         D2 = lc_dense.size()[1]
         lc_dense_trim = lc_dense[:,:,self.trim_ups_out[0]:self.trim_ups_out[1]]
-        # lc_dense_trim = torch.take(lc_dense,
-        #         lcond_slice.unsqueeze(1).expand(-1, D2, -1))
+
+        # print(batch.wav_end_rng - batch.mel_enc_rng
 
         cond = self.cond(lc_dense_trim, speaker_inds)
         # "The conditioning signal was passed separately into each layer" - p 5 pp 1.
         # Oddly, they claim the global signal is just passed in as one-hot vectors.
         # But, this means wavenet's parameters would have N_s baked in, and wouldn't
         # be able to operate with a new speaker ID.
-        wav_onehot = F.one_hot(wav.long(), self.n_quant).permute(0,2,1)
-        # wav_onehot = self.preprocess(wav)
+        wav_onehot = F.one_hot(wav.long(), self.n_quant).permute(0,2,1).float()
 
         sig = self.base_layer(wav_onehot) 
-        skp_sum = torch.zeros(wav_onehot.shape[0], 256,
+        skp_sum = torch.zeros(wav_onehot.shape[0], self.n_skp,
                 self.n_batch_win, device=wav_onehot.device)
 
         for layer in self.conv_layers:
@@ -430,7 +372,7 @@ class WaveNet(nn.Module):
         return quant
 
 
-    def forward_test(self, wav, lc_sparse, speaker_inds, jitter_index):
+    def forward_test(self, wav, lc_sparse, speaker_inds, jitter_index, batch):
         """
         Generate n_rep samples, using lc_sparse and speaker_inds for local and global
         conditioning.  
@@ -441,16 +383,8 @@ class WaveNet(nn.Module):
         """
         n_rep = torch.tensor(self.n_replicas, device=wav.device)
 
-        # wav_onehot = self.preprocess(wav)
-
-        # assert wav.min().item().toLong() >= 0
         wav_onehot = F.one_hot(wav.long(), self.n_quant).permute(0,2,1).float()
-
-        # !!! this may be where a huge bug is
         wav_onehot = wav_onehot[:,:,self.wav_cond_offset:]
-
-        # for converting from one-hot to value format
-        # quant_range = wav_onehot.new(list(range(self.ac.n_quant)))
 
         lc_sparse = lc_sparse.repeat(n_rep, 1, 1)
         jitter_index = jitter_index.repeat(n_rep, 1)
@@ -470,7 +404,6 @@ class WaveNet(nn.Module):
         # first slot is to report the original 
         wav_onehot = wav_onehot.repeat(n_rep + 1, 1, 1)
         n_layers = self.n_blocks * self.n_block_layers
-        # n_layers = len(self.conv_layers)
 
         # sig[0] is the output of the base_layer
         # sig[i] is the output of the conv_layer[i-1]
@@ -486,7 +419,6 @@ class WaveNet(nn.Module):
         # because
         orng = wav_onehot.new_empty(n_layers + 1, 2, dtype=torch.long)
 
-        # the one  
         cond_rng = wav_onehot.new_empty(2, dtype=torch.long)
 
         # input range for the wav_onehot vector
@@ -556,8 +488,6 @@ class WaveNet(nn.Module):
                 wav_onehot[1:,:,wav_ir[1]] = F.one_hot(indices,
                         self.n_quant).squeeze(1).float()
 
-                # post_val = int(torch.matmul(wav_onehot[0,:,wav_ir[1]],
-                #     quant_range))
                 # print('{}: {} - {}'.format(post_val - pre_val, pre_val,
                 #     post_val))
 
@@ -599,7 +529,7 @@ class WaveNet(nn.Module):
 
         
         # convert to value format
-        wav = torch.matmul(wav_onehot.permute(0,2,1), self.preprocess.quant_range)
+        wav = torch.matmul(wav_onehot.permute(0,2,1), self.quant_range)
 
         # print(wav[:,end_pos:end_pos + 10000])
         print('synth range std: {}, baseline std: {}'.format(

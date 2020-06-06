@@ -49,9 +49,6 @@ class AutoEncoder(nn.Module):
         n_mel_chan = self.init_args['n_mel_chan']
         training = self.init_args['training']
 
-        # the "preprocessing"
-        self.preprocess = dec.PreProcess(n_quant=dec_params['n_quant'])
-
         self.encoder = enc.Encoder(n_in=n_mel_chan, parent_vc=None, **enc_params)
 
         bn_type = bn_params['type']
@@ -236,9 +233,6 @@ class AutoEncoder(nn.Module):
         quant_pred: (B, Q, T) (the prediction from the model)
         wav_batch_out: (B, T) (the actual data from the same timesteps)
         """
-        # wav_onehot_dec = self.preprocess(vbatch.wav_dec_input)
-        # grad = torch.autograd.grad(wav_onehot_dec, vbatch.wav_dec_input).data
-
         # Slice each wav input
         trim = self.trim_dec_out
         wav_batch_out = vbatch.wav_dec_input[:,trim[0]:trim[1]]
