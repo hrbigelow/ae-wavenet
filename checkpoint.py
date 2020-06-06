@@ -23,12 +23,14 @@ class State(object):
             self.torch_cuda_rng_states = None
 
 
-    def load(self, ckpt_file, dat_file):
+    def load(self, ckpt_file, dat_file, n_batch=None, n_win_batch=None):
         sinfo = torch.load(ckpt_file)
 
         # This is the required order for model and data init 
         self.model = pickle.loads(sinfo['model'])
+        self.model.override(n_win_batch)
         dataset = pickle.loads(sinfo['dataset'])
+        dataset.override(n_batch, n_win_batch)
         dataset.load_data(dat_file)
         self.model.post_init(dataset)
         sub_state = { k: v for k, v in sinfo['model_state_dict'].items() if '_lead' not

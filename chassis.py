@@ -72,7 +72,8 @@ class Chassis(object):
 
         else:
             self.state = checkpoint.State()
-            self.state.load(opts.ckpt_file, opts.dat_file)
+            self.state.load(opts.ckpt_file, opts.dat_file, opts.n_batch,
+                    opts.n_win_batch)
             self.start_step = self.state.step
             # print('Restored model, data, and optim from {}'.format(opts.ckpt_file), file=stderr)
             #print('Data state: {}'.format(state.data), file=stderr)
@@ -180,7 +181,7 @@ class Chassis(object):
         batch = next(self.data_iter)
         self.quant, self.target, self.loss = self.state.model.run(batch) 
         self.probs = self.softmax(self.quant)
-        self.mel_enc_input = batch.mel_enc_input
+        self.mel_enc_input = batch.mel
         
 
     def loss_fn(self):

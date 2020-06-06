@@ -286,20 +286,25 @@ class WaveNet(nn.Module):
         parent_vc.child = self.vc['beg']
 
 
-    def post_init(self, n_batch_win):
-        self.n_batch_win = n_batch_win
+    def post_init(self, n_win_batch):
 
-        one_gr = vconv.GridRange((0, int(1e12)), (0, 1), 1)
-        vconv.compute_inputs(self.vc['end_grcc'], one_gr)
+        # one_gr = vconv.GridRange((0, int(1e12)), (0, 1), 1)
+        win_gr = vconv.GridRange((0, int(1e12)), (0, n_win_batch), 1)
+        vconv.compute_inputs(self.vc['end_grcc'], win_gr)
 
-        mfcc_vc = self.vc['beg'].parent
-        beg_grcc_vc = self.vc['beg_grcc']
-        self.wav_cond_offset = int(beg_grcc_vc.input_gr.sub[0] - mfcc_vc.input_gr.sub[0])
+        di = self.vc['beg_grcc'].input_gr
+        wi = self.vc['beg'].parent.input_gr
+
+        self.wav_cond_offset = [int(di.sub[0] - wi.sub[0]), int(di.sub[1] -
+                wi.sub[0])]
 
         for layer in self.conv_layers:
             layer.post_init()
 
         self.base_global_rf = self.conv_layers[0].global_rf
+        self.n_win_batch = n_win_batch
+
+
 
     def set_n_replicas(self, n_replicas):
         self.n_replicas = n_replicas
@@ -341,13 +346,8 @@ class WaveNet(nn.Module):
         lc_conv = self.lc_conv(lc_jitter) 
         lc_dense = self.lc_upsample(lc_conv)
 
-        # Trimming due to different phases of the input MFCC windows
-        # W2 = lcond_slice.size()[1] 
-
         D2 = lc_dense.size()[1]
         lc_dense_trim = lc_dense[:,:,self.trim_ups_out[0]:self.trim_ups_out[1]]
-
-        # print(batch.wav_end_rng - batch.mel_enc_rng
 
         cond = self.cond(lc_dense_trim, speaker_inds)
         # "The conditioning signal was passed separately into each layer" - p 5 pp 1.
@@ -355,10 +355,11 @@ class WaveNet(nn.Module):
         # But, this means wavenet's parameters would have N_s baked in, and wouldn't
         # be able to operate with a new speaker ID.
         wav_onehot = F.one_hot(wav.long(), self.n_quant).permute(0,2,1).float()
+        wav_onehot = wav_onehot[:,:,self.wav_cond_offset[0]:self.wav_cond_offset[1]]
 
         sig = self.base_layer(wav_onehot) 
         skp_sum = torch.zeros(wav_onehot.shape[0], self.n_skp,
-                self.n_batch_win, device=wav_onehot.device)
+                self.n_win_batch, device=wav_onehot.device)
 
         for layer in self.conv_layers:
             sig, skp = layer(sig, cond)
@@ -384,7 +385,7 @@ class WaveNet(nn.Module):
         n_rep = torch.tensor(self.n_replicas, device=wav.device)
 
         wav_onehot = F.one_hot(wav.long(), self.n_quant).permute(0,2,1).float()
-        wav_onehot = wav_onehot[:,:,self.wav_cond_offset:]
+        wav_onehot = wav_onehot[:,:,self.wav_cond_offset[0]:]
 
         lc_sparse = lc_sparse.repeat(n_rep, 1, 1)
         jitter_index = jitter_index.repeat(n_rep, 1)

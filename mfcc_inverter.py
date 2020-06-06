@@ -38,17 +38,25 @@ class MfccInverter(nn.Module):
 
         self.objective = wn.RecLoss()
 
+
+    def override(self, n_win_batch=None):
+        """
+        override values from checkpoints
+        """
+        if n_win_batch is not None:
+            self.window_batch_size = n_win_batch
+
     def post_init(self, dataset):
         """
         further initializations needed in case we are training the model
         """
         self.wavenet.set_parent_vc(dataset.mfcc_vc)
-        self._init_geometry(dataset.window_batch_size)
+        self._init_geometry(self.window_batch_size)
         # self.print_geometry()
 
 
-    def _init_geometry(self, batch_win_size):
-        end_gr = vconv.GridRange((0, 100000), (0, batch_win_size), 1)
+    def _init_geometry(self, n_win_batch):
+        end_gr = vconv.GridRange((0, 100000), (0, n_win_batch), 1)
         end_vc = self.wavenet.vc['end_grcc']
         end_gr_actual = vconv.compute_inputs(end_vc, end_gr)
 
@@ -73,7 +81,7 @@ class MfccInverter(nn.Module):
         self.wavenet.trim_ups_out = torch.tensor([0, beg_grcc_vc.in_len()],
                 dtype=torch.long)
 
-        self.wavenet.post_init(batch_win_size)
+        self.wavenet.post_init(n_win_batch)
 
 
     def print_geometry(self):
@@ -103,26 +111,24 @@ class MfccInverter(nn.Module):
         b = batch
         if self.training:
             assert isinstance(b, data.VirtualBatch)
-            return self.wavenet(b.wav_dec_input, b.mel_enc_input,
-                    b.voice_index, b.jitter_index, b)
+            return self.wavenet(b.wav, b.mel, b.voice_idx, b.jitter_idx, b)
         else:
             assert isinstance(b, data.MfccBatch)
             with torch.no_grad():
-                return self.wavenet(b.wav_enc_input, b.mel_enc_input,
-                        b.voice_index, b.jitter_index, b)
+                return self.wavenet(b.wav, b.mel, b.voice_idx, b.jitter_idx, b)
 
 
     def run(self, vbatch):
         """
         """
         trim = self.trim_dec_out
-        wav_batch_out = vbatch.wav_dec_input[:,trim[0]:trim[1]]
+        wav_batch_out = vbatch.wav[:,trim[0]:trim[1]]
         quant = self.forward(vbatch)
 
         pred, target = quant[...,:-1], wav_batch_out[...,1:]
 
         loss = self.objective(pred, target)
-        ag_inputs = (vbatch.mel_enc_input)
+        ag_inputs = (vbatch.mel)
         (mel_grad, ) = torch.autograd.grad(loss, ag_inputs, retain_graph=True)
         self.objective.metrics.update({
             'mel_grad_sd': mel_grad.std(),

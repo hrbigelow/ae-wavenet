@@ -90,14 +90,14 @@ class VirtualBatch(object):
 
         super(VirtualBatch, self).__init__()
         ds = dataset
-        self.voice_index = torch.empty((ds.batch_size,), dtype=torch.long)
-        self.jitter_index = torch.empty((ds.batch_size, ds.embed_len),
+        self.voice_idx = torch.empty((ds.batch_size,), dtype=torch.long)
+        self.jitter_idx = torch.empty((ds.batch_size, ds.embed_len),
                 dtype=torch.long)
-        self.wav_dec_input = torch.empty((ds.batch_size, ds.dec_in_len))
-        self.mel_enc_input = torch.empty((ds.batch_size, ds.num_mel_chan(),
+        self.wav = torch.empty((ds.batch_size, ds.enc_in_len))
+        self.mel = torch.empty((ds.batch_size, ds.num_mel_chan(),
             ds.enc_in_mel_len)) 
-        self.wav_dec_rng = [None] * ds.batch_size
-        self.mel_enc_rng = [None] * ds.batch_size
+        self.wav_rng = [None] * ds.batch_size
+        self.mel_rng = [None] * ds.batch_size
 
         self.picks = list(range(len(ds.in_start)))
         random.shuffle(self.picks)
@@ -106,16 +106,16 @@ class VirtualBatch(object):
 
     def __repr__(self):
         fmt = (
-            'voice_index: {}\n' + 
-            'jitter_index: {}\n' + 
-            'wav_dec_input.shape: {}\n' + 
-            'mel_enc_input.shape: {}\n' +
-            'wav_dec_rng: {}\n' +
-            'mel_enc_rng: {}\n'
+            'voice_idx: {}\n' + 
+            'jitter_idx: {}\n' + 
+            'wav.shape: {}\n' + 
+            'mel.shape: {}\n' +
+            'wav_rng: {}\n' +
+            'mel_rng: {}\n'
         )
-        return fmt.format(self.voice_index, self.jitter_index,
-                self.wav_dec_input.shape, self.mel_enc_input.shape,
-                self.wav_dec_rng, self.mel_enc_rng)
+        return fmt.format(self.voice_idx, self.jitter_idx,
+                self.wav.shape, self.mel.shape,
+                self.wav_rng, self.mel_rng)
 
     def populate(self, dataset):
         """
@@ -125,40 +125,45 @@ class VirtualBatch(object):
         rg = torch.empty((ds.batch_size), dtype=torch.int64).cpu()
 
         nz = ds.embed_len
-        trim = ds.trim_dec_in
 
         for b in range(ds.batch_size):
             wi = self.picks[self.pos]
             s, voice_ind = ds.in_start[wi]
-            _wav_enc_input = ds.snd_data[s:s + ds.enc_in_len]
+            _wav = ds.snd_data[s:s + ds.enc_in_len]
             # print('wav_enc_input.shape: {}, s: {}, ds.snd_data.shape: {}'.format(
             #     wav_enc_input.shape, s, ds.snd_data.shape), file=stderr)
             # stderr.flush()
-            self.wav_dec_rng[b] = s + trim[0], s + trim[1]
-            self.mel_enc_rng[b] = s, s + ds.enc_in_len
-            self.wav_dec_input[b,...] = _wav_enc_input[trim[0]:trim[1]]
-            self.mel_enc_input[b,...] = ds.mfcc_proc.func(_wav_enc_input)
-            self.voice_index[b] = voice_ind 
-            self.jitter_index[b,:] = \
+            self.wav_rng[b] = s, s + ds.enc_in_len 
+            self.mel_rng[b] = s, s + ds.enc_in_len
+            self.wav[b,...] = _wav
+            self.mel[b,...] = ds.mfcc_proc.func(_wav)
+            self.voice_idx[b] = voice_ind 
+            self.jitter_idx[b,:] = \
                     torch.tensor(ds.jitter.gen_indices(nz) + b * nz) 
 
             # loop indefinitely
             self.pos = (self.pos + 1) % len(ds.in_start)
 
-            fetched_wav, fetched_mel = ds.fetch_at(*self.wav_dec_rng[b],
-                    *self.mel_enc_rng[b])
-            assert torch.equal(fetched_wav.float(), self.wav_dec_input[b])
-            assert torch.equal(fetched_mel.float(), self.mel_enc_input[b])
-
-        # self.mel_enc_input /= \
-        #    self.mel_enc_input.std(dim=(1,2)).unsqueeze(1).unsqueeze(1)
+        # self.mel /= \
+        #    self.mel.std(dim=(1,2)).unsqueeze(1).unsqueeze(1)
 
 
     def to(self, device):
-        self.voice_index = self.voice_index.to(device)
-        self.jitter_index = self.jitter_index.to(device)
-        self.wav_dec_input = self.wav_dec_input.to(device)
-        self.mel_enc_input = self.mel_enc_input.to(device)
+        self.voice_idx = self.voice_idx.to(device)
+        self.jitter_idx = self.jitter_idx.to(device)
+        self.wav = self.wav.to(device)
+        self.mel = self.mel.to(device)
+
+    def validate(self, ds):
+        """
+        validates that the internal coordinates match those directly fetched
+        """
+        for b in range(ds.batch_size):
+            fetched_wav, fetched_mel = ds.fetch_at(*self.wav_rng[b],
+                    *self.mel_rng[b])
+            assert torch.equal(fetched_wav.float(), self.wav[b].cpu())
+            assert torch.equal(fetched_mel.float(), self.mel[b].cpu())
+
 
 
 class MfccBatch(object):
@@ -198,16 +203,19 @@ class MfccBatch(object):
         self.valid = True
         self.pos += 1
 
-        fetched_wav, fetched_mel = ds.fetch_at(*self.wav_enc_rng,
-                *self.mel_enc_rng)
-        assert torch.equal(fetched_wav.byte(), self.wav_enc_input[0])
-        assert torch.equal(fetched_mel.float(), self.mel_enc_input[0])
 
     def to(self, device):
         self.mel_enc_input = self.mel_enc_input.to(device)
         self.wav_enc_input = self.wav_enc_input.to(device)
         self.voice_index = self.voice_index.to(device)
         self.jitter_index = self.jitter_index.to(device)
+
+    def validate(self, ds):
+        fetched_wav, fetched_mel = ds.fetch_at(*self.wav_enc_rng,
+                *self.mel_enc_rng)
+        assert torch.equal(fetched_wav.byte(), self.wav_enc_input[0].cpu())
+        assert torch.equal(fetched_mel.float(), self.mel_enc_input[0].cpu())
+
 
 class Slice(torch.utils.data.IterableDataset):
     """
@@ -273,6 +281,15 @@ class Slice(torch.utils.data.IterableDataset):
     def num_mel_chan(self):
         return self.mfcc_proc.n_out
 
+    def override(self, n_batch=None, n_win_batch=None):
+        """
+        override values from checkpoints
+        """
+        if n_batch is not None:
+            self.batch_size = n_batch
+        if n_win_batch is not None:
+            self.window_batch_size = n_win_batch
+
 
     def post_init(self, model):
         self.trim_dec_in = model.trim_dec_in.numpy()
@@ -315,13 +332,13 @@ class Slice(torch.utils.data.IterableDataset):
         Random state is from torch.{get,set}_rng_state().  It is on the CPU,
         not GPU.
         """
-        self.vb.mel_enc_input.detach_()
-        self.vb.mel_enc_input.requires_grad_(False)
+        self.vb.mel.detach_()
+        self.vb.mel.requires_grad_(False)
         self.vb.populate(self)
 
         if self.target_device:
             self.vb.to(self.target_device)
-        self.vb.mel_enc_input.requires_grad_(True)
+        self.vb.mel.requires_grad_(True)
 
         return self.vb 
 
@@ -332,6 +349,7 @@ class Slice(torch.utils.data.IterableDataset):
         wav = self.snd_data[wav_b:wav_e]
         mel = self.mfcc_proc.func(self.snd_data[wav_mel_b:wav_mel_e])
         return wav, mel
+        # return wav.to(self.target_device), mel.to(self.target_device)
 
 
 class MfccInference(Slice):
