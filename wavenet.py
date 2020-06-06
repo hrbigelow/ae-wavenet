@@ -288,7 +288,7 @@ class WaveNet(nn.Module):
 
     def post_init(self, n_win_batch):
 
-        # one_gr = vconv.GridRange((0, int(1e12)), (0, 1), 1)
+        one_gr = vconv.GridRange((0, int(1e12)), (0, 1), 1)
         win_gr = vconv.GridRange((0, int(1e12)), (0, n_win_batch), 1)
         vconv.compute_inputs(self.vc['end_grcc'], win_gr)
 
@@ -297,6 +297,8 @@ class WaveNet(nn.Module):
 
         self.wav_cond_offset = [int(di.sub[0] - wi.sub[0]), int(di.sub[1] -
                 wi.sub[0])]
+
+        vconv.compute_inputs(self.vc['end_grcc'], one_gr)
 
         for layer in self.conv_layers:
             layer.post_init()

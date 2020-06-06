@@ -179,7 +179,7 @@ class MfccBatch(object):
         assert ds.batch_size == 1, 'Mfcc only supports batch size 1'
         self.pos = 0
         self.valid = False
-        self.voice_index = torch.empty((ds.batch_size,), dtype=torch.long)
+        self.voice_idx = torch.empty((ds.batch_size,), dtype=torch.long)
 
     def populate(self, dataset):
         ds = dataset
@@ -188,16 +188,16 @@ class MfccBatch(object):
             return
 
         sam = ds.samples[self.pos]
-        __, self.voice_index[0] = ds.in_start[self.pos] 
+        __, self.voice_idx[0] = ds.in_start[self.pos] 
         self.wav_enc_rng = sam.wav_b, sam.wav_e
         self.mel_enc_rng = sam.wav_b, sam.wav_e
 
-        self.wav_enc_input = ds.snd_data[sam.wav_b:sam.wav_e].unsqueeze(0)
-        _mel_enc_input = ds.mfcc_proc.func(self.wav_enc_input[0]).unsqueeze(0)
-        # _mel_enc_input /= _mel_enc_input.std(dim=(1,2)).unsqueeze(1).unsqueeze(1)
-        self.mel_enc_input = _mel_enc_input.type(torch.float32)
-        embed_len = self.mel_enc_input.size()[2]
-        self.jitter_index = torch.tensor(ds.jitter.gen_indices(embed_len),
+        self.wav = ds.snd_data[sam.wav_b:sam.wav_e].unsqueeze(0)
+        _mel = ds.mfcc_proc.func(self.wav[0]).unsqueeze(0)
+        # _mel /= _mel.std(dim=(1,2)).unsqueeze(1).unsqueeze(1)
+        self.mel = _mel.type(torch.float32)
+        embed_len = self.mel.size()[2]
+        self.jitter_idx = torch.tensor(ds.jitter.gen_indices(embed_len),
                 dtype=torch.long)
         self.file_path = sam.file_path
         self.valid = True
@@ -205,16 +205,16 @@ class MfccBatch(object):
 
 
     def to(self, device):
-        self.mel_enc_input = self.mel_enc_input.to(device)
-        self.wav_enc_input = self.wav_enc_input.to(device)
-        self.voice_index = self.voice_index.to(device)
-        self.jitter_index = self.jitter_index.to(device)
+        self.mel = self.mel.to(device)
+        self.wav = self.wav.to(device)
+        self.voice_idx = self.voice_idx.to(device)
+        self.jitter_idx = self.jitter_idx.to(device)
 
     def validate(self, ds):
         fetched_wav, fetched_mel = ds.fetch_at(*self.wav_enc_rng,
                 *self.mel_enc_rng)
-        assert torch.equal(fetched_wav.byte(), self.wav_enc_input[0].cpu())
-        assert torch.equal(fetched_mel.float(), self.mel_enc_input[0].cpu())
+        assert torch.equal(fetched_wav.byte(), self.wav[0].cpu())
+        assert torch.equal(fetched_mel.float(), self.mel[0].cpu())
 
 
 class Slice(torch.utils.data.IterableDataset):

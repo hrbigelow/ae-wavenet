@@ -126,6 +126,10 @@ class InferenceState(object):
 
         # This is the required order for model and data init 
         self.model = pickle.loads(sinfo['model'])
+
+        # win batch of 1 is inference mode
+        self.model.override(n_win_batch=1)
+
         # ignore the pickled dataset characteristics
         dataset = data.MfccInference(pickle.loads(sinfo['dataset']))
         dataset.load_data(dat_file)

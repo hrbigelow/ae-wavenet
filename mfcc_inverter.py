@@ -74,8 +74,9 @@ class MfccInverter(nn.Module):
                 [di.sub[0] - wi.sub[0], di.sub[1] - wi.sub[0] ],
                 dtype=torch.long)
 
+        # subrange on the wav input which corresponds to the output
         self.trim_dec_out = torch.tensor(
-                [end_gr.sub[0] - di.sub[0], end_gr.sub[1] - di.sub[0]],
+                [end_gr.sub[0] - wi.sub[0], end_gr.sub[1] - wi.sub[0]],
                 dtype=torch.long)
 
         self.wavenet.trim_ups_out = torch.tensor([0, beg_grcc_vc.in_len()],

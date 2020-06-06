@@ -23,7 +23,7 @@ def train_parser():
 
     # integer arguments
     iargs = [ 
-        ('nb', 'n-batch', 16),
+        ('nb', 'n-batch', None),
         ('nw', 'n-win-batch', 100),
         ('ms', 'max-steps', 1e20),
         ('si', 'save-interval', 1000),
