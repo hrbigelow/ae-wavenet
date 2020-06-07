@@ -52,7 +52,7 @@ class ProcessWav(object):
         trim_left = adj_l_wing_sz // self.hop_sz
         trim_right = self.vc.r_wing_sz // self.hop_sz
 
-        wav = wav.numpy()
+        # wav = wav.numpy()
         wav_pad = np.concatenate((np.zeros(left_pad), wav), axis=0) 
         mfcc = librosa.feature.mfcc(y=wav_pad, sr=self.sample_rate,
                 n_fft=self.window_sz, hop_length=self.hop_sz,

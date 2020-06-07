@@ -210,8 +210,6 @@ class WaveNet(nn.Module):
         self.n_res = n_res
         self.n_quant = n_quant
 
-        self.register_buffer('quant_range', torch.arange(0, self.n_quant).float())
-
         self.quant_onehot = None 
         self.bias = bias
         post_jitter_filt_sz = 3
@@ -433,10 +431,10 @@ class WaveNet(nn.Module):
         # forward-most index element in wave input
         cur_pos = torch.tensor([self.base_global_rf], dtype=torch.long,
                 device=wav_onehot.device)
-        # end_pos = torch.tensor([self.base_global_rf + 30000], dtype=torch.long,
-        #         device=wav_onehot.device)
-        end_pos = torch.tensor([n_ts], dtype=torch.long,
+        end_pos = torch.tensor([self.base_global_rf + 30000], dtype=torch.long,
                 device=wav_onehot.device)
+        # end_pos = torch.tensor([n_ts], dtype=torch.long,
+        #         device=wav_onehot.device)
 
         wav_ir[0] = cur_pos[0] - self.base_global_rf 
         wav_ir[1] = cur_pos[0]
@@ -532,7 +530,7 @@ class WaveNet(nn.Module):
 
         
         # convert to value format
-        wav = torch.matmul(wav_onehot.permute(0,2,1), self.quant_range)
+        wav = wav_onehot.argmax(1).to(wav_onehot.dtype)
 
         # print(wav[:,end_pos:end_pos + 10000])
         print('synth range std: {}, baseline std: {}'.format(

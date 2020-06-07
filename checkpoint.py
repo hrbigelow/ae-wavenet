@@ -131,8 +131,9 @@ class InferenceState(object):
         self.model.override(n_win_batch=1)
 
         # ignore the pickled dataset characteristics
-        dataset = data.MfccInference(pickle.loads(sinfo['dataset']))
-        dataset.load_data(dat_file)
+        dataset = data.MfccInference(pickle.loads(sinfo['dataset']), dat_file)
+
+        # dataset.load_data(dat_file)
         self.model.post_init(dataset)
         sub_state = { k: v for k, v in sinfo['model_state_dict'].items() if '_lead' not
                 in k and 'left_wing_size' not in k }

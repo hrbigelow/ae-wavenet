@@ -201,6 +201,9 @@ def wav_gen_parser():
     wp.add_argument('--data-write-tmpl', '-dw', type=str, metavar='STR',
             default=None,
             help='If provided, save data batch tensors here')
+    wp.add_argument('--n-timesteps', '-nt', type=int, metavar='INT',
+            default=None,
+            help='If provided, only infer for this many timesteps')
 
     return wp
 

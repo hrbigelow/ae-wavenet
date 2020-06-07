@@ -256,27 +256,26 @@ class InferenceChassis(object):
         sample_rate = self.state.data_loader.dataset.sample_rate
         n_quant = self.state.model.wavenet.ac.n_quant
 
-        for mb in self.data_iter:
+        for vb in self.data_iter:
             if self.data_write_tmpl:
                 dc = torch.jit.script(DataContainer({
-                    'mel': mb.mel_enc_input,
-                    'wav': mb.wav_enc_input,
-                    'voice': mb.voice_index,
-                    'jitter': mb.jitter_index
+                    'mel': vb.mel,
+                    'wav': vb.wav,
+                    'voice': vb.voice_idx,
+                    'jitter': vb.jitter_idx
                     }))
                 dc.save(self.data_write_tmpl)
                 print('saved {}'.format(self.data_write_tmpl))
 
             out_template = os.path.join(self.output_dir,
-                    os.path.basename(os.path.splitext(mb.file_path)[0])
+                    os.path.basename(os.path.splitext(vb.file_path)[0])
                     + '.{}.wav')
 
             if model_scr:
                 with torch.no_grad():
-                    wav = model_scr(mb.wav_enc_input, mb.mel_enc_input,
-                            mb.voice_index, mb.jitter_index)
+                    wav = model_scr(vb)
             else:
-                wav = self.state.model(mb)
+                wav = self.state.model(vb)
 
             wav_orig, wav_sample = wav[0,...], wav[1:,...]
 

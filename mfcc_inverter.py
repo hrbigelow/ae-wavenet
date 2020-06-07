@@ -111,10 +111,8 @@ class MfccInverter(nn.Module):
     def forward(self, batch):
         b = batch
         if self.training:
-            assert isinstance(b, data.VirtualBatch)
             return self.wavenet(b.wav, b.mel, b.voice_idx, b.jitter_idx, b)
         else:
-            assert isinstance(b, data.MfccBatch)
             with torch.no_grad():
                 return self.wavenet(b.wav, b.mel, b.voice_idx, b.jitter_idx, b)
 
