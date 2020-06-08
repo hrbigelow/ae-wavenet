@@ -144,15 +144,15 @@ class VirtualBatch(object):
             self.file_path = sam.file_path
             self.step()
 
-        self.wav = torch.tensor(
+        self.wav = torch.from_numpy(
                 np.stack([ds.snd_data[c[0]:c[1]] for c in coords])
                 ).float()
-        self.mel = torch.tensor(
+        self.mel = torch.from_numpy(
                 np.apply_along_axis(ds.mfcc_proc.func, 1, self.wav)
                 ).float()
         nz = self.mel.size()[2]
         self.voice_idx = torch.tensor([c[2] for c in coords]).long()
-        self.jitter_idx = torch.tensor(
+        self.jitter_idx = torch.from_numpy(
                 np.stack([
                     ds.jitter.gen_indices(nz) + b * nz
                     for b in range(ds.batch_size)]
@@ -298,13 +298,10 @@ class Slice(torch.utils.data.IterableDataset):
         # self.vb.mel.detach_()
         # self.vb.mel.requires_grad_(False)
         self.vb.populate(self)
+        self.vb.mel.requires_grad_(True)
 
         if self.target_device:
             self.vb.to(self.target_device)
-        self.vb.wav.requires_grad_(True)
-        self.vb.mel.requires_grad_(True)
-        self.vb.jitter_idx.requires_grad_(True)
-        self.vb.voice_idx.requires_grad_(True)
 
         return self.vb 
 
