@@ -31,6 +31,7 @@ class TPULoaderIter(object):
 
     def __next__(self):
         vb = self.per_dev_loader.__next__()[0]
+        print('in TPULoaderIter: ', vb.mel[:,:2,:2])
         return vb
 
 
