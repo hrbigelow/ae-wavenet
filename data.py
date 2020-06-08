@@ -286,7 +286,7 @@ class Slice(torch.utils.data.IterableDataset):
 
     def __iter__(self):
         assert self.vb is None, 'Cannot call __iter__ more than once'
-        self.vb = VirtualBatch(self, self.chunk_mode)
+        self.vb = VirtualBatch(self, chunk_mode=True)
         return self
 
     def __next__(self):
