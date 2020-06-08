@@ -298,10 +298,11 @@ class Slice(torch.utils.data.IterableDataset):
         # self.vb.mel.detach_()
         # self.vb.mel.requires_grad_(False)
         self.vb.populate(self)
-        self.vb.mel.requires_grad_(True)
 
         if self.target_device:
             self.vb.to(self.target_device)
+        self.vb.mel.requires_grad_(True)
+        print(self.vb.mel[:,:2,:2])
 
         return self.vb 
 
