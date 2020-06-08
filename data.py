@@ -303,6 +303,8 @@ class Slice(torch.utils.data.IterableDataset):
             self.vb.to(self.target_device)
         self.vb.wav.requires_grad_(True)
         self.vb.mel.requires_grad_(True)
+        self.vb.jitter_idx.requires_grad_(True)
+        self.vb.voice_idx.requires_grad_(True)
 
         return self.vb 
 
