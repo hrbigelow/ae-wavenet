@@ -301,6 +301,7 @@ class Slice(torch.utils.data.IterableDataset):
 
         if self.target_device:
             self.vb.to(self.target_device)
+        self.vb.wav.requires_grad_(True)
         self.vb.mel.requires_grad_(True)
 
         return self.vb 
