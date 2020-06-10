@@ -92,12 +92,12 @@ class LoopingRandomSampler(Sampler):
         self.step = start_step
 
     def __iter__(self):
-        print('in LoopingRandomSampler::__iter__', file=stderr)
-        stderr.flush()
         def _gen():
             while True:
                 n = len(self.dataset)
                 indices = t.randperm(n).tolist()
+                print(f'in _gen with some indices {indices[:10]}', file=stderr)
+                stderr.flush()
                 for i in indices:
                     self.step += 1
                     yield i
