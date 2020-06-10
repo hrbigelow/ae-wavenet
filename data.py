@@ -106,7 +106,7 @@ class LoopingRandomSampler(Sampler):
         return _gen()
 
     def __len__(self):
-        return int(1e20)
+        return int(2**63)
 
     def set_pos(self, epoch, step):
         self.epoch = epoch
