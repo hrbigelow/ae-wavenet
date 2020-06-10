@@ -106,7 +106,9 @@ class Chassis(object):
 
             if self.hw == 'TPU':
                 xm.optimizer_step(ss.optim)
-                loss = (xm.mesh_reduce('mesh_reduce_loss', loss, sum) /
+                def reduce_add(vlist):
+                    return torch.stack(vlist).sum(dim=0)
+                loss = (xm.mesh_reduce('mesh_reduce_loss', loss, reduce_add) /
                         self.num_devices)
             else:
                 ss.optim.step()
