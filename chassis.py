@@ -108,8 +108,10 @@ class Chassis(object):
                 xm.optimizer_step(ss.optim)
                 def reduce_add(vlist):
                     return torch.stack(vlist).sum(dim=0)
-                loss = (xm.mesh_reduce('mesh_reduce_loss', loss, reduce_add) /
+                loss_reduced = (xm.mesh_reduce('mesh_reduce_loss', loss, reduce_add) /
                         self.num_devices)
+                print(f'loss: {loss}, loss_reduced: {loss_reduced}',
+                        file=stderr)
             else:
                 ss.optim.step()
 
