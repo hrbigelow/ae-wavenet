@@ -104,7 +104,7 @@ class Chassis(object):
             loss.backward()
 
             if self.hw == 'TPU':
-                xm.optimizer_step(ss.optim, barrier=True)
+                xm.optimizer_step(ss.optim)
             else:
                 ss.optim.step()
 
