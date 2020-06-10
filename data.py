@@ -92,7 +92,8 @@ class LoopingRandomSampler(Sampler):
         self.step = start_step
 
     def __iter__(self):
-        print('in LoopingRandomSampler::__iter__')
+        print('in LoopingRandomSampler::__iter__', file=stderr)
+        stderr.flush()
         def _gen():
             while True:
                 n = len(self.dataset)
