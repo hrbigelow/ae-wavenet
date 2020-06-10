@@ -70,6 +70,8 @@ class Chassis(object):
 
 
     def train(self, hps, index):
+        if hps.hw == 'TPU':
+            import torch_xla.core.xla_model as xm
 
         ss = self.state 
         current_stats = {}
