@@ -4,6 +4,7 @@ import vconv
 import parse_tools  
 import wavenet as wn 
 import data
+import mfcc
 
 class MfccInverter(nn.Module):
     """
@@ -11,32 +12,19 @@ class MfccInverter(nn.Module):
     Autoregressively generates wave data using MFCC local conditioning vectors
     does not use global condition vectors
     """
-    def __init__(self, opts, dataset):
-        opts_dict = vars(opts)
-        dec_params = parse_tools.get_prefixed_items(opts_dict, 'dec_')
-        dec_params['n_speakers'] = dataset.num_speakers()
-        mi_params = parse_tools.get_prefixed_items(opts_dict, 'mi_')
-
-        self.init_args = { 
-                'dec_params': dec_params,
-                'mi_params': mi_params 
-                }
-        self._initialize()
-
-    def _initialize(self):
-        """
-        May be called either by __init__ (if running in 'new' mode) or
-        by __setstate__ (if running in 'resume' mode)
-        """
+    def __init__(self, hps):
         super(MfccInverter, self).__init__()
-        dec_params = self.init_args['dec_params']
-        mi_params = self.init_args['mi_params']
         self.bn_type = 'none' 
+        self.mfcc = mfcc.ProcessWav(
+                sample_rate=hps.sample_rate, win_sz=hps.mfcc_win_sz,
+                hop_sz=hps.mfcc_hop_sz, n_mels=hps.n_mels, n_mfcc=hps.n_mfcc)
 
-        self.wavenet = wn.WaveNet(**dec_params, parent_vc=None,
-                n_lc_in=mi_params['n_lc_in'])
+        mfcc_vc = vconv.VirtualConv(filter_info=hps.mfcc_win_sz,
+                stride=hps.mfcc_hop_sz, parent=None, name='MFCC')
 
+        self.wavenet = wn.WaveNet(hps, parent_vc=mfcc_vc)
         self.objective = wn.RecLoss()
+        self._init_geometry(hps.n_win_batch)
 
 
     def override(self, n_win_batch=None):
@@ -45,14 +33,6 @@ class MfccInverter(nn.Module):
         """
         if n_win_batch is not None:
             self.window_batch_size = n_win_batch
-
-    def post_init(self, dataset):
-        """
-        further initializations needed in case we are training the model
-        """
-        self.wavenet.set_parent_vc(dataset.mfcc_vc)
-        self._init_geometry(self.window_batch_size)
-        # self.print_geometry()
 
 
     def _init_geometry(self, n_win_batch):
@@ -84,6 +64,8 @@ class MfccInverter(nn.Module):
 
         self.wavenet.post_init(n_win_batch)
 
+    def get_input_size(self, output_size):
+        return self.wavenet.get_input_size(output_size)
 
     def print_geometry(self):
         vc = self.wavenet.vc['beg'].parent
@@ -96,38 +78,28 @@ class MfccInverter(nn.Module):
         print('trim_ups_out: {}'.format(self.wavenet.trim_ups_out))
 
 
-    def __getstate__(self):
-        state = { 
-                'init_args': self.init_args,
-                # 'state_dict': self.state_dict()
-                }
-        return state 
-
-    def __setstate__(self, state):
-        self.init_args = state['init_args']
-        self._initialize()
-        # self.load_state_dict(state['state_dict'])
-
-    def forward(self, batch):
-        b = batch
+    def forward(self, wav, mel, voice, jitter):
         if self.training:
-            return self.wavenet(b.wav, b.mel, b.voice_idx, b.jitter_idx, b)
+            return self.wavenet(wav, mel, voice, jitter)
         else:
             with torch.no_grad():
-                return self.wavenet(b.wav, b.mel, b.voice_idx, b.jitter_idx, b)
+                return self.wavenet(wav, mel, voice, jitter)
 
 
-    def run(self, vbatch):
+    def run(self, *inputs):
         """
         """
+        wav, mel, voice, jitter = inputs
+        mel.requires_grad_(True)
+
         trim = self.trim_dec_out
-        wav_batch_out = vbatch.wav[:,trim[0]:trim[1]]
-        quant = self.forward(vbatch)
+        wav_batch_out = wav[:,trim[0]:trim[1]]
+        quant = self.forward(*inputs)
 
         pred, target = quant[...,:-1], wav_batch_out[...,1:]
 
         loss = self.objective(pred, target)
-        ag_inputs = (vbatch.mel)
+        ag_inputs = (mel)
         (mel_grad, ) = torch.autograd.grad(loss, ag_inputs, retain_graph=True)
         self.objective.metrics.update({
             'mel_grad_sd': mel_grad.std(),

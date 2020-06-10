@@ -2,13 +2,14 @@
 from sys import stderr, exit
 import pickle
 import numpy as np
-import torch
-import torch.utils.data
+import torch as t
+from torch.utils.data import Dataset, DataLoader, Sampler
 import jitter
 from torch import nn
 import vconv
 import copy
 import parse_tools
+from hparams import setup_hparams
 from collections import namedtuple
 
 import util
@@ -83,288 +84,150 @@ SpokenSample = namedtuple('SpokenSample', [
     )
 
 
+class LoopingRandomSampler(Sampler):
+    def __init__(self, dataset, start_epoch=0, start_step=0):
+        super().__init__(dataset)
+        self.dataset = dataset
+        self.epoch = start_epoch
+        self.step = start_step
 
-class VirtualBatch(object):
-    def __init__(self, dataset, chunk_mode=True):
-        import random
+    def __iter__(self):
+        def _gen():
+            while True:
+                n = len(self.dataset)
+                indices = t.randperm(n).tolist()
+                for i in indices:
+                    self.step += 1
+                    yield i
+                self.epoch += 1
+                self.step = 0
+        return _gen()
 
-        super(VirtualBatch, self).__init__()
-        ds = dataset
-        self.chunk_mode = chunk_mode
+    def __len__(self):
+        return int(1e20)
 
-        if self.chunk_mode:
-            self.n_elem = len(ds.in_start)
-            self.picks = list(range(len(ds.in_start)))
-            random.shuffle(self.picks)
-        else:
-            self.n_elem = len(ds.samples)
-
-        self.pos = 0
-        self.epoch = 0
-        
-
-    def __repr__(self):
-        fmt = (
-            'voice_idx: {}\n' + 
-            'jitter_idx: {}\n' + 
-            'wav.shape: {}\n' + 
-            'mel.shape: {}\n'
-            # 'wav_rng: {}\n' +
-            # 'mel_rng: {}\n'
-        )
-        return fmt.format(self.voice_idx, self.jitter_idx,
-                self.wav.shape, self.mel.shape)
-                # self.wav_rng, self.mel_rng)
-
-    def step(self):
-        self.pos = (self.pos + 1) % self.n_elem 
-        if self.pos == 0:
-            self.epoch += 1
-            if self.chunk_mode:
-                random.shuffle(self.picks)
-
-    def populate(self, dataset):
-        """
-        sets the data for one sample in the batch
-        """
-        ds = dataset
-        nz = ds.embed_len
-
-        def get_slice():
-            wi = self.picks[self.pos]
-            s, voice_ind = ds.in_start[wi]
-            self.step()
-            return s, s + ds.enc_in_len, voice_ind
-
-        if self.chunk_mode:
-            coords = [get_slice()] * ds.batch_size
-        else:
-            sam = ds.samples[self.pos]
-            coords = [[sam.wav_b, sam.wav_e, sam.voice_index]]
-            self.file_path = sam.file_path
-            self.step()
-
-        self.wav = torch.from_numpy(
-                np.stack([ds.snd_data[c[0]:c[1]] for c in coords])
-                ).float()
-        self.mel = torch.from_numpy(
-                np.apply_along_axis(ds.mfcc_proc.func, 1, self.wav)
-                ).float()
-        nz = self.mel.size()[2]
-        self.voice_idx = torch.tensor([c[2] for c in coords]).long()
-        self.jitter_idx = torch.from_numpy(
-                np.stack([
-                    ds.jitter.gen_indices(nz) + b * nz
-                    for b in range(ds.batch_size)]
-                )
-        ).long()
-
-
-    def to(self, device):
-        self.voice_idx = self.voice_idx.to(device)
-        self.jitter_idx = self.jitter_idx.to(device)
-        self.wav = self.wav.to(device)
-        self.mel = self.mel.to(device)
-
-    def validate(self, ds):
-        """
-        validates that the internal coordinates match those directly fetched
-        """
-        for b in range(ds.batch_size):
-            fetched_wav, fetched_mel = ds.fetch_at(*self.wav_rng[b],
-                    *self.mel_rng[b])
-            assert torch.equal(fetched_wav.float(), self.wav[b].cpu())
-            assert torch.equal(fetched_mel.float(), self.mel[b].cpu())
+    def set_pos(self, epoch, step):
+        self.epoch = epoch
+        self.step = step
 
 
 
-class Slice(torch.utils.data.IterableDataset):
+def load_data(dat_file):
+    try:
+        with open(dat_file, 'rb') as dat_fh:
+            dat = pickle.load(dat_fh)
+    except IOError:
+        print(f'Could not open preprocessed data file {dat_file}.', file=stderr)
+        stderr.flush()
+    return dat
+
+class SliceDataset(Dataset):
     """
-    Defines the current batch of data in iterator style.
-    Use with automatic batching disabled, and collate_fn = lambda x: x
+    Return slices of wav files of fixed size
     """
-    def __init__(self, opts):
-        opts_dict = vars(opts)
-        pre_pars = parse_tools.get_prefixed_items(opts_dict, 'pre_')
-        self.init_args = {
-                'batch_size': opts.n_batch,
-                'window_batch_size': opts.n_win_batch,
-                'jitter_prob': opts.jitter_prob,
-                'sample_rate': pre_pars['sample_rate'],
-                'mfcc_win_sz': pre_pars['mfcc_win_sz'],
-                'mfcc_hop_sz': pre_pars['mfcc_hop_sz'],
-                'n_mels': pre_pars['n_mels'],
-                'n_mfcc': pre_pars['n_mfcc']
-                }
-        self._initialize()
+    def __init__(self, slice_size, n_win_batch):
+        self.slice_size = slice_size
+        self.n_win_batch = n_win_batch 
+        self.in_start = []
 
-
-    def _initialize(self):
-        super(Slice, self).__init__()
-        self.target_device = None
-        self.__dict__.update(self.init_args)
-        self.jitter = jitter.Jitter(self.jitter_prob) 
-        self.mfcc_proc = mfcc.ProcessWav(
-                sample_rate=self.sample_rate,
-                win_sz=self.mfcc_win_sz,
-                hop_sz=self.mfcc_hop_sz,
-                n_mels=self.n_mels,
-                n_mfcc=self.n_mfcc)
-        self.mfcc_vc = vconv.VirtualConv(filter_info=self.mfcc_win_sz,
-                stride=self.mfcc_hop_sz, parent=None, name='MFCC')
-        self.vb = None
 
     def load_data(self, dat_file):
-        try:
-            with open(dat_file, 'rb') as dat_fh:
-                dat = pickle.load(dat_fh)
-        except IOError:
-            print('Could not open preprocessed data file {}.'.format(
-                dat_file), file=stderr)
-            stderr.flush()
-            exit(1)
-
+        dat = load_data(dat_file)
         self.samples = dat['samples']
-        self._load_sample_data(dat['snd_data'], dat['snd_dtype'])
+        self.snd_data = dat['snd_data'].astype(dat['snd_dtype'])
 
-
-    def __setstate__(self, init_args):
-        self.init_args = init_args 
-        self._initialize()
-
-    def __getstate__(self):
-        return self.init_args
-
+        w = self.n_win_batch
+        for sam in self.samples:
+            for b in range(sam.wav_b, sam.wav_e - self.slice_size, w):
+                self.in_start.append((b, sam.voice_index))
 
     def num_speakers(self):
         ns = max(s.voice_index for s in self.samples) + 1
         return ns
 
-    def num_mel_chan(self):
-        return self.mfcc_proc.n_out
+    def __len__(self):
+        return len(self.in_start)
 
-    def override(self, n_batch=None, n_win_batch=None):
-        """
-        override values from checkpoints
-        """
-        if n_batch is not None:
-            self.batch_size = n_batch
-        if n_win_batch is not None:
-            self.window_batch_size = n_win_batch
+    def __getitem__(self, item):
+        s, voice_ind = self.in_start[item]
+        return self.snd_data[s:s + self.slice_size], voice_ind
 
 
-    def post_init(self, model):
-        self.trim_dec_in = model.trim_dec_in.numpy()
-        self.embed_len = model.embed_len
-        self.enc_in_len = model.enc_in_len
-        self.dec_in_len = model.dec_in_len
-        self.enc_in_mel_len = model.enc_in_mel_len
-        
-        w = self.window_batch_size
-        self.in_start = []
-        for sam in self.samples:
-            for b in range(sam.wav_b, sam.wav_e - self.enc_in_len, w):
-                self.in_start.append((b, sam.voice_index))
 
-
-    def _load_sample_data(self, snd_np, snd_dtype):
-        """
-        Populates self.snd_data
-        """
-        if snd_dtype is np.uint8:
-            snd_data = torch.ByteTensor(snd_np)
-        elif snd_dtype is np.uint16:
-            snd_data = torch.ShortTensor(snd_np)
-        elif snd_dtype is np.int32:
-            snd_data = torch.IntTensor(snd_np)
-        self.snd_data = snd_data
-
-
-    def set_target_device(self, target_device):
-        self.target_device = target_device
-
-
-    def __iter__(self):
-        assert self.vb is None, 'Cannot call __iter__ more than once'
-        self.vb = VirtualBatch(self, chunk_mode=True)
-        return self
-
-    def __next__(self):
-        """
-        Get a random slice of a file, together with its start position and ID.
-        Random state is from torch.{get,set}_rng_state().  It is on the CPU,
-        not GPU.
-        """
-        # self.vb.mel.detach_()
-        # self.vb.mel.requires_grad_(False)
-        self.vb.populate(self)
-
-        if self.target_device:
-            self.vb.to(self.target_device)
-        self.vb.mel.requires_grad_(True)
-        # print(f'in Slice: {self.vb.mel.requires_grad}, {self.vb.mel.device}')
-
-        return self.vb 
-
-    def fetch_at(self, wav_b, wav_e, wav_mel_b, wav_mel_e):
-        """
-        fetches specific slice of wav data, and its matching mel data, directly
-        """
-        wav = self.snd_data[wav_b:wav_e]
-        mel = self.mfcc_proc.func(self.snd_data[wav_mel_b:wav_mel_e])
-        return wav, mel
-        # return wav.to(self.target_device), mel.to(self.target_device)
-
-
-class MfccInference(Slice):
+class WavFileDataset(Dataset):
     """
-    The data iterator for running the mfcc inverter model in inference
+    Returns entire wav files
     """
-    def __init__(self, slice_dataset, dat_file):
-        self.__dict__.update(vars(slice_dataset))
-        self.batch_size = 1
-        self.load_data(dat_file)
+    def __init__(self, hps):
+        super().__init__()
 
-    def __iter__(self):
-        assert self.vb is None, 'Cannot call __iter__ more than once'
-        # iterates in full-file mode for inference
-        self.vb = VirtualBatch(self, chunk_mode=False)
-        return self
+    def load_data(self, dat_file):
+        dat = load_data(dat_file)
+        self.samples = dat['samples']
+        self.snd_data = dat['snd_data'].astype(dat['snd_dtype'])
 
-    def __next__(self):
-        """
-        Get a random slice of a file, together with its start position and ID.
-        Random state is from torch.{get,set}_rng_state().  It is on the CPU,
-        not GPU.
-        """
-        self.vb.populate(self)
-        if self.target_device:
-            self.vb.to(self.target_device)
+    def num_speakers(self):
+        ns = max(s.voice_index for s in self.samples) + 1
+        return ns
+    
+    def __len__(self):
+        return len(self.samples) 
 
-        return self.vb 
+    def __getitem__(self, item):
+        sam = ds.samples[item]
+        return (self.snd_data[sam.wav_b:sam.wav_e],
+                sam.voice_index,
+                sam.file_path)
 
+    
+class DataProcessor():
+    def __init__(self, hps, dat_file, mfcc_func, slice_size, train_mode,
+            start_epoch=0, start_step=0):
+        super().__init__()
+        self.jitter = jitter.Jitter(hps.jitter_prob) 
+        self.mfcc = mfcc_func
 
-class WavLoader(torch.utils.data.DataLoader):
-    """
-    - Wrapper to convert a Slice to a DataLoader.
-    - May be wrapped with torch_xla.distributed.parallel_loader.
-    - returns batches of tensors on cpu, optionally pushing them to
-    - target_device if provided
-    """
-    @staticmethod
-    def ident(x):
-        return x
+        def collate_fn(batch):
+            wav = t.stack([t.from_numpy(b[0]) for b in batch]).float()
+            mel = t.stack([t.from_numpy(self.mfcc(b[0])) for b in
+                batch]).float()
+            voice = t.tensor([b[1] for b in batch]).long()
+            jitter = t.stack([t.from_numpy(self.jitter(mel.size()[2])) for _ in
+                range(len(batch))]).long()
 
-    def __init__(self, wav_dataset, target_device=None):
-        self.target_device = target_device
-        super(WavLoader, self).__init__(
-                dataset=wav_dataset,
-                batch_sampler=None,
-                collate_fn=self.ident
-                )
+            if not train_mode:
+                paths = [b[2] for b in batch]
+                return wav, mel, voice, jitter, paths
+            else:
+                return wav, mel, voice, jitter
 
-    def set_target_device(self, target_device):
-        self.dataset.set_target_device(target_device)
+        if train_mode:
+            self.dataset = SliceDataset(slice_size, hps.n_win_batch)
+            self.dataset.load_data(dat_file)
+            self.sampler = LoopingRandomSampler(self.dataset, start_epoch,
+                    start_step)
+            self.loader = DataLoader(self.dataset, sampler=self.sampler,
+                    batch_size=hps.n_batch, pin_memory=False,
+                    collate_fn=collate_fn)
+        else:
+            self.dataset = WavFileDataset()
+            self.dataset.load_data(dat_file)
+            self.sampler = SequentialSampler(self.dataset)
+            self.loader = DataLoader(self.dataset, batch_size=1,
+                    sampler=self.sampler, pin_memory=False, drop_last=False,
+                    collate_fn=collate_fn)
+
+    @property
+    def epoch(self):
+        return self.sampler.epoch
+
+    @property
+    def step(self):
+        return self.sampler.step
+
+    @property
+    def global_step(self):
+        return len(self.dataset) * self.epoch + self.step
 
 
 

@@ -1,64 +1,44 @@
 import sys
 from sys import stderr
 from pprint import pprint
-import torch
+import torch as t
+import fire
 
 import autoencoder_model as ae
 import chassis as ch
 import parse_tools  
 import netmisc
+from hparams import setup_hparams
 
 
-def main():
-    if len(sys.argv) == 1 or sys.argv[1] not in ('new', 'resume'):
-        print(parse_tools.top_usage, file=stderr)
-        return
-
-    print('Command line: ', ' '.join(sys.argv), file=stderr)
-    stderr.flush()
-
-    mode = sys.argv[1]
-    del sys.argv[1]
-    if mode == 'new':
-        cold_parser = parse_tools.cold_parser()
-        opts = parse_tools.two_stage_parse(cold_parser)
-    elif mode == 'resume':
-        resume_parser = parse_tools.resume_parser()
-        opts = resume_parser.parse_args()  
-
-    if opts.hwtype == 'GPU':
-        if not torch.cuda.is_available():
+def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
+    hps = setup_hparams(hps, kwargs)
+    if hps.hw == 'GPU':
+        if not t.cuda.is_available():
             raise RuntimeError('GPU requested but not available')
-    elif opts.hwtype in ('TPU', 'TPU-single'):
+    elif hps.hw in ('TPU', 'TPU-single'):
         import torch_xla.distributed.xla_multiprocessing as xmp
     else:
         raise RuntimeError(
                 ('Invalid device {} requested.  ' 
-                + 'Must be GPU or TPU').format(opts.hwtype))
+                + 'Must be GPU or TPU').format(hps.hw))
 
-    print('Using {}'.format(opts.hwtype), file=stderr)
-    stderr.flush()
+    print('Hyperparameters:\n', '\n'.join(f'{k} = {v}' for k, v in hps.items()), file=stderr)
+    print(f'Using {hps.hw}', file=stderr)
 
-    # Start training
-    print('Training parameters used:', file=stderr)
-    pprint(opts, stderr)
-
-    # set this to zero if you want to print out a logging header in resume mode as well
     netmisc.set_print_iter(0)
 
-    if opts.hwtype == 'GPU':
-        chs = ch.Chassis(mode, opts)
+    if hps.hw in ('GPU', 'TPU-single'):
+        chs = ch.Chassis(hps, dat_file)
         # chs.state.model.print_geometry()
-        chs.train(0)
-    elif opts.hwtype == 'TPU':
-        def _mp_fn(index, mode, opts):
-            m = ch.Chassis(mode, opts)
-            m.train(index)
-        xmp.spawn(_mp_fn, args=(mode, opts), nprocs=1, start_method='fork')
-    elif opts.hwtype == 'TPU-single':
-        ch.Chassis(mode, opts).train(0)
+        chs.train(hps, 0)
+    elif hps.hw == 'TPU':
+        def _mp_fn(index):
+            m = ch.Chassis(hps, dat_file)
+            m.train(hps, index)
+        xmp.spawn(_mp_fn, args=(), nprocs=1, start_method='fork')
 
 
 if __name__ == '__main__':
-    main()
+    fire.Fire(run)
 

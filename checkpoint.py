@@ -4,17 +4,52 @@ import torch
 from sys import stderr
 import util
 import data
+import mfcc_inverter as mi
 
 class State(object):
     '''
     Encapsulates full state of training
     '''
 
-    def __init__(self, step=0, model=None, dataset=None, optim=None):
-        self.model = model 
-        self.data_loader = data.WavLoader(dataset)
-        self.optim = optim
-        self.step = step
+    def __init__(self, hps, dat_file, train_mode=True, ckpt_file=None, step=0):
+        """
+        Initialize total state.  If ckpt_file is provided, also restore
+        state.
+        """
+        if hps.global_model == 'autoencoder':
+            self.model = ae.AutoEncoder(hps)
+        elif hps.global_model == 'mfcc_inverter':
+            self.model = mi.MfccInverter(hps)
+
+        slice_size = self.model.get_input_size(hps.n_win_batch)
+        self.data = data.DataProcessor(hps, dat_file, self.model.mfcc,
+                slice_size, train_mode, start_epoch=0, start_step=0)
+
+        self.model.override(hps.n_win_batch)
+
+        if ckpt_file is None:
+            self.optim = torch.optim.Adam(params=self.model.parameters(),
+                    lr=hps.learning_rate_rates[0])
+
+        else:
+            sinfo = torch.load(ckpt_file)
+            sub_state = { k: v for k, v in sinfo['model_state_dict'].items() if '_lead' not
+                    in k and 'left_wing_size' not in k }
+            self.model.load_state_dict(sub_state, strict=False)
+            if 'epoch' in sinfo:
+                self.data.sampler.set_pos(sinfo['epoch'], sinfo['step'])
+            else:
+                global_step = sinfo['step']
+                epoch = global_step // len(self.data.dataset)
+                step = global_step % len(self.data.dataset) 
+                self.data.sampler.set_pos(epoch, step)
+                
+            self.optim = torch.optim.Adam(self.model.parameters())
+            self.optim.load_state_dict(sinfo['optim'])
+            self.torch_rng_state = sinfo['rand_state']
+            self.torch_cuda_rng_states = sinfo['cuda_rand_states']
+
+        
         self.device = None
         self.torch_rng_state = torch.get_rng_state()
         if torch.cuda.is_available():
@@ -23,41 +58,18 @@ class State(object):
             self.torch_cuda_rng_states = None
 
 
-    def load(self, ckpt_file, dat_file, n_batch=None, n_win_batch=None):
-        sinfo = torch.load(ckpt_file)
-
-        # This is the required order for model and data init 
-        self.model = pickle.loads(sinfo['model'])
-        self.model.override(n_win_batch)
-        dataset = pickle.loads(sinfo['dataset'])
-        dataset.override(n_batch, n_win_batch)
-        dataset.load_data(dat_file)
-        self.model.post_init(dataset)
-        sub_state = { k: v for k, v in sinfo['model_state_dict'].items() if '_lead' not
-                in k and 'left_wing_size' not in k }
-        self.model.load_state_dict(sub_state, strict=False)
-        dataset.post_init(self.model)
-
-        self.data_loader = data.WavLoader(dataset)
-        self.optim = torch.optim.Adam(self.model.parameters())
-        self.optim.load_state_dict(sinfo['optim'])
-        self.step = sinfo['step']
-        self.torch_rng_state = sinfo['rand_state']
-        self.torch_cuda_rng_states = sinfo['cuda_rand_states']
-
     def save(self, ckpt_file):
         # cur_device = self.device
         # self.to(torch.device('cpu'))
 
         mstate = pickle.dumps(self.model)
         mstate_dict = self.model.state_dict()
-        dstate = pickle.dumps(self.data_loader.dataset)
         ostate = self.optim.state_dict()
         state = {
-                'step': self.step,
+                'epoch': self.data.epoch,
+                'step': self.data.step,
                 'model': mstate,
                 'model_state_dict': mstate_dict,
-                'dataset': dstate,
                 'optim': ostate,
                 'rand_state': torch.get_rng_state(),
                 'cuda_rand_states': (torch.cuda.get_rng_state_all() if

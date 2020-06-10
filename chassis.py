@@ -12,27 +12,16 @@ import os.path
 
 
 class GPULoaderIter(object):
-    def __init__(self, data_iter):
-        self.data_iter = data_iter
+    def __init__(self, loader, device):
+        self.loader_iter = iter(loader)
+        self.device = device
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        return self.data_iter.__next__()[0]
-
-
-class TPULoaderIter(object):
-    def __init__(self, parallel_loader, device):
-        self.per_dev_loader = parallel_loader.per_device_loader(device)
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        vb = self.per_dev_loader.__next__()[0]
-        # print(f'in TPULoaderIter: {vb.mel.requires_grad}, {vb.mel.device}')
-        return vb
+        items = next(self.loader_iter)
+        return tuple(item.to(self.device) for item in items)
 
 
 
@@ -46,104 +35,85 @@ class Chassis(object):
 
     """
 
-    def __init__(self, mode, opts):
+    def __init__(self, hps, dat_file):
         print('Initializing model and data source...', end='', file=stderr)
+        self.state = checkpoint.State(hps, dat_file, train_mode=True,
+                ckpt_file=hps.get('ckpt_file', None))
         stderr.flush()
-        self.learning_rates = dict(zip(opts.learning_rate_steps,
-            opts.learning_rate_rates))
-        self.opts = opts
 
-        if mode == 'new':
-            torch.manual_seed(opts.random_seed)
-
-            # Initialize data
-            dataset = data.Slice(opts)
-            dataset.load_data(opts.dat_file)
-            opts.training = True
-            if opts.global_model == 'autoencoder':
-                model = ae.AutoEncoder(opts, dataset)
-            elif opts.global_model == 'mfcc_inverter':
-                model = mi.MfccInverter(opts, dataset)
-
-            model.post_init(dataset)
-            dataset.post_init(model)
-            optim = torch.optim.Adam(params=model.parameters(), lr=self.learning_rates[0])
-            self.state = checkpoint.State(0, model, dataset, optim)
-            self.start_step = self.state.step
-
-        else:
-            self.state = checkpoint.State()
-            self.state.load(opts.ckpt_file, opts.dat_file, opts.n_batch,
-                    opts.n_win_batch)
-            self.start_step = self.state.step
-            # print('Restored model, data, and optim from {}'.format(opts.ckpt_file), file=stderr)
-            #print('Data state: {}'.format(state.data), file=stderr)
-            #print('Model state: {}'.format(state.model.checksum()))
-            #print('Optim state: {}'.format(state.optim_checksum()))
-            stderr.flush()
+        self.learning_rates = dict(zip(hps.learning_rate_steps,
+            hps.learning_rate_rates))
 
         if self.state.model.bn_type == 'vae':
-            self.anneal_schedule = dict(zip(opts.bn_anneal_weight_steps,
-                opts.bn_anneal_weight_vals))
+            self.anneal_schedule = dict(zip(hps.bn_anneal_weight_steps,
+                hps.bn_anneal_weight_vals))
 
-        self.ckpt_path = util.CheckpointPath(self.opts.ckpt_template)
-        self.quant = None
-        self.target = None
+        self.ckpt_path = util.CheckpointPath(hps.ckpt_template)
         self.softmax = torch.nn.Softmax(1) # input to this is (B, Q, N)
+        self.hw = hps.hw
 
-        if self.opts.hwtype == 'GPU':
-            self.device = torch.device('cuda')
-            self.data_loader = self.state.data_loader
-            self.data_loader.set_target_device(self.device)
-            self.optim_step_fn = (lambda: self.state.optim.step(self.loss_fn))
-            self.data_iter = GPULoaderIter(iter(self.data_loader))
+        if hps.hw == 'GPU':
+            device = torch.device('cuda')
+            self.device_loader = GPULoaderIter(self.state.data.loader, device)
+            self.state.to(device)
         else:
             import torch_xla.core.xla_model as xm
             import torch_xla.distributed.parallel_loader as pl
-            self.device = xm.xla_device()
-            self.data_loader = pl.ParallelLoader(self.state.data_loader, [self.device])
-            self.data_iter = TPULoaderIter(self.data_loader, self.device)
-            self.optim_step_fn = (lambda : xm.optimizer_step(self.state.optim,
-                    optimizer_args={'closure': self.loss_fn}))
+            device = xm.xla_device()
+            para_loader = pl.ParallelLoader(self.state.data.loader, [device])
+            self.device_loader = para_loader.per_device_loader(device) 
+            self.state.to(device)
 
         self.state.init_torch_generator()
         print('Done.', file=stderr)
         stderr.flush()
 
 
-    def train(self, index):
+    def train(self, hps, index):
+
         ss = self.state 
-        ss.to(self.device)
         current_stats = {}
 
         # for resuming the learning rate 
         sorted_lr_steps = sorted(self.learning_rates.keys())
-        lr_index = util.greatest_lower_bound(sorted_lr_steps, ss.step)
+        lr_index = util.greatest_lower_bound(sorted_lr_steps, ss.data.global_step)
         ss.update_learning_rate(self.learning_rates[sorted_lr_steps[lr_index]])
 
         if ss.model.bn_type != 'none':
             sorted_as_steps = sorted(self.anneal_schedule.keys())
-            as_index = util.greatest_lower_bound(sorted_as_steps, ss.step)
+            as_index = util.greatest_lower_bound(sorted_as_steps,
+                    ss.data.global_step)
             ss.model.objective.update_anneal_weight(self.anneal_schedule[sorted_as_steps[as_index]])
 
         if ss.model.bn_type in ('vqvae', 'vqvae-ema'):
             ss.model.init_codebook(self.data_iter, 10000)
 
-        while ss.step < self.opts.max_steps:
-            if ss.step in self.learning_rates:
-                ss.update_learning_rate(self.learning_rates[ss.step])
+        for wav, mel, voice, jitter in self.device_loader:
+            if ss.data.global_step in self.learning_rates:
+                ss.update_learning_rate(self.learning_rates[ss.data.global_step])
 
             if ss.model.bn_type == 'vae' and ss.step in self.anneal_schedule:
-                ss.model.objective.update_anneal_weight(self.anneal_schedule[ss.step])
+                ss.model.objective.update_anneal_weight(self.anneal_schedule[ss.data.global_step])
 
-            loss = self.optim_step_fn()
+            ss.optim.zero_grad()
+            quant, self.target, loss = self.state.model.run(wav, mel, voice, jitter) 
+            self.probs = self.softmax(quant)
+            self.mel_enc_input = mel
+            loss.backward()
 
-            if ss.model.bn_type == 'vqvae-ema' and ss.step == 10000:
+            if self.hw == 'TPU':
+                xm.optimizer_step(ss.optim, barrier=True)
+            else:
+                ss.optim.step()
+
+            if ss.model.bn_type == 'vqvae-ema' and ss.data.global_step == 10000:
                 ss.model.bottleneck.update_codebook()
 
-            if ss.step % self.opts.progress_interval == 0:
+            if ss.data.global_step % hps.progress_interval == 0:
                 current_stats.update({
-                        'step': ss.step,
+                        'global_step': ss.data.global_step,
+                        'epoch': ss.data.epoch,
+                        'step': ss.data.step,
                         'loss': loss,
                         'lrate': ss.optim.param_groups[0]['lr'],
                         'tprb_m': self.avg_prob_target(),
@@ -162,42 +132,15 @@ class Chassis(object):
                 netmisc.print_metrics(current_stats, index, 100)
                 stderr.flush()
 
-            if ((ss.step % self.opts.save_interval == 0 and ss.step !=
-                self.start_step)):
+            if (ss.data.global_step % hps.save_interval == 0):
                 self.save_checkpoint()
-            ss.step += 1
 
     def save_checkpoint(self):
-        ckpt_file = self.ckpt_path.path(self.state.step)
+        ckpt_file = self.ckpt_path.path(self.state.data.step)
         self.state.save(ckpt_file)
         print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
         #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
         stderr.flush()
-
-    def run_batch(self):
-        """
-        run the next batch through the model, populating quantities for the
-        loss.
-        """
-        batch = next(self.data_iter)
-        self.quant, self.target, self.loss = self.state.model.run(batch) 
-        self.probs = self.softmax(self.quant)
-        self.mel_enc_input = batch.mel
-        
-
-    def loss_fn(self):
-        """This is the closure needed for the optimizer"""
-        self.run_batch()
-        self.state.optim.zero_grad()
-        self.loss.backward()
-        return self.loss
-    
-    def peak_dist(self):
-        """Average distance between the indices of the peaks in pred and
-        target"""
-        diffs = torch.argmax(self.quant, dim=1) - self.target.long()
-        mean = torch.mean(torch.abs(diffs).float())
-        return mean
 
     def avg_max(self):
         """Average max value for the predictions.  As the prediction becomes
@@ -255,7 +198,7 @@ class InferenceChassis(object):
     def infer(self, model_scr=None):
         self.state.to(self.device)
         sample_rate = self.state.data_loader.dataset.sample_rate
-        n_quant = self.state.model.wavenet.ac.n_quant
+        n_quant = self.state.model.wavenet.n_quant
 
         for vb in self.data_iter:
             if self.data_write_tmpl:

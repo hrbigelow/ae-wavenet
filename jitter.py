@@ -18,7 +18,7 @@ class Jitter(object):
         self.cond2d = np.tile([p, s, p], 9).reshape(3, 3, 3)
         self.cond2d[2][1] = [0, s/(p+s), p/(p+s)]
 
-    def gen_indices(self, win_size):
+    def __call__(self, win_size):
         """
         populates a tensor mask to be used for jitter, and sends it to GPU for
         next window

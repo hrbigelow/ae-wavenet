@@ -20,7 +20,6 @@
 # From librosa.feature.mfcc):
 # n_mfcc (# of MFCCs to return)
 
-import torch
 import numpy as np
 import vconv 
 import math
@@ -37,7 +36,7 @@ class ProcessWav(object):
         self.vc = vconv.VirtualConv(filter_info=self.window_sz, stride=self.hop_sz,
                 parent=None, name=name)
 
-    def func(self, wav):
+    def __call__(self, wav):
         import librosa
         # See padding_notes.txt 
         # NOTE: This function can't be executed on GPU due to the use of
@@ -74,5 +73,5 @@ class ProcessWav(object):
         mfcc_delta2 = librosa.feature.delta(mfcc_trim, order=2)
         mfcc_and_derivatives = np.concatenate((mfcc_trim, mfcc_delta, mfcc_delta2), axis=0)
 
-        return torch.tensor(mfcc_and_derivatives)
+        return mfcc_and_derivatives
 

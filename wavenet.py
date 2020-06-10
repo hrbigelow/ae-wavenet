@@ -12,29 +12,26 @@ import torch.nn.functional as F
 
 
 class GatedResidualCondConv(nn.Module):
-    def __init__(self, wavenet_vc, n_cond, n_res, n_dil, n_skp, stride, dil,
-            filter_sz=2, bias=True, parent_vc=None, name=None):
+    def __init__(self, wavenet_vc, hps, n_cond, stride, dil, parent_vc=None, name=None):
         """
         filter_sz: # elements in the dilated kernels
-        n_cond: # channels of local condition vectors
-        n_res : # residual channels
-        n_dil : # output channels for dilated kernel
-        n_skp : # channels output to skip connections
         """
         super(GatedResidualCondConv, self).__init__()
         self.wavenet_vc = wavenet_vc 
-        self.conv_signal = nn.Conv1d(n_res, n_dil, filter_sz, dilation=dil, bias=bias)
-        self.conv_gate = nn.Conv1d(n_res, n_dil, filter_sz, dilation=dil, bias=bias)
-        self.proj_signal = nn.Conv1d(n_cond, n_dil, kernel_size=1, bias=False)
-        self.proj_gate = nn.Conv1d(n_cond, n_dil, kernel_size=1, bias=False)
-        self.dil_res = nn.Conv1d(n_dil, n_res, kernel_size=1, bias=False)
-        self.dil_skp = nn.Conv1d(n_dil, n_skp, kernel_size=1, bias=False)
+        self.conv_signal = nn.Conv1d(hps.n_res, hps.n_dil, hps.filter_sz,
+                dilation=dil, bias=hps.bias)
+        self.conv_gate = nn.Conv1d(hps.n_res, hps.n_dil, hps.filter_sz,
+                dilation=dil, bias=hps.bias)
+        self.proj_signal = nn.Conv1d(n_cond, hps.n_dil, kernel_size=1, bias=False)
+        self.proj_gate = nn.Conv1d(n_cond, hps.n_dil, kernel_size=1, bias=False)
+        self.dil_res = nn.Conv1d(hps.n_dil, hps.n_res, kernel_size=1, bias=False)
+        self.dil_skp = nn.Conv1d(hps.n_dil, hps.n_skp, kernel_size=1, bias=False)
 
         # The dilated autoregressive convolution produces an output at the
         # right-most position of the receptive field.  (At the very end of a
         # stack of these, the output corresponds to the position just after
         # this, but within the stack of convolutions, outputs right-aligned.
-        dil_filter_sz = (filter_sz - 1) * dil + 1
+        dil_filter_sz = (hps.filter_sz - 1) * dil + 1
         self.vc = vconv.VirtualConv(filter_info=(dil_filter_sz - 1, 0),
                 parent=parent_vc, name=name)
         self.apply(netmisc.xavier_init)
@@ -169,63 +166,33 @@ class Conv1dWrap(nn.Conv1d):
                 name=name, parent=parent_vc)
 
 
-"""
-Architecture parameters that remain constant across save/restore.
-Note that n_batch and n_batch_win are excluded, since they may
-vary across save/restore cycles
-"""
-ArchConfig = namedtuple('ArchConfig', [
-    'n_lc_in',
-    'n_lc_out',
-    'n_res',
-    'n_dil',
-    'n_skp',
-    'n_post',
-    'n_quant',
-    'n_blocks',
-    'n_block_layers',
-    'n_speakers',
-    'n_global_embed'
-    ]
-    )
-
-
 class WaveNet(nn.Module):
     # see https://pytorch.org/docs/stable/jit_language_reference.html \\
     # #for-loops-over-constant-nn-modulelist
     __constants__ = ['conv_layers']
 
-    def __init__(self, filter_sz, n_lc_in, n_lc_out, lc_upsample_filt_sizes,
-            lc_upsample_strides, n_res, n_dil, n_skp, n_post, n_quant,
-            n_blocks, n_block_layers, n_speakers, n_global_embed,
-            bias=True, parent_vc=None):
+    def __init__(self, hps, parent_vc=None):
         super(WaveNet, self).__init__()
 
-        self.ac = ArchConfig(n_lc_in, n_lc_out, n_res,
-                n_dil, n_skp, n_post, n_quant, n_blocks, n_block_layers,
-                n_speakers, n_global_embed)
-        self.n_blocks = n_blocks
-        self.n_block_layers = n_block_layers
-        self.n_skp = n_skp
-        self.n_res = n_res
-        self.n_quant = n_quant
+        self.n_blocks = hps.n_blocks
+        self.n_block_layers = hps.n_block_layers
+        self.n_skp = hps.n_skp
+        self.n_res = hps.n_res
+        self.n_quant = hps.n_quant
 
-        self.quant_onehot = None 
-        self.bias = bias
+        self.bias = hps.bias
         post_jitter_filt_sz = 3
-        lc_input_stepsize = np_prod(lc_upsample_strides) 
+        lc_input_stepsize = np_prod(hps.lc_upsample_strides) 
 
-        lc_conv_name = 'LC_Conv(filter_size={})'.format(post_jitter_filt_sz) 
-        self.lc_conv = Conv1dWrap(lc_conv_name, parent_vc, in_channels=n_lc_in,
-                out_channels=n_lc_out, kernel_size=post_jitter_filt_sz,
-                stride=1, bias=self.bias)
-
-        # cur_vc = vconv.VirtualConv(filter_info=post_jitter_filt_sz,
-        #         stride=1, parent=parent_vc, name=lc_conv_name)
+        lc_conv_name = f'LC_Conv(filter_size={post_jitter_filt_sz})'
+        self.lc_conv = Conv1dWrap(lc_conv_name, parent_vc, in_channels=hps.n_lc_in,
+                out_channels=hps.n_lc_out, kernel_size=post_jitter_filt_sz,
+                stride=1, bias=hps.bias)
 
         self.vc = dict()
         self.vc['beg'] = self.lc_conv.vc 
         cur_vc = self.vc['beg']
+
 
         # This VC is the first processing of the local conditioning after the
         # Jitter. It is the starting point for the commitment loss aggregation
@@ -233,33 +200,33 @@ class WaveNet(nn.Module):
 
         # WaveNet is a stand-alone model, so parent_vc is None
         # The Autoencoder model in model.py will link parent_vcs together.
-        for i, (filt_sz, stride) in enumerate(zip(lc_upsample_filt_sizes,
-            lc_upsample_strides)):
-            name = 'Upsampling_{}(filter_sz={}, stride={})'.format(i, filt_sz, stride)   
-            mod = Upsampling(n_lc_out, filt_sz, stride, cur_vc, name=name)
+        iterator = enumerate(zip(hps.lc_upsample_filt_sizes, hps.lc_upsample_strides))
+        for i, (filt_sz, stride) in iterator: 
+            name = f'Upsampling_{i}(filter_sz={filt_sz}, stride={stride})'
+            mod = Upsampling(hps.n_lc_out, filt_sz, stride, cur_vc, name=name)
             self.lc_upsample.add_module(str(i), mod)
             cur_vc = mod.vc
 
         # This vc describes the bounds of the input wav corresponding to the
         # local conditioning vectors
         self.vc['last_upsample'] = cur_vc
-        self.cond = Conditioning(n_speakers, n_global_embed)
-        self.base_layer = Conv1dWrap('Base Layer', cur_vc, in_channels=n_quant,
-                out_channels=n_res, kernel_size=1, stride=1, dilation=1,
+        self.cond = Conditioning(hps.n_speakers, hps.n_global_embed)
+        self.base_layer = Conv1dWrap('Base Layer', cur_vc, in_channels=hps.n_quant,
+                out_channels=hps.n_res, kernel_size=1, stride=1, dilation=1,
                 bias=self.bias)
 
         self.base_layer.vc.do_trim_input = True
         cur_vc = self.base_layer.vc
 
         self.conv_layers = nn.ModuleList() 
-        n_cond = n_lc_out + n_global_embed
+        n_cond = hps.n_lc_out + hps.n_global_embed
 
-        for b in range(self.ac.n_blocks):
-            for bl in range(self.ac.n_block_layers):
+        for b in range(self.n_blocks):
+            for bl in range(self.n_block_layers):
                 dil = 2**bl
-                name = 'GRCC_{},{}(dil={})'.format(b, bl, dil)
-                grc = GatedResidualCondConv(self.vc, n_cond, n_res, n_dil,
-                        n_skp, 1, dil, filter_sz, bias, cur_vc, name)
+                name = f'GRCC_{b},{bl}(dil={dil})'
+                grc = GatedResidualCondConv(self.vc, hps, n_cond=n_cond, stride=1, dil=dil,
+                        parent_vc=cur_vc, name=name)
                 self.conv_layers.append(grc)
                 cur_vc = grc.vc
 
@@ -271,11 +238,11 @@ class WaveNet(nn.Module):
         self.vc['end_grcc'] = self.conv_layers[-1].vc 
 
         self.relu = nn.ReLU()
-        self.post1 = Conv1dWrap('Post1', cur_vc, in_channels=n_skp,
-                out_channels=n_post, kernel_size=1, stride=1, bias=bias)
+        self.post1 = Conv1dWrap('Post1', cur_vc, in_channels=hps.n_skp,
+                out_channels=hps.n_post, kernel_size=1, stride=1, bias=hps.bias)
 
-        self.post2 = Conv1dWrap('Post2', self.post1.vc, in_channels=n_post,
-                out_channels=n_quant, kernel_size=1, stride=1, bias=bias)
+        self.post2 = Conv1dWrap('Post2', self.post1.vc, in_channels=hps.n_post,
+                out_channels=hps.n_quant, kernel_size=1, stride=1, bias=hps.bias)
         self.logsoftmax = nn.LogSoftmax(1) # (B, Q, N)
         self.vc['main'] = self.post2.vc 
 
@@ -305,6 +272,14 @@ class WaveNet(nn.Module):
         self.n_win_batch = n_win_batch
 
 
+    def get_input_size(self, output_size):
+        """
+        Computes the input size needed for desired output_size.
+        Warning!  This function has side effects.
+        """
+        win_gr = vconv.GridRange((0, int(1e12)), (0, output_size), 1)
+        vconv.compute_inputs(self.vc['end_grcc'], win_gr)
+        return self.vc['beg'].parent.in_len()
 
     def set_n_replicas(self, n_replicas):
         self.n_replicas = n_replicas
@@ -324,16 +299,16 @@ class WaveNet(nn.Module):
             layer.set_full()  
 
 
-    def forward(self, wav, lc_sparse, speaker_inds, jitter_index, batch):
+    def forward(self, wav, lc_sparse, speaker_inds, jitter_index):
         if self.training:
             return self.forward_train(wav, lc_sparse, speaker_inds,
-                    jitter_index, batch)
+                    jitter_index)
         else:
             return self.forward_test(wav, lc_sparse, speaker_inds,
-                    jitter_index, batch)
+                    jitter_index)
 
 
-    def forward_train(self, wav, lc_sparse, speaker_inds, jitter_index, batch):
+    def forward_train(self, wav, lc_sparse, speaker_inds, jitter_index):
         """
         wav: (n_batch, n_quant, n_wav_ts)
         lc: (n_batch, n_lc_in, n_cond_ts)
