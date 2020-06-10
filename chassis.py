@@ -62,6 +62,7 @@ class Chassis(object):
             device = xm.xla_device()
             para_loader = pl.ParallelLoader(self.state.data.loader, [device])
             self.device_loader = para_loader.per_device_loader(device) 
+            self.num_devices = xm.xrt_world_size()
             self.state.to(device)
 
         self.state.init_torch_generator()
@@ -105,6 +106,8 @@ class Chassis(object):
 
             if self.hw == 'TPU':
                 xm.optimizer_step(ss.optim)
+                loss = (xm.mesh_reduce('mesh_reduce_loss', loss, sum) /
+                        self.num_devices)
             else:
                 ss.optim.step()
 

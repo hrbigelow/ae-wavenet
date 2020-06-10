@@ -44,7 +44,7 @@ def print_metrics(metrics, worker_index, hdr_frequency):
             val = '~' + val[-(max_width-1):]
             
         s += sep + val
-        h += sep + '{}'.format(k)
+        h += f'{sep}{k}'
         sep = '\t'
 
     if this.print_iter % hdr_frequency == 0:
