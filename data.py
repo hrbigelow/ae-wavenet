@@ -122,12 +122,15 @@ def load_data(dat_file):
 
 class TrackerDataset(Dataset):
     """
-    Tracks and provides the epoch and step
+    Tracks and provides the epoch and step.
+    If using with replicas and a subsetting sampler that samples
+    1/sampling_freq of the dataset
     """
-    def __init__(self, dataset, start_epoch=0, start_step=0):
+    def __init__(self, dataset, start_epoch=0, start_step=0, sampling_freq=1):
         self.dataset = dataset
         self.epoch = start_epoch
         self.step = start_step
+        self.sampling_freq = sampling_freq
         self.len = None
 
     def __len__(self):
@@ -136,8 +139,8 @@ class TrackerDataset(Dataset):
         return self.len
 
     def __getitem__(self, item):
-        self.step += 1
-        if self.step == len(self):
+        self.step += self.sampling_freq 
+        if self.step >= len(self):
             self.epoch += 1
             self.step = 0
         return self.dataset[item], self.epoch, self.step
@@ -244,7 +247,8 @@ class DataProcessor():
         if train_mode:
             slice_dataset = SliceDataset(slice_size, hps.n_win_batch)
             slice_dataset.load_data(dat_file)
-            self.dataset = TrackerDataset(slice_dataset, start_epoch, start_step)
+            self.dataset = TrackerDataset(slice_dataset, start_epoch,
+                    start_step, sampling_freq=num_replicas)
             self.sampler = LoopingRandomSampler(self.dataset, num_replicas, rank)
             self.loader = DataLoader(self.dataset, sampler=self.sampler,
                     num_workers=1,
