@@ -137,7 +137,7 @@ class Chassis(object):
 
             if batch_num % hps.progress_interval == 0:
                 if is_tpu:
-                    loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
+                    loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_sum)
                     # tprb_m_red = xm.mesh_reduce('mesh_tprb_m', tprb_m, reduce_mean)
                     # print(f'index: {index}, loss: {loss}, loss_reduced: {loss_reduced}',
                     #         file=stderr)
