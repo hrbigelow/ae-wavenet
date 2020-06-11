@@ -33,11 +33,11 @@ class State(object):
         self.model.override(hps.n_win_batch)
 
         if ckpt_file is None:
-            self.optim = torch.optim.Adam(params=self.model.parameters(),
+            self.optim = t.optim.Adam(params=self.model.parameters(),
                     lr=hps.learning_rate_rates[0])
 
         else:
-            sinfo = torch.load(ckpt_file)
+            sinfo = t.load(ckpt_file)
             sub_state = { k: v for k, v in sinfo['model_state_dict'].items() if
                     '_lead' not in k and 'left_wing_size' not in k }
             self.model.load_state_dict(sub_state, strict=False)
@@ -49,23 +49,23 @@ class State(object):
                 step = global_step % len(self.data.dataset) 
                 self.data.sampler.set_pos(epoch, step)
                 
-            self.optim = torch.optim.Adam(self.model.parameters())
+            self.optim = t.optim.Adam(self.model.parameters())
             self.optim.load_state_dict(sinfo['optim'])
             self.torch_rng_state = sinfo['rand_state']
             self.torch_cuda_rng_states = sinfo['cuda_rand_states']
 
         
         self.device = None
-        self.torch_rng_state = torch.get_rng_state()
-        if torch.cuda.is_available():
-            self.torch_cuda_rng_states = torch.cuda.get_rng_state_all()
+        self.torch_rng_state = t.get_rng_state()
+        if t.cuda.is_available():
+            self.torch_cuda_rng_states = t.cuda.get_rng_state_all()
         else:
             self.torch_cuda_rng_states = None
 
 
     def save(self, ckpt_file):
         # cur_device = self.device
-        # self.to(torch.device('cpu'))
+        # self.to(t.device('cpu'))
 
         mstate = pickle.dumps(self.model)
         mstate_dict = self.model.state_dict()
@@ -76,12 +76,12 @@ class State(object):
                 'model': mstate,
                 'model_state_dict': mstate_dict,
                 'optim': ostate,
-                'rand_state': torch.get_rng_state(),
-                'cuda_rand_states': (torch.cuda.get_rng_state_all() if
-                    torch.cuda.is_available() else None)
+                'rand_state': t.get_rng_state(),
+                'cuda_rand_states': (t.cuda.get_rng_state_all() if
+                    t.cuda.is_available() else None)
                 }
         if self.device.type == 'cuda':
-            torch.save(state, ckpt_file)
+            t.save(state, ckpt_file)
         elif self.device.type == 'xla':
             import torch_xla.core.xla_model as xm
             xm.save(state, ckpt_file)
@@ -92,7 +92,7 @@ class State(object):
         self.device = device
         self.model.to(device)
         ostate = self.optim.state_dict()
-        self.optim = torch.optim.Adam(self.model.parameters())
+        self.optim = t.optim.Adam(self.model.parameters())
         self.optim.load_state_dict(ostate)
         self.device = device
 
@@ -101,14 +101,14 @@ class State(object):
 
     def init_torch_generator(self):
         """Hack to set the generator state"""
-        torch.set_rng_state(self.torch_rng_state)
+        t.set_rng_state(self.torch_rng_state)
         #print('saved generator state: {}'.format(
         #    util.tensor_digest(self.torch_cuda_rng_states)))
-        #torch.cuda.set_rng_state_all(self.torch_cuda_rng_states)
-        if torch.cuda.is_available():
+        #t.cuda.set_rng_state_all(self.torch_cuda_rng_states)
+        if t.cuda.is_available():
             if self.torch_cuda_rng_states is not None:
-                torch.cuda.set_rng_state(self.torch_cuda_rng_states[0])
-                ndiff = torch.cuda.get_rng_state().ne(self.torch_cuda_rng_states[0]).sum()
+                t.cuda.set_rng_state(self.torch_cuda_rng_states[0])
+                ndiff = t.cuda.get_rng_state().ne(self.torch_cuda_rng_states[0]).sum()
                 if ndiff != 0:
                     print(('Warning: restored and checkpointed '
                     'GPU state differs in {} positions').format(ndiff), file=stderr)
@@ -128,9 +128,9 @@ class InferenceState(object):
         self.model = model 
         self.data_loader = data.WavLoader(dataset)
         self.device = None
-        self.torch_rng_state = torch.get_rng_state()
-        if torch.cuda.is_available():
-            self.torch_cuda_rng_states = torch.cuda.get_rng_state_all()
+        self.torch_rng_state = t.get_rng_state()
+        if t.cuda.is_available():
+            self.torch_cuda_rng_states = t.cuda.get_rng_state_all()
         else:
             self.torch_cuda_rng_states = None
 
@@ -139,7 +139,7 @@ class InferenceState(object):
         self.model.to(device)
 
     def load(self, ckpt_file, dat_file):
-        sinfo = torch.load(ckpt_file)
+        sinfo = t.load(ckpt_file)
 
         # This is the required order for model and data init 
         self.model = pickle.loads(sinfo['model'])
