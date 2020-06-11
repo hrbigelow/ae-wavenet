@@ -33,10 +33,10 @@ def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
         # chs.state.model.print_geometry()
         chs.train(hps, 0)
     elif hps.hw == 'TPU':
-        def _mp_fn(index):
-            m = ch.Chassis(hps, dat_file)
-            m.train(hps, index)
-        xmp.spawn(_mp_fn, args=(), nprocs=8)
+        def _mp_fn(index, _hps, _dat_file):
+            m = ch.Chassis(_hps, _dat_file)
+            m.train(_hps, index)
+        xmp.spawn(_mp_fn, args=(hps, dat_file), nprocs=8)
 
 
 if __name__ == '__main__':
