@@ -97,7 +97,7 @@ class LoopingRandomSampler(Sampler):
             while True:
                 n = len(self.dataset)
                 indices = t.randperm(range(rank, n, num_replicas).tolist()
-                print(f'in _gen with some indices {indices[:10]}', file=stderr)
+                print(f'in _gen with rank {rank} out of {num_replicas}', file=stderr)
                 stderr.flush()
                 for i in indices:
                     self.step += num_replicas 
