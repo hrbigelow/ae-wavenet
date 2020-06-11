@@ -128,8 +128,8 @@ class Chassis(object):
                 if is_tpu:
                     loss_reduced = (xm.mesh_reduce('mesh_reduce_loss', loss, reduce_add) /
                             self.num_devices)
-                    print(f'index: {index}, loss: {loss}, loss_reduced: {loss_reduced}',
-                            file=stderr)
+                    # print(f'index: {index}, loss: {loss}, loss_reduced: {loss_reduced}',
+                    #         file=stderr)
                 else:
                     loss_reduced = loss
 
