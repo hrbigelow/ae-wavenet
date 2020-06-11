@@ -138,7 +138,7 @@ class Chassis(object):
             if batch_num % hps.progress_interval == 0:
                 if is_tpu:
                     loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
-                    # tprb_m_red = xm.mesh_reduce('mesh_tprb_m', tprb_m, reduce_mean)
+                    tprb_m_red = xm.mesh_reduce('mesh_tprb_m', tprb_m, reduce_mean)
                     # print(f'index: {index}, loss: {loss}, loss_reduced: {loss_reduced}',
                     #         file=stderr)
                 else:
@@ -153,7 +153,7 @@ class Chassis(object):
                         'loss_r': loss_red,
                         'lrate': ss.optim.param_groups[0]['lr'],
                         'tprb_m': tprb_m,
-                        # 'tprb_m_r': tprb_m_red
+                        'tprb_m_r': tprb_m_red
                         # 'pk_d_m': avg_peak_dist
                         })
                 current_stats.update(ss.model.objective.metrics)
