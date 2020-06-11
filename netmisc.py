@@ -24,10 +24,11 @@ def print_metrics(metrics, worker_index, hdr_frequency):
     Flexibly prints a polymorphic set of metrics
     """
     nlstrip = re.compile('\\n\s+')
-    sep = '\t'
+    sep = ''
     h = ''
-    s = str(worker_index)
+    s = 
     d = dict(metrics)
+    d.update({'w_idx': worker_index})
     max_width = 12 
 
     for k, v in d.items():
