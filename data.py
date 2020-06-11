@@ -91,16 +91,20 @@ class LoopingRandomSampler(Sampler):
         self.dataset = dataset
         self.epoch = start_epoch
         self.step = start_step + rank
+        self.num_replicas = num_replicas
+        self.rank = rank
 
     def __iter__(self):
         def _gen():
             while True:
                 n = len(self.dataset)
-                indices = t.randperm(range(rank, n, num_replicas)).tolist()
-                print(f'in _gen with rank {rank} out of {num_replicas}', file=stderr)
+                vals = list(range(self.rank, n, self.num_replicas))
+                perms = t.randperm(len(vals)).tolist()
+                indices = [vals[i] for i in perms]
+                print(f'in _gen with rank {self.rank} out of {self.num_replicas}', file=stderr)
                 stderr.flush()
                 for i in indices:
-                    self.step += num_replicas 
+                    self.step += self.num_replicas 
                     yield i
                 self.epoch += 1
                 self.step = 0
@@ -183,26 +187,37 @@ class WavFileDataset(Dataset):
                 sam.file_path)
 
 
-def train_collate_fn(batch):
-    wav = t.stack([t.from_numpy(b[0]) for b in batch]).float()
-    mel = t.stack([t.from_numpy(self.mfcc(b[0])) for b in
-        batch]).float()
-    voice = t.tensor([b[1] for b in batch]).long()
-    jitter = t.stack([t.from_numpy(self.jitter(mel.size()[2])) for _ in
-        range(len(batch))]).long()
-    return wav, mel, voice, jitter
+class TrainCollate():
+    def __init__(self, mfcc, jitter):
+        self.mfcc = mfcc
+        self.jitter = jitter
 
-def test_collate_fn(batch):
+    def __call__(self, batch):
+        wav = t.stack([t.from_numpy(b[0]) for b in batch]).float()
+        mel = t.stack([t.from_numpy(self.mfcc(b[0])) for b in
+            batch]).float()
+        voice = t.tensor([b[1] for b in batch]).long()
+        jitter = t.stack([t.from_numpy(self.jitter(mel.size()[2])) for _ in
+            range(len(batch))]).long()
+        return wav, mel, voice, jitter
+
+class TestCollate():
+    def __init__(self, mfcc, jitter):
+        self.train_collate = TrainCollate(mfcc, jitter)
+
+    def __call__(batch):
         paths = [b[2] for b in batch]
-        return *train_collate_fn(batch), paths
+        return (*self.train_collate(batch), paths)
 
 
 class DataProcessor():
     def __init__(self, hps, dat_file, mfcc_func, slice_size, train_mode,
             start_epoch=0, start_step=0, num_replicas=1, rank=0):
         super().__init__()
-        self.jitter = jitter.Jitter(hps.jitter_prob) 
-        self.mfcc = mfcc_func
+        jitter_func = jitter.Jitter(hps.jitter_prob) 
+
+        train_collate_fn = TrainCollate(mfcc_func, jitter_func)
+        test_collate_fn = TestCollate(mfcc_func, jitter_func)
 
         if train_mode:
             self.dataset = SliceDataset(slice_size, hps.n_win_batch)
