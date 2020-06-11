@@ -10,6 +10,12 @@ class Hyperparams(dict):
     def __setattr__(self, attr, value):
         self[attr] = value
 
+    def __getstate__(self):
+        return self
+
+    def __setstate__(self, state):
+        self.update(state)
+
 
 def setup_hparams(hparam_set_names, kwargs):
     H = Hyperparams()
