@@ -109,8 +109,10 @@ class Chassis(object):
 
         if ss.model.bn_type in ('vqvae', 'vqvae-ema'):
             ss.model.init_codebook(self.data_iter, 10000)
+        
+        for batch_num, batch in enumerate(self.device_loader):
+            wav, mel, voice, jitter = batch
 
-        for wav, mel, voice, jitter in self.device_loader:
             if ss.data.global_step in self.learning_rates:
                 ss.update_learning_rate(self.learning_rates[ss.data.global_step])
 
@@ -133,7 +135,7 @@ class Chassis(object):
 
             tprb_m = self.avg_prob_target()
 
-            if ss.data.global_step % hps.progress_interval == 0:
+            if batch_num % hps.progress_interval == 0:
                 if is_tpu:
                     loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
                     tprb_m_red = xm.mesh_reduce('mesh_tprb_m', tprb_m, reduce_mean)
@@ -168,7 +170,7 @@ class Chassis(object):
                     netmisc.print_metrics(current_stats, index, 100)
                     stderr.flush()
 
-            if (ss.data.global_step % hps.save_interval == 0):
+            if (batch_num % hps.save_interval == 0 and batch_num != 0):
                 if not is_tpu or xm.is_master_ordinal():
                     self.save_checkpoint()
 
