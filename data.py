@@ -182,7 +182,16 @@ class WavFileDataset(Dataset):
                 sam.voice_index,
                 sam.file_path)
 
+
+def collate_fn(batch):
+    wav = t.stack([t.from_numpy(b[0]) for b in batch]).float()
+    mel = t.stack([t.from_numpy(self.mfcc(b[0])) for b in
+        batch]).float()
+    voice = t.tensor([b[1] for b in batch]).long()
+    jitter = t.stack([t.from_numpy(self.jitter(mel.size()[2])) for _ in
+        range(len(batch))]).long()
     
+
 class DataProcessor():
     def __init__(self, hps, dat_file, mfcc_func, slice_size, train_mode,
             start_epoch=0, start_step=0, num_replicas=1, rank=0):
@@ -190,13 +199,6 @@ class DataProcessor():
         self.jitter = jitter.Jitter(hps.jitter_prob) 
         self.mfcc = mfcc_func
 
-        def collate_fn(batch):
-            wav = t.stack([t.from_numpy(b[0]) for b in batch]).float()
-            mel = t.stack([t.from_numpy(self.mfcc(b[0])) for b in
-                batch]).float()
-            voice = t.tensor([b[1] for b in batch]).long()
-            jitter = t.stack([t.from_numpy(self.jitter(mel.size()[2])) for _ in
-                range(len(batch))]).long()
 
             if not train_mode:
                 paths = [b[2] for b in batch]
