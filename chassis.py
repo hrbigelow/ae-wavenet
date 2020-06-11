@@ -166,8 +166,8 @@ class Chassis(object):
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
                     current_stats.update(ss.model.encoder.metrics)
 
-                # if not is_tpu or xm.is_master_ordinal():
-                if True:
+                if not is_tpu or xm.is_master_ordinal():
+                # if True:
                     netmisc.print_metrics(current_stats, index, 100)
                     stderr.flush()
 
