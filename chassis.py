@@ -118,10 +118,6 @@ class Chassis(object):
 
             if is_tpu:
                 xm.optimizer_step(ss.optim)
-                loss_reduced = (xm.mesh_reduce('mesh_reduce_loss', loss, reduce_add) /
-                        self.num_devices)
-                print(f'index: {index}, loss: {loss}, loss_reduced: {loss_reduced}',
-                        file=stderr)
             else:
                 ss.optim.step()
 
@@ -129,11 +125,19 @@ class Chassis(object):
                 ss.model.bottleneck.update_codebook()
 
             if ss.data.global_step % hps.progress_interval == 0:
+                if is_tpu:
+                    loss_reduced = (xm.mesh_reduce('mesh_reduce_loss', loss, reduce_add) /
+                            self.num_devices)
+                    print(f'index: {index}, loss: {loss}, loss_reduced: {loss_reduced}',
+                            file=stderr)
+                else:
+                    loss_reduced = loss
                 current_stats.update({
                         'global_step': ss.data.global_step,
                         'epoch': ss.data.epoch,
                         'step': ss.data.step,
                         'loss': loss,
+                        'loss_reduced': loss_reduced,
                         'lrate': ss.optim.param_groups[0]['lr'],
                         'tprb_m': self.avg_prob_target(),
                         # 'pk_d_m': avg_peak_dist
