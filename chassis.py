@@ -132,6 +132,7 @@ class Chassis(object):
                             file=stderr)
                 else:
                     loss_reduced = loss
+
                 current_stats.update({
                         'global_step': ss.data.global_step,
                         'epoch': ss.data.epoch,
@@ -152,8 +153,9 @@ class Chassis(object):
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
                     current_stats.update(ss.model.encoder.metrics)
 
-                netmisc.print_metrics(current_stats, index, 100)
-                stderr.flush()
+                if not is_tpu or xm.is_master_ordinal():
+                    netmisc.print_metrics(current_stats, index, 100)
+                    stderr.flush()
 
             if (ss.data.global_step % hps.save_interval == 0):
                 if not is_tpu or xm.is_master_ordinal():
