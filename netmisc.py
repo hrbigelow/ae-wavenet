@@ -24,7 +24,7 @@ def print_metrics(metrics, worker_index, hdr_frequency):
     Flexibly prints a polymorphic set of metrics
     """
     nlstrip = re.compile('\\n\s+')
-    sep = ''
+    sep = '\t'
     h = ''
     s = str(worker_index)
     d = dict(metrics)
