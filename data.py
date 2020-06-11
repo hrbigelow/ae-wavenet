@@ -85,21 +85,22 @@ SpokenSample = namedtuple('SpokenSample', [
 
 
 class LoopingRandomSampler(Sampler):
-    def __init__(self, dataset, start_epoch=0, start_step=0):
+    def __init__(self, dataset, start_epoch=0, start_step=0, num_replicas=1,
+            rank=0):
         super().__init__(dataset)
         self.dataset = dataset
         self.epoch = start_epoch
-        self.step = start_step
+        self.step = start_step + rank
 
     def __iter__(self):
         def _gen():
             while True:
                 n = len(self.dataset)
-                indices = t.randperm(n).tolist()
+                indices = t.randperm(range(rank, n, num_replicas).tolist()
                 print(f'in _gen with some indices {indices[:10]}', file=stderr)
                 stderr.flush()
                 for i in indices:
-                    self.step += 1
+                    self.step += num_replicas 
                     yield i
                 self.epoch += 1
                 self.step = 0
@@ -184,7 +185,7 @@ class WavFileDataset(Dataset):
     
 class DataProcessor():
     def __init__(self, hps, dat_file, mfcc_func, slice_size, train_mode,
-            start_epoch=0, start_step=0):
+            start_epoch=0, start_step=0, num_replicas=1, rank=0):
         super().__init__()
         self.jitter = jitter.Jitter(hps.jitter_prob) 
         self.mfcc = mfcc_func
@@ -207,8 +208,9 @@ class DataProcessor():
             self.dataset = SliceDataset(slice_size, hps.n_win_batch)
             self.dataset.load_data(dat_file)
             self.sampler = LoopingRandomSampler(self.dataset, start_epoch,
-                    start_step)
+                    start_step, num_replicas, rank)
             self.loader = DataLoader(self.dataset, sampler=self.sampler,
+                    num_workers=1,
                     batch_size=hps.n_batch, pin_memory=False,
                     collate_fn=collate_fn)
         else:

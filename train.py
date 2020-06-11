@@ -36,7 +36,7 @@ def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
         def _mp_fn(index):
             m = ch.Chassis(hps, dat_file)
             m.train(hps, index)
-        xmp.spawn(_mp_fn, args=(), nprocs=1, start_method='fork')
+        xmp.spawn(_mp_fn, args=(), nprocs=8, start_method='fork')
 
 
 if __name__ == '__main__':

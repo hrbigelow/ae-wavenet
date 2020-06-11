@@ -24,6 +24,8 @@ class GPULoaderIter(object):
         return tuple(item.to(self.device) for item in items)
 
 
+def reduce_add(vlist):
+    return torch.stack(vlist).sum(dim=0)
 
 class Chassis(object):
     """
@@ -36,9 +38,19 @@ class Chassis(object):
     """
 
     def __init__(self, hps, dat_file):
+        if hps.hw in ('TPU', 'TPU-single'):
+            import torch_xla.core.xla_model as xm
+            import torch_xla.distributed.parallel_loader as pl
+            num_replicas = xm.xrt_world_size()
+            rank = xm.get_ordinal()
+        else:
+            num_replicas = 1
+            rank = 0
+
         print('Initializing model and data source...', end='', file=stderr)
         self.state = checkpoint.State(hps, dat_file, train_mode=True,
-                ckpt_file=hps.get('ckpt_file', None))
+                ckpt_file=hps.get('ckpt_file', None), step=0,
+                num_replicas=num_replicas, rank=rank)
         stderr.flush()
 
         self.learning_rates = dict(zip(hps.learning_rate_steps,
@@ -57,8 +69,6 @@ class Chassis(object):
             self.device_loader = GPULoaderIter(self.state.data.loader, device)
             self.state.to(device)
         else:
-            import torch_xla.core.xla_model as xm
-            import torch_xla.distributed.parallel_loader as pl
             device = xm.xla_device()
             para_loader = pl.ParallelLoader(self.state.data.loader, [device])
             self.device_loader = para_loader.per_device_loader(device) 
@@ -106,11 +116,9 @@ class Chassis(object):
 
             if self.hw == 'TPU':
                 xm.optimizer_step(ss.optim)
-                def reduce_add(vlist):
-                    return torch.stack(vlist).sum(dim=0)
                 loss_reduced = (xm.mesh_reduce('mesh_reduce_loss', loss, reduce_add) /
                         self.num_devices)
-                print(f'loss: {loss}, loss_reduced: {loss_reduced}',
+                print(f'index: {index}, loss: {loss}, loss_reduced: {loss_reduced}',
                         file=stderr)
             else:
                 ss.optim.step()

@@ -1,6 +1,6 @@
 import pickle
 import io
-import torch
+import torch as t
 from sys import stderr
 import util
 import data
@@ -11,19 +11,24 @@ class State(object):
     Encapsulates full state of training
     '''
 
-    def __init__(self, hps, dat_file, train_mode=True, ckpt_file=None, step=0):
+    def __init__(self, hps, dat_file, train_mode=True, ckpt_file=None, step=0,
+            num_replicas=1, rank=0):
         """
         Initialize total state.  If ckpt_file is provided, also restore
         state.
         """
+        t.manual_seed(hps.random_seed)
+
         if hps.global_model == 'autoencoder':
             self.model = ae.AutoEncoder(hps)
         elif hps.global_model == 'mfcc_inverter':
             self.model = mi.MfccInverter(hps)
 
         slice_size = self.model.get_input_size(hps.n_win_batch)
+
         self.data = data.DataProcessor(hps, dat_file, self.model.mfcc,
-                slice_size, train_mode, start_epoch=0, start_step=0)
+                slice_size, train_mode, start_epoch=0, start_step=0,
+                num_replicas=num_replicas, rank=rank)
 
         self.model.override(hps.n_win_batch)
 
@@ -33,8 +38,8 @@ class State(object):
 
         else:
             sinfo = torch.load(ckpt_file)
-            sub_state = { k: v for k, v in sinfo['model_state_dict'].items() if '_lead' not
-                    in k and 'left_wing_size' not in k }
+            sub_state = { k: v for k, v in sinfo['model_state_dict'].items() if
+                    '_lead' not in k and 'left_wing_size' not in k }
             self.model.load_state_dict(sub_state, strict=False)
             if 'epoch' in sinfo:
                 self.data.sampler.set_pos(sinfo['epoch'], sinfo['step'])
