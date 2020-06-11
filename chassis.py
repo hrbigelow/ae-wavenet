@@ -36,7 +36,6 @@ class Chassis(object):
     setup. 
 
     """
-
     def __init__(self, hps, dat_file):
         if hps.hw in ('TPU', 'TPU-single'):
             import torch_xla.core.xla_model as xm
@@ -60,7 +59,9 @@ class Chassis(object):
             self.anneal_schedule = dict(zip(hps.bn_anneal_weight_steps,
                 hps.bn_anneal_weight_vals))
 
-        self.ckpt_path = util.CheckpointPath(hps.ckpt_template)
+        if hps.hw not in ('TPU', 'TPU-single') or xm.is_master_ordinal():
+            self.ckpt_path = util.CheckpointPath(hps.ckpt_template)
+
         self.softmax = torch.nn.Softmax(1) # input to this is (B, Q, N)
         self.hw = hps.hw
 
@@ -81,7 +82,8 @@ class Chassis(object):
 
 
     def train(self, hps, index):
-        if hps.hw == 'TPU':
+        is_tpu = (hps.hw in ('TPU', 'TPU-single'))
+        if is_tpu:
             import torch_xla.core.xla_model as xm
 
         ss = self.state 
@@ -114,7 +116,7 @@ class Chassis(object):
             self.mel_enc_input = mel
             loss.backward()
 
-            if self.hw == 'TPU':
+            if is_tpu:
                 xm.optimizer_step(ss.optim)
                 loss_reduced = (xm.mesh_reduce('mesh_reduce_loss', loss, reduce_add) /
                         self.num_devices)
@@ -150,7 +152,8 @@ class Chassis(object):
                 stderr.flush()
 
             if (ss.data.global_step % hps.save_interval == 0):
-                self.save_checkpoint()
+                if not is_tpu or xm.is_master_ordinal():
+                    self.save_checkpoint()
 
     def save_checkpoint(self):
         ckpt_file = self.ckpt_path.path(self.state.data.step)
