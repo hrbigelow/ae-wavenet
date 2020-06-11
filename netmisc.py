@@ -26,7 +26,7 @@ def print_metrics(metrics, worker_index, hdr_frequency):
     nlstrip = re.compile('\\n\s+')
     sep = ''
     h = ''
-    s = ''
+    s = str(worker_index)
     d = dict(metrics)
     max_width = 12 
 
