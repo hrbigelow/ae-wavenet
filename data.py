@@ -183,14 +183,19 @@ class WavFileDataset(Dataset):
                 sam.file_path)
 
 
-def collate_fn(batch):
+def train_collate_fn(batch):
     wav = t.stack([t.from_numpy(b[0]) for b in batch]).float()
     mel = t.stack([t.from_numpy(self.mfcc(b[0])) for b in
         batch]).float()
     voice = t.tensor([b[1] for b in batch]).long()
     jitter = t.stack([t.from_numpy(self.jitter(mel.size()[2])) for _ in
         range(len(batch))]).long()
-    
+    return wav, mel, voice, jitter
+
+def test_collate_fn(batch):
+        paths = [b[2] for b in batch]
+        return *train_collate_fn(batch), paths
+
 
 class DataProcessor():
     def __init__(self, hps, dat_file, mfcc_func, slice_size, train_mode,
@@ -198,13 +203,6 @@ class DataProcessor():
         super().__init__()
         self.jitter = jitter.Jitter(hps.jitter_prob) 
         self.mfcc = mfcc_func
-
-
-            if not train_mode:
-                paths = [b[2] for b in batch]
-                return wav, mel, voice, jitter, paths
-            else:
-                return wav, mel, voice, jitter
 
         if train_mode:
             self.dataset = SliceDataset(slice_size, hps.n_win_batch)
@@ -214,14 +212,14 @@ class DataProcessor():
             self.loader = DataLoader(self.dataset, sampler=self.sampler,
                     num_workers=1,
                     batch_size=hps.n_batch, pin_memory=False,
-                    collate_fn=collate_fn)
+                    collate_fn=train_collate_fn)
         else:
             self.dataset = WavFileDataset()
             self.dataset.load_data(dat_file)
             self.sampler = SequentialSampler(self.dataset)
             self.loader = DataLoader(self.dataset, batch_size=1,
                     sampler=self.sampler, pin_memory=False, drop_last=False,
-                    collate_fn=collate_fn)
+                    collate_fn=test_collate_fn)
 
     @property
     def epoch(self):
