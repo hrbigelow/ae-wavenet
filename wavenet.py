@@ -315,9 +315,13 @@ class WaveNet(nn.Module):
         speaker_inds: (n_batch, n_wav_ts(?))
         outputs: (n_batch, n_quant, ?)
         """
+        to_add = torch.arange(0, jitter_index.nelement(),
+                jitter_index.size()[1]).to(wav.device)
+        jitter_index_inc = jitter_index + to_add.unsqueeze(1)
+        
         D1 = lc_sparse.size()[1]
         lc_jitter = torch.take(lc_sparse,
-                jitter_index.unsqueeze(1).expand(-1, D1, -1))
+                jitter_index_inc.unsqueeze(1).expand(-1, D1, -1))
         lc_conv = self.lc_conv(lc_jitter) 
         lc_dense = self.lc_upsample(lc_conv)
 
