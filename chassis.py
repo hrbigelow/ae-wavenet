@@ -49,11 +49,13 @@ class Chassis(object):
             num_replicas = 1
             rank = 0
 
-        print('Initializing model and data source...', end='', file=stderr)
+        if hps.hw not in ('TPU', 'TPU-single') or xm.is_master_ordinal():
+            print('Initializing model and data source...', end='', file=stderr)
+            stderr.flush()
+
         self.state = checkpoint.State(hps, dat_file, train_mode=True,
                 ckpt_file=hps.get('ckpt_file', None), step=0,
                 num_replicas=num_replicas, rank=rank)
-        stderr.flush()
 
         self.learning_rates = dict(zip(hps.learning_rate_steps,
             hps.learning_rate_rates))
@@ -80,8 +82,10 @@ class Chassis(object):
             self.state.to(device)
 
         self.state.init_torch_generator()
-        print('Done.', file=stderr)
-        stderr.flush()
+
+        if hps.hw not in ('TPU', 'TPU-single') or xm.is_master_ordinal():
+            print('Done.', file=stderr)
+            stderr.flush()
 
 
     def train(self, hps, index):
