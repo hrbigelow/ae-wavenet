@@ -10,6 +10,9 @@ import parse_tools
 import netmisc
 from hparams import setup_hparams
 
+def _mp_fn(index, _hps, _dat_file):
+    m = ch.Chassis(_hps, _dat_file)
+    m.train(_hps, index)
 
 def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
     hps = setup_hparams(hps, kwargs)
@@ -33,9 +36,6 @@ def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
         # chs.state.model.print_geometry()
         chs.train(hps, 0)
     elif hps.hw == 'TPU':
-        def _mp_fn(index, _hps, _dat_file):
-            m = ch.Chassis(_hps, _dat_file)
-            m.train(_hps, index)
         xmp.spawn(_mp_fn, args=(hps, dat_file), nprocs=8)
 
 
