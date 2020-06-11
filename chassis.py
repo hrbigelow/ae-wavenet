@@ -27,6 +27,9 @@ class GPULoaderIter(object):
 def reduce_add(vlist):
     return torch.stack(vlist).sum(dim=0)
 
+def reduce_mean(vlist):
+    return torch.stack(vlist).mean(dim=0)
+
 class Chassis(object):
     """
     Coordinates the construction of the model, dataset, optimizer,
@@ -124,23 +127,27 @@ class Chassis(object):
             if ss.model.bn_type == 'vqvae-ema' and ss.data.global_step == 10000:
                 ss.model.bottleneck.update_codebook()
 
+            tprb_m = self.avg_prob_target()
+
             if ss.data.global_step % hps.progress_interval == 0:
                 if is_tpu:
-                    loss_reduced = (xm.mesh_reduce('mesh_reduce_loss', loss, reduce_add) /
-                            self.num_devices)
+                    loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
+                    tprb_m_red = xm.mesh_reduce('mesh_tprb_m', tprb_m, reduce_mean)
                     # print(f'index: {index}, loss: {loss}, loss_reduced: {loss_reduced}',
                     #         file=stderr)
                 else:
-                    loss_reduced = loss
+                    loss_red = loss
+                    tprb_m_red = tprb_m
 
                 current_stats.update({
-                        'global_step': ss.data.global_step,
+                        'gstep': ss.data.global_step,
                         'epoch': ss.data.epoch,
                         'step': ss.data.step,
                         'loss': loss,
-                        'loss_reduced': loss_reduced,
+                        'loss_r': loss_red,
                         'lrate': ss.optim.param_groups[0]['lr'],
-                        'tprb_m': self.avg_prob_target(),
+                        'tprb_m': tprb_m,
+                        'tprb_m_r': tprb_m_red
                         # 'pk_d_m': avg_peak_dist
                         })
                 current_stats.update(ss.model.objective.metrics)
