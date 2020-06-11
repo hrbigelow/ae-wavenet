@@ -42,12 +42,12 @@ class State(object):
                     '_lead' not in k and 'left_wing_size' not in k }
             self.model.load_state_dict(sub_state, strict=False)
             if 'epoch' in sinfo:
-                self.data.sampler.set_pos(sinfo['epoch'], sinfo['step'])
+                self.data.dataset.set_pos(sinfo['epoch'], sinfo['step'])
             else:
                 global_step = sinfo['step']
                 epoch = global_step // len(self.data.dataset)
                 step = global_step % len(self.data.dataset) 
-                self.data.sampler.set_pos(epoch, step)
+                self.data.dataset.set_pos(epoch, step)
                 
             self.optim = t.optim.Adam(self.model.parameters())
             self.optim.load_state_dict(sinfo['optim'])

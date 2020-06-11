@@ -111,7 +111,7 @@ class Chassis(object):
             ss.model.init_codebook(self.data_iter, 10000)
         
         for batch_num, batch in enumerate(self.device_loader):
-            wav, mel, voice, jitter = batch
+            wav, mel, voice, jitter, position = batch
 
             if ss.data.global_step in self.learning_rates:
                 ss.update_learning_rate(self.learning_rates[ss.data.global_step])
@@ -147,8 +147,8 @@ class Chassis(object):
 
                 current_stats.update({
                         'gstep': ss.data.global_step,
-                        'epoch': ss.data.epoch,
-                        'step': ss.data.step,
+                        'epoch': position[0],
+                        'step': position[1],
                         'loss': loss,
                         'loss_r': loss_red,
                         'lrate': ss.optim.param_groups[0]['lr'],

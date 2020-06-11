@@ -85,12 +85,9 @@ SpokenSample = namedtuple('SpokenSample', [
 
 
 class LoopingRandomSampler(Sampler):
-    def __init__(self, dataset, start_epoch=0, start_step=0, num_replicas=1,
-            rank=0):
+    def __init__(self, dataset, num_replicas=1, rank=0):
         super().__init__(dataset)
         self.dataset = dataset
-        self.epoch = start_epoch
-        self.step = start_step + rank
         self.num_replicas = num_replicas
         self.rank = rank
 
@@ -104,18 +101,13 @@ class LoopingRandomSampler(Sampler):
                 print(f'in _gen with rank {self.rank} out of {self.num_replicas}', file=stderr)
                 stderr.flush()
                 for i in indices:
-                    self.step += self.num_replicas 
                     yield i
-                self.epoch += 1
-                self.step = 0
+
         return _gen()
 
     def __len__(self):
         return int(2**31)
 
-    def set_pos(self, epoch, step):
-        self.epoch = epoch
-        self.step = step
 
 
 
@@ -127,6 +119,33 @@ def load_data(dat_file):
         print(f'Could not open preprocessed data file {dat_file}.', file=stderr)
         stderr.flush()
     return dat
+
+class TrackerDataset(Dataset):
+    """
+    Tracks and provides the epoch and step
+    """
+    def __init__(self, dataset, start_epoch=0, start_step=0):
+        self.dataset = dataset
+        self.epoch = start_epoch
+        self.step = start_step
+        self.len = None
+
+    def __len__(self):
+        if self.len is None:
+            self.len = len(self.dataset)
+        return self.len
+
+    def __getitem__(self, item):
+        self.step += 1
+        if self.step == len(self):
+            self.epoch += 1
+            self.step = 0
+        return self.dataset[item], self.epoch, self.step
+
+    def set_pos(self, epoch, step):
+        self.epoch = epoch
+        self.step = step
+
 
 class SliceDataset(Dataset):
     """
@@ -187,27 +206,30 @@ class WavFileDataset(Dataset):
                 sam.file_path)
 
 
-class TrainCollate():
-    def __init__(self, mfcc, jitter):
+class Collate():
+    def __init__(self, mfcc, jitter, train_mode):
+        self.train_mode = train_mode
         self.mfcc = mfcc
         self.jitter = jitter
 
     def __call__(self, batch):
-        wav = t.stack([t.from_numpy(b[0]) for b in batch]).float()
-        mel = t.stack([t.from_numpy(self.mfcc(b[0])) for b in
-            batch]).float()
-        voice = t.tensor([b[1] for b in batch]).long()
+        data = [b[0] for b in batch]
+
+        # epoch, step
+        position = t.tensor(batch[-1][1:])
+
+        wav = t.stack([t.from_numpy(d[0]) for d in data]).float()
+        mel = t.stack([t.from_numpy(self.mfcc(d[0])) for d in
+            data]).float()
+        voice = t.tensor([d[1] for d in data]).long()
         jitter = t.stack([t.from_numpy(self.jitter(mel.size()[2])) for _ in
-            range(len(batch))]).long()
-        return wav, mel, voice, jitter
+            range(len(data))]).long()
 
-class TestCollate():
-    def __init__(self, mfcc, jitter):
-        self.train_collate = TrainCollate(mfcc, jitter)
-
-    def __call__(batch):
-        paths = [b[2] for b in batch]
-        return (*self.train_collate(batch), paths)
+        if self.train_mode:
+            return wav, mel, voice, jitter, position 
+        else:
+            paths = [b[0][2] for b in batch]
+            return wav, mel, voice, jitter, paths, position
 
 
 class DataProcessor():
@@ -216,21 +238,22 @@ class DataProcessor():
         super().__init__()
         jitter_func = jitter.Jitter(hps.jitter_prob) 
 
-        train_collate_fn = TrainCollate(mfcc_func, jitter_func)
-        test_collate_fn = TestCollate(mfcc_func, jitter_func)
+        train_collate_fn = Collate(mfcc_func, jitter_func, train_mode=True)
+        test_collate_fn = Collate(mfcc_func, jitter_func, train_mode=False)
 
         if train_mode:
-            self.dataset = SliceDataset(slice_size, hps.n_win_batch)
-            self.dataset.load_data(dat_file)
-            self.sampler = LoopingRandomSampler(self.dataset, start_epoch,
-                    start_step, num_replicas, rank)
+            slice_dataset = SliceDataset(slice_size, hps.n_win_batch)
+            slice_dataset.load_data(dat_file)
+            self.dataset = TrackerDataset(slice_dataset, start_epoch, start_step)
+            self.sampler = LoopingRandomSampler(self.dataset, num_replicas, rank)
             self.loader = DataLoader(self.dataset, sampler=self.sampler,
                     num_workers=1,
                     batch_size=hps.n_batch, pin_memory=False,
                     collate_fn=train_collate_fn)
         else:
-            self.dataset = WavFileDataset()
-            self.dataset.load_data(dat_file)
+            wav_dataset = WavFileDataset()
+            wav_dataset.load_data(dat_file)
+            self.dataset = TrackerDataset(wav_dataset, 0, 0)
             self.sampler = SequentialSampler(self.dataset)
             self.loader = DataLoader(self.dataset, batch_size=1,
                     sampler=self.sampler, pin_memory=False, drop_last=False,
@@ -238,11 +261,11 @@ class DataProcessor():
 
     @property
     def epoch(self):
-        return self.sampler.epoch
+        return self.dataset.epoch
 
     @property
     def step(self):
-        return self.sampler.step
+        return self.dataset.step
 
     @property
     def global_step(self):
