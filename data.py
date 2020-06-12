@@ -90,6 +90,7 @@ class LoopingRandomSampler(Sampler):
         self.dataset = dataset
         self.num_replicas = num_replicas
         self.rank = rank
+        print(f'LoopingRandomSampler with {self.rank} out of {self.num_replicas}', file=stderr)
 
     def __iter__(self):
         def _gen():
@@ -98,7 +99,6 @@ class LoopingRandomSampler(Sampler):
                 vals = list(range(self.rank, n, self.num_replicas))
                 perms = t.randperm(len(vals)).tolist()
                 indices = [vals[i] for i in perms]
-                print(f'in _gen with rank {self.rank} out of {self.num_replicas}', file=stderr)
                 stderr.flush()
                 for i in indices:
                     yield i
