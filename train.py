@@ -8,33 +8,28 @@ import autoencoder_model as ae
 import chassis as ch
 import parse_tools  
 import netmisc
-from hparams import setup_hparams
+from hparams import setup_hparams, Hyperparams
+
 
 def _mp_fn(index, _hps, _dat_file):
     m = ch.Chassis(_hps, _dat_file)
-    m.train(_hps, index)
+    m.train(index)
 
 def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
-    hps = setup_hparams(hps, kwargs)
-    if hps.hw == 'GPU':
-        if not t.cuda.is_available():
-            raise RuntimeError('GPU requested but not available')
-    elif hps.hw in ('TPU', 'TPU-single'):
-        import torch_xla.distributed.xla_multiprocessing as xmp
+    if 'ckpt_file' in kwargs:
+        hps = Hyperparams(kwargs)
     else:
-        raise RuntimeError(
-                ('Invalid device {} requested.  ' 
-                + 'Must be GPU or TPU').format(hps.hw))
-
-    print('Hyperparameters:\n', '\n'.join(f'{k} = {v}' for k, v in hps.items()), file=stderr)
-    print(f'Using {hps.hw}', file=stderr)
+        hps = setup_hparams(hps, kwargs)
+        
+    if hps.hw in ('TPU', 'TPU-single'):
+        import torch_xla.distributed.xla_multiprocessing as xmp
 
     netmisc.set_print_iter(0)
 
     if hps.hw in ('GPU', 'TPU-single'):
         chs = ch.Chassis(hps, dat_file)
         # chs.state.model.print_geometry()
-        chs.train(hps, 0)
+        chs.train(0)
     elif hps.hw == 'TPU':
         xmp.spawn(_mp_fn, args=(hps, dat_file), nprocs=8)
 

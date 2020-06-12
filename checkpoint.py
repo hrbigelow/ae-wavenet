@@ -5,18 +5,26 @@ from sys import stderr
 import util
 import data
 import mfcc_inverter as mi
+import hparams
 
-class State(object):
+class Checkpoint(object):
     '''
     Encapsulates full state of training
     '''
 
-    def __init__(self, hps, dat_file, train_mode=True, ckpt_file=None, step=0,
+    def __init__(self, override_hps, dat_file, train_mode=True, ckpt_file=None,
             num_replicas=1, rank=0):
         """
-        Initialize total state.  If ckpt_file is provided, also restore
-        state.
+        Initialize total state.  If ckpt_file is provided, hps will be ignored. 
         """
+        if ckpt_file is not None:
+            ckpt = t.load(ckpt_file)
+            if 'hps' in ckpt:
+                hps = hparams.Hyperparams(**ckpt['hps'])
+        else:
+            hps = hparams.Hyperparams()
+        hps.update(override_hps)
+            
         t.manual_seed(hps.random_seed)
 
         if hps.global_model == 'autoencoder':
@@ -37,22 +45,21 @@ class State(object):
                     lr=hps.learning_rate_rates[0])
 
         else:
-            sinfo = t.load(ckpt_file)
-            sub_state = { k: v for k, v in sinfo['model_state_dict'].items() if
+            sub_state = { k: v for k, v in ckpt['model_state_dict'].items() if
                     '_lead' not in k and 'left_wing_size' not in k }
             self.model.load_state_dict(sub_state, strict=False)
-            if 'epoch' in sinfo:
-                self.data.dataset.set_pos(sinfo['epoch'], sinfo['step'])
+            if 'epoch' in ckpt:
+                self.data.dataset.set_pos(ckpt['epoch'], ckpt['step'])
             else:
-                global_step = sinfo['step']
+                global_step = ckpt['step']
                 epoch = global_step // len(self.data.dataset)
                 step = global_step % len(self.data.dataset) 
                 self.data.dataset.set_pos(epoch, step)
                 
             self.optim = t.optim.Adam(self.model.parameters())
-            self.optim.load_state_dict(sinfo['optim'])
-            self.torch_rng_state = sinfo['rand_state']
-            self.torch_cuda_rng_states = sinfo['cuda_rand_states']
+            self.optim.load_state_dict(ckpt['optim'])
+            self.torch_rng_state = ckpt['rand_state']
+            self.torch_cuda_rng_states = ckpt['cuda_rand_states']
 
         
         self.device = None
@@ -62,18 +69,18 @@ class State(object):
         else:
             self.torch_cuda_rng_states = None
 
+        self.hps = hps
+
 
     def save(self, ckpt_file):
         # cur_device = self.device
         # self.to(t.device('cpu'))
-
-        mstate = pickle.dumps(self.model)
         mstate_dict = self.model.state_dict()
         ostate = self.optim.state_dict()
         state = {
+                'hps': self.hps,
                 'epoch': self.data.epoch,
                 'step': self.data.step,
-                'model': mstate,
                 'model_state_dict': mstate_dict,
                 'optim': ostate,
                 'rand_state': t.get_rng_state(),
@@ -139,20 +146,20 @@ class InferenceState(object):
         self.model.to(device)
 
     def load(self, ckpt_file, dat_file):
-        sinfo = t.load(ckpt_file)
+        ckpt = t.load(ckpt_file)
 
         # This is the required order for model and data init 
-        self.model = pickle.loads(sinfo['model'])
+        self.model = pickle.loads(ckpt['model'])
 
         # win batch of 1 is inference mode
         self.model.override(n_win_batch=1)
 
         # ignore the pickled dataset characteristics
-        dataset = data.MfccInference(pickle.loads(sinfo['dataset']), dat_file)
+        dataset = data.MfccInference(pickle.loads(ckpt['dataset']), dat_file)
 
         # dataset.load_data(dat_file)
         self.model.post_init(dataset)
-        sub_state = { k: v for k, v in sinfo['model_state_dict'].items() if '_lead' not
+        sub_state = { k: v for k, v in ckpt['model_state_dict'].items() if '_lead' not
                 in k and 'left_wing_size' not in k }
         self.model.load_state_dict(sub_state, strict=False)
         dataset.post_init(self.model)

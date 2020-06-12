@@ -3,7 +3,7 @@ import torch as t
 import data
 import autoencoder_model as ae
 import mfcc_inverter as mi
-import checkpoint
+import checkpoint as ckpt
 import util
 import netmisc
 import librosa
@@ -45,17 +45,25 @@ class Chassis(object):
             import torch_xla.distributed.parallel_loader as pl
             num_replicas = xm.xrt_world_size()
             rank = xm.get_ordinal()
-        else:
+        elif hps.hw == 'GPU':
+            if not t.cuda.is_available():
+                raise RuntimeError('GPU requested but not available')
             num_replicas = 1
             rank = 0
+        elif hps.hw == 'CPU':
+            num_replicas = 1
+            rank = 0
+        else:
+            raise ValueError(f'Chassis: Invalid device "{hps.hw}" requested')
 
-        if hps.hw not in ('TPU', 'TPU-single') or xm.is_master_ordinal():
-            print('Initializing model and data source...', end='', file=stderr)
-            stderr.flush()
-
-        self.state = checkpoint.State(hps, dat_file, train_mode=True,
-                ckpt_file=hps.get('ckpt_file', None), step=0,
+        self.state = ckpt.Checkpoint(hps, dat_file, train_mode=True,
+                ckpt_file=hps.get('ckpt_file', None),
                 num_replicas=num_replicas, rank=rank)
+
+        hps = self.state.hps
+        if hps.hw not in ('TPU', 'TPU-single') or xm.is_master_ordinal():
+            print('Hyperparameters:\n', file=stderr)
+            print('\n'.join(f'{k} = {v}' for k, v in hps.items()), file=stderr)
 
         self.learning_rates = dict(zip(hps.learning_rate_steps,
             hps.learning_rate_rates))
@@ -83,12 +91,9 @@ class Chassis(object):
 
         self.state.init_torch_generator()
 
-        if hps.hw not in ('TPU', 'TPU-single') or xm.is_master_ordinal():
-            print('Done.', file=stderr)
-            stderr.flush()
+    def train(self, index):
+        hps = self.state.hps
 
-
-    def train(self, hps, index):
         is_tpu = (hps.hw in ('TPU', 'TPU-single'))
         if is_tpu:
             import torch_xla.core.xla_model as xm
@@ -183,7 +188,7 @@ class Chassis(object):
                     self.save_checkpoint()
 
     def save_checkpoint(self):
-        ckpt_file = self.ckpt_path.path(self.state.data.step)
+        ckpt_file = self.ckpt_path.path(self.state.data.global_step)
         self.state.save(ckpt_file)
         print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
         #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
@@ -222,7 +227,7 @@ class InferenceChassis(object):
         self.n_replicas = opts.dec_n_replicas
         self.data_write_tmpl = opts.data_write_tmpl
 
-        self.state = checkpoint.InferenceState()
+        self.state = ckpt.InferenceState()
         self.state.load(opts.ckpt_file, opts.dat_file)
         self.state.model.wavenet.set_n_replicas(self.n_replicas)
         self.state.model.eval()

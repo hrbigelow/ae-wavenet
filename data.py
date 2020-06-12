@@ -251,7 +251,9 @@ class DataProcessor():
                     start_step, sampling_freq=num_replicas)
             self.sampler = LoopingRandomSampler(self.dataset, num_replicas, rank)
             self.loader = DataLoader(self.dataset, sampler=self.sampler,
-                    num_workers=1,
+                    # If set >0, multiprocessing is used, which prevents
+                    # getting accurate position information
+                    num_workers=0,
                     batch_size=hps.n_batch, pin_memory=False,
                     collate_fn=train_collate_fn)
         else:
@@ -266,6 +268,14 @@ class DataProcessor():
     @property
     def global_step(self):
         return len(self.dataset) * self.dataset.epoch + self.dataset.step
+
+    @property
+    def epoch(self):
+        return self.dataset.epoch
+
+    @property
+    def step(self):
+        return self.dataset.step
 
 
 
