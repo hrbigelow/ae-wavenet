@@ -1,5 +1,5 @@
 from sys import stderr
-import torch
+import torch as t
 import data
 import autoencoder_model as ae
 import mfcc_inverter as mi
@@ -25,10 +25,10 @@ class GPULoaderIter(object):
 
 
 def reduce_add(vlist):
-    return torch.stack(vlist).sum(dim=0)
+    return t.stack(vlist).sum(dim=0)
 
 def reduce_mean(vlist):
-    return torch.stack(vlist).mean(dim=0)
+    return t.stack(vlist).mean(dim=0)
 
 class Chassis(object):
     """
@@ -67,11 +67,11 @@ class Chassis(object):
         if hps.hw not in ('TPU', 'TPU-single') or xm.is_master_ordinal():
             self.ckpt_path = util.CheckpointPath(hps.ckpt_template)
 
-        self.softmax = torch.nn.Softmax(1) # input to this is (B, Q, N)
+        self.softmax = t.nn.Softmax(1) # input to this is (B, Q, N)
         self.hw = hps.hw
 
         if hps.hw == 'GPU':
-            device = torch.device('cuda')
+            device = t.device('cuda')
             self.device_loader = GPULoaderIter(self.state.data.loader, device)
             self.state.to(device)
         else:
@@ -125,6 +125,8 @@ class Chassis(object):
             self.mel_enc_input = mel
             loss.backward()
 
+            pars_copy = [p.data.clone() for p in ss.model.parameters()]
+
             if is_tpu:
                 xm.optimizer_step(ss.optim)
             else:
@@ -133,6 +135,11 @@ class Chassis(object):
             if ss.model.bn_type == 'vqvae-ema' and ss.data.global_step == 10000:
                 ss.model.bottleneck.update_codebook()
 
+            iterator = zip(pars_copy, ss.model.named_parameters())
+            updates = t.stack([t.norm(c - np[1].data) for c, np in iterator])
+            original = t.stack([p.norm() for p in pars_copy])
+            wgt_upd_ratio = updates / original
+            
             tprb_m = self.avg_prob_target()
 
             if batch_num % hps.progress_interval == 0:
@@ -146,7 +153,7 @@ class Chassis(object):
                     tprb_m_red = tprb_m
 
                 current_stats.update({
-                        'gstep': ss.data.global_step,
+                        'gstep': len(ss.data.dataset) * position[0] + position[1],
                         'epoch': position[0],
                         'step': position[1],
                         'loss': loss,
@@ -185,18 +192,18 @@ class Chassis(object):
     def avg_max(self):
         """Average max value for the predictions.  As the prediction becomes
         more peaked, this should go up"""
-        max_val, max_ind = torch.max(self.probs, dim=1)
-        mean = torch.mean(max_val)
+        max_val, max_ind = t.max(self.probs, dim=1)
+        mean = t.mean(max_val)
         return mean
         
     def avg_prob_target(self):
         """Average probability given to target"""
-        target_probs = torch.gather(self.probs, 1, self.target.long().unsqueeze(1)) 
-        mean = torch.mean(target_probs)
+        target_probs = t.gather(self.probs, 1, self.target.long().unsqueeze(1)) 
+        mean = t.mean(target_probs)
         return mean
 
 
-class DataContainer(torch.nn.Module):
+class DataContainer(t.nn.Module):
     def __init__(self, my_values):
         super().__init__()
         for key in my_values:
@@ -222,9 +229,9 @@ class InferenceChassis(object):
 
         if opts.hwtype in ('GPU', 'CPU'):
             if opts.hwtype == 'GPU':
-                self.device = torch.device('cuda')
+                self.device = t.device('cuda')
             else:
-                self.device = torch.device('cpu')
+                self.device = t.device('cpu')
             self.data_loader = self.state.data_loader
             self.data_loader.set_target_device(self.device)
             self.data_iter = GPULoaderIter(iter(self.data_loader))
@@ -242,7 +249,7 @@ class InferenceChassis(object):
 
         for vb in self.data_iter:
             if self.data_write_tmpl:
-                dc = torch.jit.script(DataContainer({
+                dc = t.jit.script(DataContainer({
                     'mel': vb.mel,
                     'wav': vb.wav,
                     'voice': vb.voice_idx,
@@ -256,7 +263,7 @@ class InferenceChassis(object):
                     + '.{}.wav')
 
             if model_scr:
-                with torch.no_grad():
+                with t.no_grad():
                     wav = model_scr(vb)
             else:
                 wav = self.state.model(vb)

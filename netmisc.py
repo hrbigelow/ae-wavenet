@@ -5,6 +5,7 @@ import vconv
 from sys import stderr
 import sys
 import re
+import collections as col
 
 def xavier_init(mod):
     if hasattr(mod, 'weight') and mod.weight is not None:
@@ -27,8 +28,8 @@ def print_metrics(metrics, worker_index, hdr_frequency):
     sep = ''
     h = ''
     s = '' 
-    d = dict(metrics)
-    d.update({'w_idx': worker_index})
+    d = col.OrderedDict({'w_idx': worker_index})
+    d.update(metrics)
     max_width = 12 
 
     for k, v in d.items():

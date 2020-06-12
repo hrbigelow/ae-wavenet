@@ -264,16 +264,8 @@ class DataProcessor():
                     collate_fn=test_collate_fn)
 
     @property
-    def epoch(self):
-        return self.dataset.epoch
-
-    @property
-    def step(self):
-        return self.dataset.step
-
-    @property
     def global_step(self):
-        return len(self.dataset) * self.epoch + self.step
+        return len(self.dataset) * self.dataset.epoch + self.dataset.step
 
 
 
