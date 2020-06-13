@@ -130,8 +130,8 @@ class Chassis(object):
             self.mel_enc_input = mel
             loss.backward()
 
-            if batch_num % hps.progress_interval == 0:
-                pars_copy = [p.data.clone() for p in ss.model.parameters()]
+            # if batch_num % hps.progress_interval == 0:
+            #     pars_copy = [p.data.clone() for p in ss.model.parameters()]
 
             if is_tpu:
                 xm.optimizer_step(ss.optim)
@@ -142,6 +142,7 @@ class Chassis(object):
                 ss.model.bottleneck.update_codebook()
 
             if batch_num % hps.progress_interval == 0:
+                """
                 iterator = zip(pars_copy, ss.model.named_parameters())
                 updates = t.stack([t.norm(c - np[1].data) for c, np in iterator])
                 original = t.stack([p.norm() for p in pars_copy])
@@ -159,16 +160,20 @@ class Chassis(object):
                     tprb_m_red = tprb_m
 
                 current_stats.update({
+                        'loss_r': loss_red,
+                        'tprb_m_r': tprb_m_red,
+                        'uwr_min': uw_ratio.min(),
+                        'uwr_max': uw_ratio.max()
+                        })
+                """
+
+                current_stats.update({
                         'gstep': len(ss.data.dataset) * position[0] + position[1],
                         'epoch': position[0],
                         'step': position[1],
                         'loss': loss,
-                        'loss_r': loss_red,
                         'lrate': ss.optim.param_groups[0]['lr'],
                         'tprb_m': tprb_m,
-                        'tprb_m_r': tprb_m_red,
-                        'uwr_min': uw_ratio.min(),
-                        'uwr_max': uw_ratio.max()
                         # 'pk_d_m': avg_peak_dist
                         })
                 current_stats.update(ss.model.objective.metrics)
