@@ -4,6 +4,7 @@ import sys
 from sys import stderr
 from pprint import pprint
 import fire
+import torch as t
 
 import autoencoder_model as ae
 import chassis as ch
@@ -13,7 +14,7 @@ from hparams import setup_hparams, Hyperparams
 
 
 def _mp_fn(index, _hps, _dat_file):
-    torch.manual_seed(_hps.random_seed)
+    t.manual_seed(_hps.random_seed)
 
     # Acquires the (unique) Cloud TPU core corresponding to this process's index
     device = xm.xla_device()  
