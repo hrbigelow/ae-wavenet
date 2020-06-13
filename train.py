@@ -17,10 +17,13 @@ def _mp_fn(index, _hps, _dat_file):
 
     # Acquires the (unique) Cloud TPU core corresponding to this process's index
     device = xm.xla_device()  
-    print("Process", index ,"is using", xm.xla_real_devices([str(device)])[0])
+    device_str = xm.xla_real_devices([str(device)])[0]
+    print(f'Process {index} is using {device_str}', file=stderr) 
 
   # Barrier to prevent master from exiting before workers connect.
     m = ch.Chassis(device, index, _hps, _dat_file)
+    print(f'Starting training on {device_str}', file=stderr)
+    stderr.flush()
     m.train(index)
     xm.rendezvous('init')
 
