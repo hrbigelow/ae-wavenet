@@ -15,7 +15,13 @@ import time
 
 
 def _mp_fn(index, _hps, _dat_file):
+    print('Setting manual seed...', end='', file=stderr)
+    stderr.flush()
+    pre_seed_time = time.time()
     t.manual_seed(_hps.random_seed)
+    elapsed = time.time() - pre_dev_time
+    print('done in {elapsed} seconds.', file=stderr)
+    stderr.flush()
 
     # Acquires the (unique) Cloud TPU core corresponding to this process's index
     pre_dev_time = time.time()
