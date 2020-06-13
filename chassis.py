@@ -39,7 +39,7 @@ class Chassis(object):
     setup. 
 
     """
-    def __init__(self, hps, dat_file):
+    def __init__(self, device, index, hps, dat_file):
         if hps.hw in ('TPU', 'TPU-single'):
             import torch_xla.core.xla_model as xm
             import torch_xla.distributed.parallel_loader as pl
@@ -55,6 +55,8 @@ class Chassis(object):
             rank = 0
         else:
             raise ValueError(f'Chassis: Invalid device "{hps.hw}" requested')
+
+        self.replica_index = index
 
         self.state = ckpt.Checkpoint(hps, dat_file, train_mode=True,
                 ckpt_file=hps.get('ckpt_file', None),
@@ -79,11 +81,9 @@ class Chassis(object):
         self.hw = hps.hw
 
         if hps.hw == 'GPU':
-            device = t.device('cuda')
             self.device_loader = GPULoaderIter(self.state.data.loader, device)
             self.state.to(device)
         else:
-            device = xm.xla_device()
             para_loader = pl.ParallelLoader(self.state.data.loader, [device])
             self.device_loader = para_loader.per_device_loader(device) 
             self.num_devices = xm.xrt_world_size()
@@ -91,7 +91,7 @@ class Chassis(object):
 
         self.state.init_torch_generator()
 
-    def train(self, index):
+    def train(self):
         hps = self.state.hps
 
         is_tpu = (hps.hw in ('TPU', 'TPU-single'))
@@ -187,17 +187,21 @@ class Chassis(object):
 
                 if not is_tpu or xm.is_master_ordinal():
                 # if True:
-                    netmisc.print_metrics(current_stats, index, 100)
+                    netmisc.print_metrics(current_stats, self.replica_index, 100)
                     stderr.flush()
 
             if (batch_num % hps.save_interval == 0 and batch_num != 0):
                 if not is_tpu or xm.is_master_ordinal():
+                    # !!! How do we avoid divergent XLA tensor computations
+                    # here, given that we need to move the tensors to CPU to
+                    # save them?
                     self.save_checkpoint(position)
 
     def save_checkpoint(self, position):
         epoch, step = position[0], position[1]
         global_step = len(self.state.data.dataset) * epoch + step
         ckpt_file = self.ckpt_path.path(global_step.item())
+        self.state.to(t.device('cpu'))
         self.state.save(ckpt_file, epoch, step)
         print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
         #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)

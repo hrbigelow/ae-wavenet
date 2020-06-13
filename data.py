@@ -245,7 +245,10 @@ class DataProcessor():
 
         if train_mode:
             slice_dataset = SliceDataset(slice_size, hps.n_win_batch)
+            print('Loading data...', file=stderr)
             slice_dataset.load_data(dat_file)
+            print('done', file=stderr)
+            stderr.flush()
             self.dataset = TrackerDataset(slice_dataset, start_epoch,
                     start_step, sampling_freq=num_replicas)
             self.sampler = LoopingRandomSampler(self.dataset, num_replicas, rank)
