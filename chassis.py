@@ -130,8 +130,8 @@ class Chassis(object):
             self.mel_enc_input = mel
             loss.backward()
 
-            # if batch_num % hps.progress_interval == 0:
-            #     pars_copy = [p.data.clone() for p in ss.model.parameters()]
+            if batch_num % hps.progress_interval == 0:
+                pars_copy = [p.data.clone() for p in ss.model.parameters()]
 
             if is_tpu:
                 xm.optimizer_step(ss.optim)
