@@ -117,7 +117,7 @@ class Chassis(object):
         
         for batch_num, batch in enumerate(self.device_loader):
             wav, mel, voice, jitter, position = batch
-            print(f'replica {self.index}, batch {batch_num} with shapes {wav.shape}, {mel.shape}',
+            print(f'replica {self.replica_index}, batch {batch_num} with shapes {wav.shape}, {mel.shape}',
                     file=stderr)
             continue
 
