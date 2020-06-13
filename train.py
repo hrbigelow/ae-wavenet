@@ -26,7 +26,7 @@ def _mp_fn(index, _hps, _dat_file):
     m = ch.Chassis(device, index, _hps, _dat_file)
     print(f'Starting training on {device_str}', file=stderr)
     stderr.flush()
-    m.train(index)
+    m.train()
     xm.rendezvous('init')
 
 def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
