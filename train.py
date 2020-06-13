@@ -37,7 +37,7 @@ def _mp_fn(index, _hps, _dat_file):
     print(f'Replica {index} instantiating Chassis...', end='', file=stderr)
     stderr.flush()
     m = ch.Chassis(device, index, _hps, _dat_file)
-    elapsed = time.time() - pre_dev_time
+    elapsed = time.time() - pre_inst_time
     print(f'done in {elapsed} seconds.', file=stderr)
     stderr.flush()
     m.train()
