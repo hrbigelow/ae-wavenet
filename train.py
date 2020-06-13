@@ -11,6 +11,7 @@ import chassis as ch
 import parse_tools  
 import netmisc
 from hparams import setup_hparams, Hyperparams
+import time
 
 
 def _mp_fn(index, _hps, _dat_file):
@@ -18,13 +19,19 @@ def _mp_fn(index, _hps, _dat_file):
     t.manual_seed(_hps.random_seed)
 
     # Acquires the (unique) Cloud TPU core corresponding to this process's index
+    pre_dev_time = time.time()
+    print(f'Replica {index} acquiring a device...', end='', file=stderr)
     device = xm.xla_device()  
     device_str = xm.xla_real_devices([str(device)])[0]
-    print(f'Process {index} is using {device_str}', file=stderr) 
+    elapsed = time.time() - pre_dev_time
+    print(f'Process {index} acquired {device_str} in {elapsed} seconds', file=stderr) 
+    stderr.flush()
 
-  # Barrier to prevent master from exiting before workers connect.
+    pre_inst_time = time.time()
+    print(f'Replica {index} instantiating Chassis...', end='', file=stderr)
     m = ch.Chassis(device, index, _hps, _dat_file)
-    print(f'Starting training on {device_str}', file=stderr)
+    elapsed = time.time() - pre_dev_time
+    print(f'done in {elapsed} seconds.', file=stderr)
     stderr.flush()
     m.train()
     xm.rendezvous('init')
