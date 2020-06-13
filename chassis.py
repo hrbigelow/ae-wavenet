@@ -151,8 +151,8 @@ class Chassis(object):
                 par_names = [np[0] for np in ss.model.named_parameters()]
 
                 if is_tpu:
-                    loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
-                    tprb_m_red = xm.mesh_reduce('mesh_tprb_m', tprb_m, reduce_mean)
+                    # loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
+                    # tprb_m_red = xm.mesh_reduce('mesh_tprb_m', tprb_m, reduce_mean)
                     # print(f'index: {index}, loss: {loss}, loss_reduced: {loss_reduced}',
                     #         file=stderr)
                 else:

@@ -243,7 +243,6 @@ class DataProcessor():
         train_collate_fn = Collate(mfcc_func, jitter_func, train_mode=True)
         test_collate_fn = Collate(mfcc_func, jitter_func, train_mode=False)
 
-
         if train_mode:
             slice_dataset = SliceDataset(slice_size, hps.n_win_batch)
             slice_dataset.load_data(dat_file)
