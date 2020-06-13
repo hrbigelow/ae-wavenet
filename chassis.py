@@ -146,8 +146,8 @@ class Chassis(object):
             if batch_num % hps.progress_interval == 0:
                 iterator = zip(pars_copy, ss.model.named_parameters())
                 updates = t.stack([t.norm(c - np[1].data) for c, np in iterator])
-                # original = t.stack([p.norm() for p in pars_copy])
-                # uw_ratio = updates / original
+                original = t.stack([p.norm() for p in pars_copy])
+                uw_ratio = updates / original
                 # par_names = [np[0] for np in ss.model.named_parameters()]
 
                 """
