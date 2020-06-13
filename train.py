@@ -20,14 +20,16 @@ def _mp_fn(index, _hps, _dat_file):
     # Acquires the (unique) Cloud TPU core corresponding to this process's index
     pre_dev_time = time.time()
     print(f'Replica {index} acquiring a device...', end='', file=stderr)
+    stderr.flush()
     device = xm.xla_device()  
     device_str = xm.xla_real_devices([str(device)])[0]
     elapsed = time.time() - pre_dev_time
-    print(f'Process {index} acquired {device_str} in {elapsed} seconds', file=stderr) 
+    print(f'process {index} acquired {device_str} in {elapsed} seconds', file=stderr) 
     stderr.flush()
 
     pre_inst_time = time.time()
     print(f'Replica {index} instantiating Chassis...', end='', file=stderr)
+    stderr.flush()
     m = ch.Chassis(device, index, _hps, _dat_file)
     elapsed = time.time() - pre_dev_time
     print(f'done in {elapsed} seconds.', file=stderr)
