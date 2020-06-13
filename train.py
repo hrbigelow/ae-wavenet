@@ -19,17 +19,15 @@ import time
 
 def _mp_fn(index, _hps, _dat_file):
     print('Setting manual seed...', end='', file=stderr)
-    stderr.flush()
     pre_seed_time = time.time()
     t.manual_seed(_hps.random_seed)
     elapsed = time.time() - pre_seed_time
-    print('done in {elapsed} seconds.', file=stderr)
+    print(f'done in {elapsed} seconds.', file=stderr)
     stderr.flush()
 
     # Acquires the (unique) Cloud TPU core corresponding to this process's index
     pre_dev_time = time.time()
     print(f'Replica {index} acquiring a device...', end='', file=stderr)
-    stderr.flush()
     device = xm.xla_device()  
     device_str = xm.xla_real_devices([str(device)])[0]
     elapsed = time.time() - pre_dev_time
@@ -38,7 +36,6 @@ def _mp_fn(index, _hps, _dat_file):
 
     pre_inst_time = time.time()
     print(f'Replica {index} instantiating Chassis...', end='', file=stderr)
-    stderr.flush()
     m = ch.Chassis(device, index, _hps, _dat_file)
     elapsed = time.time() - pre_inst_time
     print(f'done in {elapsed} seconds.', file=stderr)
