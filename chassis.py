@@ -146,9 +146,9 @@ class Chassis(object):
             if batch_num % hps.progress_interval == 0:
                 iterator = zip(pars_copy, ss.model.named_parameters())
                 updates = t.stack([t.norm(c - np[1].data) for c, np in iterator])
-                original = t.stack([p.norm() for p in pars_copy])
-                uw_ratio = updates / original
-                par_names = [np[0] for np in ss.model.named_parameters()]
+                # original = t.stack([p.norm() for p in pars_copy])
+                # uw_ratio = updates / original
+                # par_names = [np[0] for np in ss.model.named_parameters()]
 
                 """
                 if is_tpu:
@@ -162,10 +162,10 @@ class Chassis(object):
                 """
 
                 current_stats.update({
-                        'loss_r': loss_red,
-                        'tprb_m_r': tprb_m_red,
-                        'uwr_min': uw_ratio.min(),
-                        'uwr_max': uw_ratio.max()
+                        # 'loss_r': loss_red,
+                        # 'tprb_m_r': tprb_m_red,
+                        # 'uwr_min': uw_ratio.min(),
+                        # 'uwr_max': uw_ratio.max()
                         })
 
                 current_stats.update({
