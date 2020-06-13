@@ -72,15 +72,15 @@ class Checkpoint(object):
         self.hps = hps
 
 
-    def save(self, ckpt_file):
+    def save(self, ckpt_file, epoch, step):
         # cur_device = self.device
         # self.to(t.device('cpu'))
         mstate_dict = self.model.state_dict()
         ostate = self.optim.state_dict()
         state = {
                 'hps': self.hps,
-                'epoch': self.data.epoch,
-                'step': self.data.step,
+                'epoch': epoch,
+                'step': step,
                 'model_state_dict': mstate_dict,
                 'optim': ostate,
                 'rand_state': t.get_rng_state(),

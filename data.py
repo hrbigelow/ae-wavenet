@@ -244,6 +244,7 @@ class DataProcessor():
         train_collate_fn = Collate(mfcc_func, jitter_func, train_mode=True)
         test_collate_fn = Collate(mfcc_func, jitter_func, train_mode=False)
 
+
         if train_mode:
             slice_dataset = SliceDataset(slice_size, hps.n_win_batch)
             slice_dataset.load_data(dat_file)
@@ -269,6 +270,7 @@ class DataProcessor():
     def global_step(self):
         return len(self.dataset) * self.dataset.epoch + self.dataset.step
 
+    """
     @property
     def epoch(self):
         return self.dataset.epoch
@@ -276,6 +278,7 @@ class DataProcessor():
     @property
     def step(self):
         return self.dataset.step
+    """
 
 
 

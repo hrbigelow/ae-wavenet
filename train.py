@@ -1,7 +1,8 @@
+import torch as t
+
 import sys
 from sys import stderr
 from pprint import pprint
-import torch as t
 import fire
 
 import autoencoder_model as ae

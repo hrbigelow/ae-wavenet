@@ -143,7 +143,8 @@ class Chassis(object):
             iterator = zip(pars_copy, ss.model.named_parameters())
             updates = t.stack([t.norm(c - np[1].data) for c, np in iterator])
             original = t.stack([p.norm() for p in pars_copy])
-            wgt_upd_ratio = updates / original
+            uw_ratio = updates / original
+            par_names = [np[0] for np in ss.model.named_parameters()]
             
             tprb_m = self.avg_prob_target()
 
@@ -165,7 +166,9 @@ class Chassis(object):
                         'loss_r': loss_red,
                         'lrate': ss.optim.param_groups[0]['lr'],
                         'tprb_m': tprb_m,
-                        'tprb_m_r': tprb_m_red
+                        'tprb_m_r': tprb_m_red,
+                        'uwr_min': uw_ratio.min(),
+                        'uwr_max': uw_ratio.max()
                         # 'pk_d_m': avg_peak_dist
                         })
                 current_stats.update(ss.model.objective.metrics)
@@ -185,11 +188,13 @@ class Chassis(object):
 
             if (batch_num % hps.save_interval == 0 and batch_num != 0):
                 if not is_tpu or xm.is_master_ordinal():
-                    self.save_checkpoint()
+                    self.save_checkpoint(position)
 
-    def save_checkpoint(self):
-        ckpt_file = self.ckpt_path.path(self.state.data.global_step)
-        self.state.save(ckpt_file)
+    def save_checkpoint(self, position):
+        epoch, step = position[0], position[1]
+        global_step = len(self.state.data.dataset) * epoch + step
+        ckpt_file = self.ckpt_path.path(global_step.item())
+        self.state.save(ckpt_file, epoch, step)
         print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
         #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
         stderr.flush()

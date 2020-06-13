@@ -1,6 +1,7 @@
 import sys
 import torch
 from torch import nn
+from torch.utils.tensorboard import SummaryWriter
 import vconv
 import numpy as np
 from numpy import prod as np_prod
@@ -12,20 +13,25 @@ import torch.nn.functional as F
 
 
 class GatedResidualCondConv(nn.Module):
-    def __init__(self, wavenet_vc, hps, n_cond, stride, dil, parent_vc=None, name=None):
+    def __init__(self, wavenet_vc, hps, n_cond, stride, dil, final_layer=False,
+            parent_vc=None, name=None): 
         """
         filter_sz: # elements in the dilated kernels
         """
         super(GatedResidualCondConv, self).__init__()
         self.wavenet_vc = wavenet_vc 
+        self.final_layer = final_layer
+
         self.conv_signal = nn.Conv1d(hps.n_res, hps.n_dil, hps.filter_sz,
                 dilation=dil, bias=hps.bias)
         self.conv_gate = nn.Conv1d(hps.n_res, hps.n_dil, hps.filter_sz,
                 dilation=dil, bias=hps.bias)
         self.proj_signal = nn.Conv1d(n_cond, hps.n_dil, kernel_size=1, bias=False)
         self.proj_gate = nn.Conv1d(n_cond, hps.n_dil, kernel_size=1, bias=False)
-        self.dil_res = nn.Conv1d(hps.n_dil, hps.n_res, kernel_size=1, bias=False)
         self.dil_skp = nn.Conv1d(hps.n_dil, hps.n_skp, kernel_size=1, bias=False)
+        
+        if not final_layer:
+            self.dil_res = nn.Conv1d(hps.n_dil, hps.n_res, kernel_size=1, bias=False)
 
         # The dilated autoregressive convolution produces an output at the
         # right-most position of the receptive field.  (At the very end of a
@@ -94,9 +100,13 @@ class GatedResidualCondConv(nn.Module):
         filt = self.conv_signal(x) + self.proj_signal(cond[:,:,cl:])
         gate = self.conv_gate(x) + self.proj_gate(cond[:,:,cl:])
         z = torch.tanh(filt) * torch.sigmoid(gate)
-        sig = self.dil_res(z)
         skp = self.dil_skp(z[:,:,sl:])
-        sig += x[:,:,lw:]
+
+        if self.final_layer:
+            sig = None
+        else:
+            sig = self.dil_res(z)
+            sig += x[:,:,lw:]
 
         return sig, skp 
 
@@ -225,8 +235,10 @@ class WaveNet(nn.Module):
             for bl in range(self.n_block_layers):
                 dil = 2**bl
                 name = f'GRCC_{b},{bl}(dil={dil})'
+                final_layer = (b + 1 == self.n_blocks and bl + 1 ==
+                        self.n_block_layers)
                 grc = GatedResidualCondConv(self.vc, hps, n_cond=n_cond, stride=1, dil=dil,
-                        parent_vc=cur_vc, name=name)
+                        final_layer=final_layer, parent_vc=cur_vc, name=name)
                 self.conv_layers.append(grc)
                 cur_vc = grc.vc
 
