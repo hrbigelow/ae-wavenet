@@ -15,7 +15,6 @@ import time
 
 
 def _mp_fn(index, _hps, _dat_file):
-    import torch_xla.core.xla_model as xm
     t.manual_seed(_hps.random_seed)
 
     # Acquires the (unique) Cloud TPU core corresponding to this process's index
@@ -44,6 +43,7 @@ def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
         
     if hps.hw in ('TPU', 'TPU-single'):
         import torch_xla.distributed.xla_multiprocessing as xmp
+        import torch_xla.core.xla_model as xm
 
     netmisc.set_print_iter(0)
 
@@ -56,6 +56,8 @@ def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
         # chs.state.model.print_geometry()
         chs.train()
     elif hps.hw == 'TPU':
+        print('Spawning new processes.', file=stderr)
+        stderr.flush()
         xmp.spawn(_mp_fn, args=(hps, dat_file), nprocs=8, start_method='fork')
 
 
