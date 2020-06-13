@@ -19,7 +19,7 @@ def _mp_fn(index, _hps, _dat_file):
     stderr.flush()
     pre_seed_time = time.time()
     t.manual_seed(_hps.random_seed)
-    elapsed = time.time() - pre_dev_time
+    elapsed = time.time() - pre_seed_time
     print('done in {elapsed} seconds.', file=stderr)
     stderr.flush()
 
