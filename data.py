@@ -99,7 +99,6 @@ class LoopingRandomSampler(Sampler):
                 vals = list(range(self.rank, n, self.num_replicas))
                 perms = t.randperm(len(vals)).tolist()
                 indices = [vals[i] for i in perms]
-                stderr.flush()
                 for i in indices:
                     yield i
 
@@ -254,7 +253,7 @@ class DataProcessor():
             self.loader = DataLoader(self.dataset, sampler=self.sampler,
                     # If set >0, multiprocessing is used, which prevents
                     # getting accurate position information
-                    num_workers=0,
+                    num_workers=4,
                     batch_size=hps.n_batch, pin_memory=False,
                     collate_fn=train_collate_fn)
         else:

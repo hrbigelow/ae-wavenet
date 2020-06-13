@@ -58,8 +58,8 @@ class Checkpoint(object):
                 
             self.optim = t.optim.Adam(self.model.parameters())
             self.optim.load_state_dict(ckpt['optim'])
-            self.torch_rng_state = ckpt['rand_state']
-            self.torch_cuda_rng_states = ckpt['cuda_rand_states']
+            # self.torch_rng_state = ckpt['rand_state']
+            # self.torch_cuda_rng_states = ckpt['cuda_rand_states']
 
         
         self.device = None

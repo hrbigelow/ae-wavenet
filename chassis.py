@@ -141,6 +141,8 @@ class Chassis(object):
             if ss.model.bn_type == 'vqvae-ema' and ss.data.global_step == 10000:
                 ss.model.bottleneck.update_codebook()
 
+            tprb_m = self.avg_prob_target()
+
             if batch_num % hps.progress_interval == 0:
                 """
                 iterator = zip(pars_copy, ss.model.named_parameters())
@@ -148,7 +150,6 @@ class Chassis(object):
                 original = t.stack([p.norm() for p in pars_copy])
                 uw_ratio = updates / original
                 par_names = [np[0] for np in ss.model.named_parameters()]
-                tprb_m = self.avg_prob_target()
 
                 if is_tpu:
                     loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
