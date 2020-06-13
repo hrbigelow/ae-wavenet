@@ -164,8 +164,8 @@ class Chassis(object):
                 current_stats.update({
                         # 'loss_r': loss_red,
                         # 'tprb_m_r': tprb_m_red,
-                        # 'uwr_min': uw_ratio.min(),
-                        # 'uwr_max': uw_ratio.max()
+                        'uwr_min': uw_ratio.min(),
+                        'uwr_max': uw_ratio.max()
                         })
 
                 current_stats.update({
