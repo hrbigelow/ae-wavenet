@@ -40,8 +40,8 @@ def _mp_fn(index, _hps, _dat_file):
     elapsed = time.time() - pre_inst_time
     print(f'done in {elapsed} seconds.', file=stderr)
     stderr.flush()
-    m.train()
     xm.rendezvous('init')
+    m.train()
 
 def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
     if 'ckpt_file' in kwargs:
