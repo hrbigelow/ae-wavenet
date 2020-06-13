@@ -14,6 +14,7 @@ from hparams import setup_hparams, Hyperparams
 
 
 def _mp_fn(index, _hps, _dat_file):
+    import torch_xla.core.xla_model as xm
     t.manual_seed(_hps.random_seed)
 
     # Acquires the (unique) Cloud TPU core corresponding to this process's index
