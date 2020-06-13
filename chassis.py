@@ -144,7 +144,6 @@ class Chassis(object):
             tprb_m = self.avg_prob_target()
 
             if batch_num % hps.progress_interval == 0:
-                """
                 iterator = zip(pars_copy, ss.model.named_parameters())
                 updates = t.stack([t.norm(c - np[1].data) for c, np in iterator])
                 original = t.stack([p.norm() for p in pars_copy])
@@ -166,7 +165,6 @@ class Chassis(object):
                         'uwr_min': uw_ratio.min(),
                         'uwr_max': uw_ratio.max()
                         })
-                """
 
                 current_stats.update({
                         'gstep': len(ss.data.dataset) * position[0] + position[1],
