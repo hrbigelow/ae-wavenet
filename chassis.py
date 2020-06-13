@@ -119,7 +119,6 @@ class Chassis(object):
             wav, mel, voice, jitter, position = batch
             print(f'replica {self.replica_index}, batch {batch_num} with shapes {wav.shape}, {mel.shape}',
                     file=stderr)
-            continue
 
             if ss.data.global_step in self.learning_rates:
                 ss.update_learning_rate(self.learning_rates[ss.data.global_step])
