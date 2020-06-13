@@ -1,4 +1,7 @@
 import torch as t
+import torch_xla.distributed.xla_multiprocessing as xmp
+import torch_xla.core.xla_model as xm
+
 
 import sys
 from sys import stderr
