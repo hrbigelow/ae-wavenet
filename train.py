@@ -52,6 +52,8 @@ def _mp_fn(index, _hps, _dat_file):
 def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
     if 'ckpt_file' in kwargs:
         hps = Hyperparams(kwargs)
+        if 'random_seed' not in hps:
+            hps.random_seed = 2507
     else:
         hps = setup_hparams(hps, kwargs)
         
