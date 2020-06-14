@@ -95,7 +95,7 @@ class Checkpoint(object):
         if self.hps.hw in ('GPU', 'CPU'):  
             t.save(state, ckpt_file)
         else:
-            xm.save(state, ckpt_file)
+            xm.save(state, ckpt_file, master_only=True)
         self.to(old_device)
 
     def to(self, device):

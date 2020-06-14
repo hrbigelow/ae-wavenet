@@ -121,11 +121,7 @@ class Chassis(object):
             #        file=stderr)
             # stderr.flush()
             if (batch_num % hps.save_interval == 0 and batch_num != 0):
-                if not is_tpu or xm.is_master_ordinal():
-                    # !!! How do we avoid divergent XLA tensor computations
-                    # here, given that we need to move the tensors to CPU to
-                    # save them?
-                    self.save_checkpoint(position)
+                self.save_checkpoint(position)
 
             if hps.skip_loop_body:
                 continue
