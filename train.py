@@ -18,6 +18,15 @@ import netmisc
 from hparams import setup_hparams, Hyperparams
 import time
 
+import psutil
+
+def _clear_stray_processes():
+  curr_proc = psutil.Process()
+  curr_cmdline = list(curr_proc.cmdline())
+  for proc in psutil.process_iter():
+    if proc.pid != curr_proc.pid and proc.cmdline() == curr_cmdline:
+      proc.kill()
+
 
 def _mp_fn(index, _hps, _dat_file):
     t.manual_seed(_hps.random_seed)
@@ -64,6 +73,7 @@ def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
     elif hps.hw == 'TPU':
         print('Spawning new processes.', file=stderr)
         stderr.flush()
+        _clear_stray_processes()
         xmp.spawn(_mp_fn, args=(hps, dat_file), nprocs=8, start_method='fork')
 
 
