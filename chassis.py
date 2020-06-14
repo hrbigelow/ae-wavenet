@@ -120,6 +120,13 @@ class Chassis(object):
             # print(f'replica {self.replica_index}, batch {batch_num} with shapes {wav.shape}, {mel.shape}',
             #        file=stderr)
             # stderr.flush()
+            if (batch_num % hps.save_interval == 0 and batch_num != 0):
+                if not is_tpu or xm.is_master_ordinal():
+                    # !!! How do we avoid divergent XLA tensor computations
+                    # here, given that we need to move the tensors to CPU to
+                    # save them?
+                    self.save_checkpoint(position)
+
             if hps.skip_loop_body:
                 continue
 
@@ -199,12 +206,6 @@ class Chassis(object):
                     netmisc.print_metrics(current_stats, self.replica_index, 100)
                     stderr.flush()
 
-            if (batch_num % hps.save_interval == 0 and batch_num != 0):
-                if not is_tpu or xm.is_master_ordinal():
-                    # !!! How do we avoid divergent XLA tensor computations
-                    # here, given that we need to move the tensors to CPU to
-                    # save them?
-                    self.save_checkpoint(position)
 
     def save_checkpoint(self, position):
         epoch, step = position[0], position[1]
