@@ -153,6 +153,7 @@ class Chassis(object):
                 uw_ratio = updates / original
                 # par_names = [np[0] for np in ss.model.named_parameters()]
 
+                """
                 if is_tpu:
                     loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
                     # tprb_m_red = xm.mesh_reduce('mesh_tprb_m', tprb_m, reduce_mean)
@@ -163,9 +164,10 @@ class Chassis(object):
                     loss_red = loss
                     # tprb_m_red = tprb_m
                     pass
+                """
 
                 current_stats.update({
-                        'loss_r': loss_red,
+                        # 'loss_r': loss_red,
                         # 'tprb_m_r': tprb_m_red,
                         'uwr_min': uw_ratio.min(),
                         'uwr_max': uw_ratio.max()
@@ -190,8 +192,8 @@ class Chassis(object):
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
                     current_stats.update(ss.model.encoder.metrics)
 
-                if not is_tpu or xm.is_master_ordinal():
-                # if True:
+                # if not is_tpu or xm.is_master_ordinal():
+                if True:
                     netmisc.print_metrics(current_stats, self.replica_index, 100)
                     stderr.flush()
 
