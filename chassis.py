@@ -80,10 +80,10 @@ class Chassis(object):
             self.anneal_schedule = dict(zip(hps.bn_anneal_weight_steps,
                 hps.bn_anneal_weight_vals))
 
-        if not is_tpu or xm.is_master_ordinal():
-            self.ckpt_path = util.CheckpointPath(hps.ckpt_template)
+        self.ckpt_path = util.CheckpointPath(hps.ckpt_template, not is_tpu
+                or xm.is_master_ordinal())
         if is_tpu:
-            xm.rendezvous('util.checkpoint_path')
+            xm.rendezvous('util_checkpoint_path')
 
         self.softmax = t.nn.Softmax(1) # input to this is (B, Q, N)
         self.hw = hps.hw

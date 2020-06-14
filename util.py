@@ -43,7 +43,7 @@ def _validate_checkpoint_info(ckpt_dir, ckpt_file_template):
 
 
 class CheckpointPath(object):
-    def __init__(self, path_template):
+    def __init__(self, path_template, validate=True):
         import os.path
         _dir = os.path.dirname(path_template) 
         _base = os.path.basename(path_template)
@@ -52,7 +52,8 @@ class CheckpointPath(object):
                     'directory and file'.format(path_template))
         self.dir = _dir.rstrip('/')
         self.file_template = _base 
-        _validate_checkpoint_info(self.dir, self.file_template)
+        if validate:
+            _validate_checkpoint_info(self.dir, self.file_template)
 
     def path(self, step):
         return '{}/{}'.format(self.dir, self.file_template.replace('%', str(step)))
