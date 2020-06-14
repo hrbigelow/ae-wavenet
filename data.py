@@ -255,7 +255,7 @@ class DataProcessor():
             self.loader = DataLoader(self.dataset, sampler=self.sampler,
                     # If set >0, multiprocessing is used, which prevents
                     # getting accurate position information
-                    num_workers=4,
+                    num_workers=0,
                     batch_size=hps.n_batch, pin_memory=False,
                     collate_fn=train_collate_fn)
         else:

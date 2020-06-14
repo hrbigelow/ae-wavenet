@@ -1,7 +1,9 @@
 import torch as t
-import torch_xla.distributed.xla_multiprocessing as xmp
-import torch_xla.core.xla_model as xm
-
+try:
+    import torch_xla.distributed.xla_multiprocessing as xmp
+    import torch_xla.core.xla_model as xm
+except ModuleNotFoundError:
+    pass
 
 import sys
 from sys import stderr

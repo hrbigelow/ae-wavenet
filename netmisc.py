@@ -51,7 +51,6 @@ def print_metrics(metrics, worker_index, hdr_frequency):
 
     if this.print_iter % hdr_frequency == 0:
         print(h, file=stderr)
-        print('From worker {}'.format(worker_index), file=stderr)
 
     print(s, file=stderr)
     this.print_iter += 1

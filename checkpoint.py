@@ -74,7 +74,7 @@ class Checkpoint(object):
 
     def save(self, ckpt_file, epoch, step):
         # cur_device = self.device
-        # self.to(t.device('cpu'))
+        old_device = self.to(t.device('cpu'))
         mstate_dict = self.model.state_dict()
         ostate = self.optim.state_dict()
         state = {
@@ -87,21 +87,18 @@ class Checkpoint(object):
                 'cuda_rand_states': (t.cuda.get_rng_state_all() if
                     t.cuda.is_available() else None)
                 }
-        if self.device.type == 'cuda':
-            t.save(state, ckpt_file)
-        elif self.device.type == 'xla':
-            import torch_xla.core.xla_model as xm
-            xm.save(state, ckpt_file)
-        # self.to(cur_device)
+        t.save(state, ckpt_file)
+        self.to(old_device)
 
     def to(self, device):
         """Hack to move both model and optimizer to device"""
+        old_device = self.device
         self.device = device
         self.model.to(device)
         ostate = self.optim.state_dict()
         self.optim = t.optim.Adam(self.model.parameters())
         self.optim.load_state_dict(ostate)
-        self.device = device
+        return old_device
 
     def optim_checksum(self):
         return util.digest(self.optim.state_dict())
