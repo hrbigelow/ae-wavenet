@@ -49,7 +49,7 @@ def print_metrics(metrics, worker_index, hdr_frequency):
         h += f'{sep}{k}'
         sep = '\t'
 
-    if this.print_iter % hdr_frequency == 0:
+    if this.print_iter % hdr_frequency == 0 and worker_index == 0:
         print(h, file=stderr)
 
     print(s, file=stderr)
