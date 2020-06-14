@@ -208,10 +208,9 @@ class Chassis(object):
 
 
     def save_checkpoint(self, position):
-        epoch, step = position[0], position[1]
-        global_step = len(self.state.data.dataset) * epoch + step
+        global_step = len(self.state.data.dataset) * position[0] + position[1]
         ckpt_file = self.ckpt_path.path(global_step.item())
-        self.state.save(ckpt_file, epoch, step)
+        self.state.save(ckpt_file, position[0], position[1])
         print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
         #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
         stderr.flush()
