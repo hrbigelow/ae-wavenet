@@ -7,6 +7,11 @@ import data
 import mfcc_inverter as mi
 import hparams
 
+try:
+    import torch_xla.core.xla_model as xm
+except ModuleNotFoundError:
+    pass
+
 class Checkpoint(object):
     '''
     Encapsulates full state of training
