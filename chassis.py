@@ -9,6 +9,11 @@ import netmisc
 import librosa
 import os.path
 
+try:
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.parallel_loader as pl
+except ModuleNotFoundError:
+    pass
 
 
 class GPULoaderIter(object):
@@ -40,9 +45,8 @@ class Chassis(object):
 
     """
     def __init__(self, device, index, hps, dat_file):
-        if hps.hw in ('TPU', 'TPU-single'):
-            import torch_xla.core.xla_model as xm
-            import torch_xla.distributed.parallel_loader as pl
+        is_tpu = (hps.hw in ('TPU', 'TPU-single'))
+        if is_tpu:
             num_replicas = xm.xrt_world_size()
             rank = xm.get_ordinal()
         elif hps.hw == 'GPU':
@@ -74,8 +78,10 @@ class Chassis(object):
             self.anneal_schedule = dict(zip(hps.bn_anneal_weight_steps,
                 hps.bn_anneal_weight_vals))
 
-        if hps.hw not in ('TPU', 'TPU-single') or xm.is_master_ordinal():
+        if not is_tpu or xm.is_master_ordinal():
             self.ckpt_path = util.CheckpointPath(hps.ckpt_template)
+        if is_tpu:
+            xm.rendezvous('util.checkpoint_path')
 
         self.softmax = t.nn.Softmax(1) # input to this is (B, Q, N)
         self.hw = hps.hw
@@ -95,8 +101,6 @@ class Chassis(object):
         hps = self.state.hps
 
         is_tpu = (hps.hw in ('TPU', 'TPU-single'))
-        if is_tpu:
-            import torch_xla.core.xla_model as xm
 
         ss = self.state 
         current_stats = {}
