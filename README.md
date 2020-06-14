@@ -4,6 +4,29 @@ This is a PyTorch implementation of https://arxiv.org/abs/1901.08810.
 
 [Under Construction]
 
+## Update June 14, 2020
+
+Training a simpler model to perform the "mfcc inversion" task.  The idea is:
+
+preprocess:  wav -> mfcc
+vqvae: mfcc -> z -> mfcc
+mfcc-inverter: mfcc -> wav
+
+The mfcc-inverter model is just a wavenet conditioned on mfcc vectors (1 every
+160 timesteps) which produces the original wav used to compute the mfcc
+vectors.  It is a probabilistic inverse of the preprocessing step.
+
+It should be noted that there is loss of information in the preprocessing step,
+so the inverter cannot attain 100% accuracy unless it overfits the data.
+
+Once the mfcc inverter model is trained, it can be used in conjunction with
+a vq-vae model that starts and ends with MFCC.  One advantage to this is that
+the training of the vq-vae model may be slightly less compute intensive, since
+there are only 39 components (one mfcc vector plus first and second
+derivatives) every 160 timesteps, instead of 160.
+
+See results directory for some preliminary training results.
+
 ## Update April 14, 2019
 
 Began training on Librispeech dev (http://www.openslr.org/resources/12/dev-clean.tar.gz),

@@ -1,5 +1,6 @@
 from sys import stderr
 import torch as t
+from torch.utils.tensorboard import SummaryWriter
 import data
 import autoencoder_model as ae
 import mfcc_inverter as mi
@@ -98,6 +99,7 @@ class Chassis(object):
             self.state.to(device)
 
         self.state.init_torch_generator()
+        self.writer = SummaryWriter(hps.log_dir)
 
     def train(self):
         hps = self.state.hps
@@ -120,6 +122,8 @@ class Chassis(object):
         
         for batch_num, batch in enumerate(self.device_loader):
             wav, mel, voice, jitter, position = batch
+            global_step = len(ss.data.dataset) * position[0] + position[1]
+
             # print(f'replica {self.replica_index}, batch {batch_num} with shapes {wav.shape}, {mel.shape}',
             #        file=stderr)
             # stderr.flush()
@@ -143,6 +147,7 @@ class Chassis(object):
 
             if batch_num % hps.progress_interval == 0:
                 pars_copy = [p.data.clone() for p in ss.model.parameters()]
+                
 
             if self.is_tpu:
                 xm.optimizer_step(ss.optim)
@@ -159,6 +164,10 @@ class Chassis(object):
                 updates = t.stack([t.norm(c - np[1].data) for c, np in iterator])
                 original = t.stack([p.norm() for p in pars_copy])
                 uw_ratio = updates / original
+
+                for name, par in ss.model.named_parameters():
+                    self.writer.add_histogram(name, par.data, global_step)
+
                 # par_names = [np[0] for np in ss.model.named_parameters()]
 
                 """

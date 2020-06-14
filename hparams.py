@@ -85,6 +85,7 @@ train_tpu = Hyperparams(
     progress_interval = 1,
     skip_loop_body = False,
     n_loader_workers = 4,
+    log_dir = '/tmp',
     random_seed = 2507,
     learning_rate_steps = [ 0, 4e6, 6e6, 8e6 ],
     learning_rate_rates = [ 1e-4, 5e-5, 5e-5, 5e-5 ],
