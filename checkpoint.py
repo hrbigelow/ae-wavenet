@@ -87,7 +87,10 @@ class Checkpoint(object):
                 'cuda_rand_states': (t.cuda.get_rng_state_all() if
                     t.cuda.is_available() else None)
                 }
-        t.save(state, ckpt_file)
+        if self.hps.hw in ('GPU', 'CPU'):  
+            t.save(state, ckpt_file)
+        else:
+            xm.save(state, ckpt_file)
         self.to(old_device)
 
     def to(self, device):
