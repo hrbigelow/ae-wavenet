@@ -45,8 +45,8 @@ class Chassis(object):
 
     """
     def __init__(self, device, index, hps, dat_file):
-        is_tpu = (hps.hw in ('TPU', 'TPU-single'))
-        if is_tpu:
+        self.is_tpu = (hps.hw in ('TPU', 'TPU-single'))
+        if self.is_tpu:
             num_replicas = xm.xrt_world_size()
             rank = xm.get_ordinal()
         elif hps.hw == 'GPU':
@@ -67,10 +67,10 @@ class Chassis(object):
                 num_replicas=num_replicas, rank=rank)
 
         hps = self.state.hps
-        if not is_tpu or xm.is_master_ordinal():
+        if not self.is_tpu or xm.is_master_ordinal():
             print('Hyperparameters:\n', file=stderr)
             print('\n'.join(f'{k} = {v}' for k, v in hps.items()), file=stderr)
-        if is_tpu:
+        if self.is_tpu:
             xm.rendezvous('print_hyperparameters')
 
         self.learning_rates = dict(zip(hps.learning_rate_steps,
@@ -80,9 +80,9 @@ class Chassis(object):
             self.anneal_schedule = dict(zip(hps.bn_anneal_weight_steps,
                 hps.bn_anneal_weight_vals))
 
-        self.ckpt_path = util.CheckpointPath(hps.ckpt_template, not is_tpu
+        self.ckpt_path = util.CheckpointPath(hps.ckpt_template, not self.is_tpu
                 or xm.is_master_ordinal())
-        if is_tpu:
+        if self.is_tpu:
             xm.rendezvous('util_checkpoint_path')
 
         self.softmax = t.nn.Softmax(1) # input to this is (B, Q, N)
@@ -101,9 +101,6 @@ class Chassis(object):
 
     def train(self):
         hps = self.state.hps
-
-        is_tpu = (hps.hw in ('TPU', 'TPU-single'))
-
         ss = self.state 
         current_stats = {}
 
@@ -147,7 +144,7 @@ class Chassis(object):
             if batch_num % hps.progress_interval == 0:
                 pars_copy = [p.data.clone() for p in ss.model.parameters()]
 
-            if is_tpu:
+            if self.is_tpu:
                 xm.optimizer_step(ss.optim)
             else:
                 ss.optim.step()
@@ -165,7 +162,7 @@ class Chassis(object):
                 # par_names = [np[0] for np in ss.model.named_parameters()]
 
                 """
-                if is_tpu:
+                if self.is_tpu:
                     loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
                     # tprb_m_red = xm.mesh_reduce('mesh_tprb_m', tprb_m, reduce_mean)
                     # print(f'index: {index}, loss: {loss}, loss_reduced: {loss_reduced}',
@@ -203,7 +200,7 @@ class Chassis(object):
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
                     current_stats.update(ss.model.encoder.metrics)
 
-                # if not is_tpu or xm.is_master_ordinal():
+                # if not self.is_tpu or xm.is_master_ordinal():
                 if True:
                     netmisc.print_metrics(current_stats, self.replica_index, 100)
                     stderr.flush()
@@ -213,9 +210,10 @@ class Chassis(object):
         global_step = len(self.state.data.dataset) * position[0] + position[1]
         ckpt_file = self.ckpt_path.path(global_step.item())
         self.state.save(ckpt_file, position[0], position[1])
-        print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
-        #print('Optim state: {}'.format(state.optim_checksum()), file=stderr)
-        stderr.flush()
+        
+        if not self.is_tpu or xm.is_master_ordinal():
+            print('Saved checkpoint to {}'.format(ckpt_file), file=stderr)
+            stderr.flush()
 
     def avg_max(self):
         """Average max value for the predictions.  As the prediction becomes
