@@ -55,6 +55,7 @@ def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
     if hps.hw in ('GPU', 'TPU-single'):
         if hps.hw == 'GPU':
             device = t.device('cuda')
+            hps.n_loader_workers = 0
         else:
             device = xm.xla_device()
         chs = ch.Chassis(device, 0, hps, dat_file)

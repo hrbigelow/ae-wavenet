@@ -245,9 +245,7 @@ class DataProcessor():
 
         if train_mode:
             slice_dataset = SliceDataset(slice_size, hps.n_win_batch)
-            print('Loading data...', file=stderr)
             slice_dataset.load_data(dat_file)
-            print('done', file=stderr)
             stderr.flush()
             self.dataset = TrackerDataset(slice_dataset, start_epoch,
                     start_step, sampling_freq=num_replicas)
@@ -255,7 +253,7 @@ class DataProcessor():
             self.loader = DataLoader(self.dataset, sampler=self.sampler,
                     # If set >0, multiprocessing is used, which prevents
                     # getting accurate position information
-                    num_workers=0,
+                    num_workers=hps.n_loader_workers,
                     batch_size=hps.n_batch, pin_memory=False,
                     collate_fn=train_collate_fn)
         else:

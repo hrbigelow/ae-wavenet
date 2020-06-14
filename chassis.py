@@ -120,6 +120,8 @@ class Chassis(object):
             # print(f'replica {self.replica_index}, batch {batch_num} with shapes {wav.shape}, {mel.shape}',
             #        file=stderr)
             # stderr.flush()
+            if hps.skip_loop_body:
+                continue
 
             if ss.data.global_step in self.learning_rates:
                 ss.update_learning_rate(self.learning_rates[ss.data.global_step])

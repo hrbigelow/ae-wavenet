@@ -1,7 +1,7 @@
 import sys
 import torch
 from torch import nn
-# from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 import vconv
 import numpy as np
 from numpy import prod as np_prod
