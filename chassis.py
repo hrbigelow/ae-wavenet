@@ -67,9 +67,11 @@ class Chassis(object):
                 num_replicas=num_replicas, rank=rank)
 
         hps = self.state.hps
-        if hps.hw not in ('TPU', 'TPU-single') or xm.is_master_ordinal():
+        if not is_tpu or xm.is_master_ordinal():
             print('Hyperparameters:\n', file=stderr)
             print('\n'.join(f'{k} = {v}' for k, v in hps.items()), file=stderr)
+        if is_tpu:
+            xm.rendezvous('print_hyperparameters')
 
         self.learning_rates = dict(zip(hps.learning_rate_steps,
             hps.learning_rate_rates))
