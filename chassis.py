@@ -101,7 +101,7 @@ class Chassis(object):
         self.state.init_torch_generator()
         if rank == 0:
             self.writer = SummaryWriter(f'{hps.log_dir}.{rank}')
-        else self.writer = None
+        else: self.writer = None
 
     def train(self):
         hps = self.state.hps
