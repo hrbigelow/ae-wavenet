@@ -179,9 +179,6 @@ class Chassis(object):
                 print(f'after uw_ratio calc', file=stderr)
                 stderr.flush()
 
-                # self.writer.add_scalar('test',
-                #         t.tensor([4.6], device=t.device('cpu')),
-                #         ss.optim_step)
                 for name, par in ss.model.named_parameters():
                     if self.writer is not None:
                         self.writer.add_histogram(name, par.data.cpu(), ss.optim_step)
@@ -239,13 +236,13 @@ class Chassis(object):
                 print('after current_stats.update', file=stderr)
                 stderr.flush()
 
-                self.writer.add_scalars('metrics', { k: current_stats[k] for k
+                self.writer.add_scalars('metrics', { k: current_stats[k].cpu() for k
                     in ('loss', 'tprb_m') }, ss.optim_step)
 
-                self.writer.add_scalars('uwr', { k: current_stats[k] for k
+                self.writer.add_scalars('uwr', { k: current_stats[k].cpu() for k
                     in ('uwr_min', 'uwr_max') }, ss.optim_step)
 
-                print('after current_stats.update', file=stderr)
+                print('after add_scalars (4)', file=stderr)
                 stderr.flush()
 
 
