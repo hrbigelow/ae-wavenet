@@ -124,9 +124,8 @@ class Chassis(object):
             wav, mel, voice, jitter, position = batch
             global_step = len(ss.data.dataset) * position[0] + position[1]
 
-            # print(f'replica {self.replica_index}, batch {batch_num} with shapes {wav.shape}, {mel.shape}',
-            #        file=stderr)
-            # stderr.flush()
+            print(f'replica {self.replica_index}, batch {batch_num}', file=stderr)
+            stderr.flush()
             if (batch_num % hps.save_interval == 0 and batch_num != 0):
                 self.save_checkpoint(position)
 
