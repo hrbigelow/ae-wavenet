@@ -48,10 +48,6 @@ def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
     else:
         hps = setup_hparams(hps, kwargs)
         
-    if hps.hw in ('TPU', 'TPU-single'):
-        import torch_xla.distributed.xla_multiprocessing as xmp
-        import torch_xla.core.xla_model as xm
-
     netmisc.set_print_iter(0)
 
     if hps.hw in ('GPU', 'TPU-single'):

@@ -154,6 +154,8 @@ class Chassis(object):
             else:
                 ss.optim.step()
 
+            ss.optim_step += 1
+
             if ss.model.bn_type == 'vqvae-ema' and ss.data.global_step == 10000:
                 ss.model.bottleneck.update_codebook()
 
@@ -166,7 +168,7 @@ class Chassis(object):
                 uw_ratio = updates / original
 
                 for name, par in ss.model.named_parameters():
-                    self.writer.add_histogram(name, par.data, global_step)
+                    self.writer.add_histogram(name, par.data, ss.optim_step)
 
                 # par_names = [np[0] for np in ss.model.named_parameters()]
 
@@ -208,6 +210,12 @@ class Chassis(object):
 
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
                     current_stats.update(ss.model.encoder.metrics)
+
+                self.writer.add_scalars('metrics', { k: current_stats[k] for k
+                    in ('loss', 'tprb_m') }, ss.optim_step)
+
+                self.writer.add_scalars('uwr', { k: current_stats[k] for k
+                    in ('uwr_min', 'uwr_max') }, ss.optim_step)
 
                 # if not self.is_tpu or xm.is_master_ordinal():
                 if True:

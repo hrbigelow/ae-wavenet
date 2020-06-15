@@ -48,6 +48,7 @@ class Checkpoint(object):
         if ckpt_file is None:
             self.optim = t.optim.Adam(params=self.model.parameters(),
                     lr=hps.learning_rate_rates[0])
+            self.optim_step = 0
 
         else:
             sub_state = { k: v for k, v in ckpt['model_state_dict'].items() if
@@ -63,6 +64,7 @@ class Checkpoint(object):
                 
             self.optim = t.optim.Adam(self.model.parameters())
             self.optim.load_state_dict(ckpt['optim'])
+            self.optim_step = ckpt['optim_step']
             # self.torch_rng_state = ckpt['rand_state']
             # self.torch_cuda_rng_states = ckpt['cuda_rand_states']
 
@@ -86,6 +88,7 @@ class Checkpoint(object):
                 'hps': self.hps,
                 'epoch': epoch,
                 'step': step,
+                'optim_step': self.optim_step,
                 'model_state_dict': mstate_dict,
                 'optim': ostate,
                 'rand_state': t.get_rng_state(),

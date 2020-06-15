@@ -8,9 +8,9 @@ This is a PyTorch implementation of https://arxiv.org/abs/1901.08810.
 
 Training a simpler model to perform the "mfcc inversion" task.  The idea is:
 
-preprocess:  wav -> mfcc
-vqvae: mfcc -> z -> mfcc
-mfcc-inverter: mfcc -> wav
+1. preprocess:  wav -> mfcc
+2. vqvae: mfcc -> z -> mfcc
+3. mfcc-inverter: mfcc -> wav
 
 The mfcc-inverter model is just a wavenet conditioned on mfcc vectors (1 every
 160 timesteps) which produces the original wav used to compute the mfcc
