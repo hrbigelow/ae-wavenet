@@ -192,24 +192,20 @@ class Chassis(object):
                 # print(f'after add_histogram', file=stderr)
                 # stderr.flush()
 
-
-                # par_names = [np[0] for np in ss.model.named_parameters()]
-
-                """
-                if self.is_tpu:
-                    loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
-                    # tprb_m_red = xm.mesh_reduce('mesh_tprb_m', tprb_m, reduce_mean)
-                    # print(f'index: {index}, loss: {loss}, loss_reduced: {loss_reduced}',
-                    #         file=stderr)
-                    pass
-                else:
-                    loss_red = loss
-                    # tprb_m_red = tprb_m
-                    pass
-                """
+                if False:
+                    if self.is_tpu:
+                        loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
+                        # tprb_m_red = xm.mesh_reduce('mesh_tprb_m', tprb_m, reduce_mean)
+                        # print(f'index: {index}, loss: {loss}, loss_reduced: {loss_reduced}',
+                        #         file=stderr)
+                        pass
+                    else:
+                        loss_red = loss
+                        # tprb_m_red = tprb_m
+                        pass
+                    current_stats.update({ 'loss_r': loss_red })
 
                 current_stats.update({
-                        # 'loss_r': loss_red,
                         # 'tprb_m_r': tprb_m_red,
                         'uwr_min': uw_ratio.min(),
                         'uwr_max': uw_ratio.max()
@@ -236,21 +232,24 @@ class Chassis(object):
 
                 # print('after current_stats.update', file=stderr)
                 # stderr.flush()
+                
+                if False:
+                    self.writer.add_scalars('metrics', { k: current_stats[k].cpu() for k
+                        in ('loss', 'tprb_m') }, ss.optim_step)
 
-                self.writer.add_scalars('metrics', { k: current_stats[k].cpu() for k
-                    in ('loss', 'tprb_m') }, ss.optim_step)
-
-                self.writer.add_scalars('uwr', { k: current_stats[k].cpu() for k
-                    in ('uwr_min', 'uwr_max') }, ss.optim_step)
+                    self.writer.add_scalars('uwr', { k: current_stats[k].cpu() for k
+                        in ('uwr_min', 'uwr_max') }, ss.optim_step)
 
                 # print('after add_scalars (4)', file=stderr)
                 # stderr.flush()
 
 
                 # if not self.is_tpu or xm.is_master_ordinal():
-                if True:
+                if False:
                     netmisc.print_metrics(current_stats, self.replica_index, 100)
                     stderr.flush()
+                print(f'worker {self.replica_index}, batch {batch_num}', file=stderr)
+                stderr.flush()
 
 
     def save_checkpoint(self, position):
