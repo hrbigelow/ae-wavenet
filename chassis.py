@@ -179,7 +179,8 @@ class Chassis(object):
                 print(f'after uw_ratio calc', file=stderr)
                 stderr.flush()
 
-                for name, par in ss.model.named_parameters():
+                # for name, par in ss.model.named_parameters():
+                if False:
                     if self.writer is not None:
                         self.writer.add_histogram(name, par.data.cpu(), ss.optim_step)
                     print(f'adding parameter {name}', file=stderr)
