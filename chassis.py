@@ -99,7 +99,7 @@ class Chassis(object):
             self.state.to(device)
 
         self.state.init_torch_generator()
-        self.writer = SummaryWriter(hps.log_dir)
+        self.writer = SummaryWriter(f'{hps.log_dir}.{rank}')
 
     def train(self):
         hps = self.state.hps
