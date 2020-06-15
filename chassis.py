@@ -9,6 +9,7 @@ import util
 import netmisc
 import librosa
 import os.path
+import time
 
 try:
     import torch_xla.core.xla_model as xm
@@ -119,6 +120,8 @@ class Chassis(object):
 
         if ss.model.bn_type in ('vqvae', 'vqvae-ema'):
             ss.model.init_codebook(self.data_iter, 10000)
+
+        start_time = time.time()
         
         for batch_num, batch in enumerate(self.device_loader):
             wav, mel, voice, jitter, position = batch
@@ -233,7 +236,7 @@ class Chassis(object):
                 # print('after current_stats.update', file=stderr)
                 # stderr.flush()
                 
-                if False:
+                if batch_num in range(50, 100):
                     self.writer.add_scalars('metrics', { k: current_stats[k].cpu() for k
                         in ('loss', 'tprb_m') }, ss.optim_step)
 
@@ -243,12 +246,12 @@ class Chassis(object):
                 # print('after add_scalars (4)', file=stderr)
                 # stderr.flush()
 
-
                 # if not self.is_tpu or xm.is_master_ordinal():
-                if True:
+                if batch_num in range(25, 50) or batch_num in range(75, 100):
                     netmisc.print_metrics(current_stats, self.replica_index, 100)
                     stderr.flush()
-                print(f'worker {self.replica_index}, batch {batch_num}', file=stderr)
+                elapsed = time.time() - start_time
+                print(f'{elapsed}, worker {self.replica_index}, batch {batch_num}', file=stderr)
                 stderr.flush()
 
 
