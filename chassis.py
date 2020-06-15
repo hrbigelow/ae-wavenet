@@ -245,7 +245,7 @@ class Chassis(object):
 
 
                 # if not self.is_tpu or xm.is_master_ordinal():
-                if False:
+                if True:
                     netmisc.print_metrics(current_stats, self.replica_index, 100)
                     stderr.flush()
                 print(f'worker {self.replica_index}, batch {batch_num}', file=stderr)
