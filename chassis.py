@@ -176,8 +176,15 @@ class Chassis(object):
                 original = t.stack([p.norm() for p in pars_copy])
                 uw_ratio = updates / original
 
+                print(f'after uw_ratio calc', file=stderr)
+                stderr.flush()
+
                 for name, par in ss.model.named_parameters():
                     self.writer.add_histogram(name, par.data, ss.optim_step)
+
+                print(f'after add_histogram', file=stderr)
+                stderr.flush()
+
 
                 # par_names = [np[0] for np in ss.model.named_parameters()]
 
