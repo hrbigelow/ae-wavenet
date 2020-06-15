@@ -124,8 +124,8 @@ class Chassis(object):
             wav, mel, voice, jitter, position = batch
             global_step = len(ss.data.dataset) * position[0] + position[1]
 
-            print(f'replica {self.replica_index}, batch {batch_num}', file=stderr)
-            stderr.flush()
+            # print(f'replica {self.replica_index}, batch {batch_num}', file=stderr)
+            # stderr.flush()
             if (batch_num % hps.save_interval == 0 and batch_num != 0):
                 self.save_checkpoint(position)
 
@@ -142,26 +142,26 @@ class Chassis(object):
             quant, self.target, loss = self.state.model.run(wav, mel, voice, jitter) 
             self.probs = self.softmax(quant)
             self.mel_enc_input = mel
-            print(f'after model.run', file=stderr)
-            stderr.flush()
+            # print(f'after model.run', file=stderr)
+            # stderr.flush()
             loss.backward()
 
-            print(f'after loss.backward()', file=stderr)
-            stderr.flush()
+            # print(f'after loss.backward()', file=stderr)
+            # stderr.flush()
 
             if batch_num % hps.progress_interval == 0:
                 pars_copy = [p.data.clone() for p in ss.model.parameters()]
                 
-            print(f'after pars_copy', file=stderr)
-            stderr.flush()
+            # print(f'after pars_copy', file=stderr)
+            # stderr.flush()
 
             if self.is_tpu:
                 xm.optimizer_step(ss.optim)
             else:
                 ss.optim.step()
 
-            print(f'after optimizer_step', file=stderr)
-            stderr.flush()
+            # print(f'after optimizer_step', file=stderr)
+            # stderr.flush()
 
             ss.optim_step += 1
 
@@ -176,8 +176,8 @@ class Chassis(object):
                 original = t.stack([p.norm() for p in pars_copy])
                 uw_ratio = updates / original
 
-                print(f'after uw_ratio calc', file=stderr)
-                stderr.flush()
+                # print(f'after uw_ratio calc', file=stderr)
+                # stderr.flush()
 
                 # for name, par in ss.model.named_parameters():
                 if False:
@@ -189,8 +189,8 @@ class Chassis(object):
                 if self.is_tpu:
                     xm.rendezvous('add_histogram')
 
-                print(f'after add_histogram', file=stderr)
-                stderr.flush()
+                # print(f'after add_histogram', file=stderr)
+                # stderr.flush()
 
 
                 # par_names = [np[0] for np in ss.model.named_parameters()]
@@ -234,8 +234,8 @@ class Chassis(object):
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
                     current_stats.update(ss.model.encoder.metrics)
 
-                print('after current_stats.update', file=stderr)
-                stderr.flush()
+                # print('after current_stats.update', file=stderr)
+                # stderr.flush()
 
                 self.writer.add_scalars('metrics', { k: current_stats[k].cpu() for k
                     in ('loss', 'tprb_m') }, ss.optim_step)
@@ -243,8 +243,8 @@ class Chassis(object):
                 self.writer.add_scalars('uwr', { k: current_stats[k].cpu() for k
                     in ('uwr_min', 'uwr_max') }, ss.optim_step)
 
-                print('after add_scalars (4)', file=stderr)
-                stderr.flush()
+                # print('after add_scalars (4)', file=stderr)
+                # stderr.flush()
 
 
                 # if not self.is_tpu or xm.is_master_ordinal():
