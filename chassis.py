@@ -142,6 +142,8 @@ class Chassis(object):
             quant, self.target, loss = self.state.model.run(wav, mel, voice, jitter) 
             self.probs = self.softmax(quant)
             self.mel_enc_input = mel
+            print(f'after model.run', file=stderr)
+            stderr.flush()
             loss.backward()
 
             print(f'after loss.backward()', file=stderr)
@@ -150,11 +152,16 @@ class Chassis(object):
             if batch_num % hps.progress_interval == 0:
                 pars_copy = [p.data.clone() for p in ss.model.parameters()]
                 
+            print(f'after pars_copy', file=stderr)
+            stderr.flush()
 
             if self.is_tpu:
                 xm.optimizer_step(ss.optim)
             else:
                 ss.optim.step()
+
+            print(f'after optimizer_step', file=stderr)
+            stderr.flush()
 
             ss.optim_step += 1
 
