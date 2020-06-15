@@ -144,6 +144,9 @@ class Chassis(object):
             self.mel_enc_input = mel
             loss.backward()
 
+            print(f'after loss.backward()', file=stderr)
+            stderr.flush()
+
             if batch_num % hps.progress_interval == 0:
                 pars_copy = [p.data.clone() for p in ss.model.parameters()]
                 
