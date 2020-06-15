@@ -220,11 +220,18 @@ class Chassis(object):
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
                     current_stats.update(ss.model.encoder.metrics)
 
+                print('after current_stats.update', file=stderr)
+                stderr.flush()
+
                 self.writer.add_scalars('metrics', { k: current_stats[k] for k
                     in ('loss', 'tprb_m') }, ss.optim_step)
 
                 self.writer.add_scalars('uwr', { k: current_stats[k] for k
                     in ('uwr_min', 'uwr_max') }, ss.optim_step)
+
+                print('after current_stats.update', file=stderr)
+                stderr.flush()
+
 
                 # if not self.is_tpu or xm.is_master_ordinal():
                 if True:
