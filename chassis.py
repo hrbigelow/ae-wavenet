@@ -99,7 +99,9 @@ class Chassis(object):
             self.state.to(device)
 
         self.state.init_torch_generator()
-        self.writer = SummaryWriter(f'{hps.log_dir}.{rank}')
+        if rank == 0:
+            self.writer = SummaryWriter(f'{hps.log_dir}.{rank}')
+        else self.writer = None
 
     def train(self):
         hps = self.state.hps
@@ -180,7 +182,11 @@ class Chassis(object):
                 stderr.flush()
 
                 for name, par in ss.model.named_parameters():
-                    self.writer.add_histogram(name, par.data, ss.optim_step)
+                    if self.writer is not None:
+                        self.writer.add_histogram(name, par.data, ss.optim_step)
+
+                if self.is_tpu:
+                    xm.rendezvous('add_histogram')
 
                 print(f'after add_histogram', file=stderr)
                 stderr.flush()
