@@ -179,7 +179,8 @@ class Chassis(object):
                 print(f'after uw_ratio calc', file=stderr)
                 stderr.flush()
 
-                self.writer.add_scalar('test', 9834, ss.optim_step)
+                self.writer.add_scalar('test', torch.tensor([4.6],
+                    device=t.device('cpu'), ss.optim_step)
                 # for name, par in ss.model.named_parameters():
                 #     if self.writer is not None:
                 #         self.writer.add_histogram(name, par.data, ss.optim_step)
