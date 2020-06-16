@@ -234,8 +234,8 @@ class Chassis(object):
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
                     current_stats.update(ss.model.encoder.metrics)
 
-                print('after current_stats.update', file=stderr)
-                stderr.flush()
+                # print('after current_stats.update', file=stderr)
+                # stderr.flush()
                 
                 # if batch_num in range(50, 100):
                 self.writer.add_scalars('metrics', { k: current_stats[k].cpu() for k
