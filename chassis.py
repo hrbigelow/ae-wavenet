@@ -12,6 +12,7 @@ import os.path
 import time
 
 try:
+    import torch_xla
     import torch_xla.core.xla_model as xm
     import torch_xla.distributed.parallel_loader as pl
 except ModuleNotFoundError:
@@ -145,26 +146,26 @@ class Chassis(object):
             quant, self.target, loss = self.state.model.run(wav, mel, voice, jitter) 
             self.probs = self.softmax(quant)
             self.mel_enc_input = mel
-            print(f'after model.run', file=stderr)
-            stderr.flush()
+            # print(f'after model.run', file=stderr)
+            # stderr.flush()
             loss.backward()
 
-            print(f'after loss.backward()', file=stderr)
-            stderr.flush()
+            # print(f'after loss.backward()', file=stderr)
+            # stderr.flush()
 
             if batch_num % hps.progress_interval == 0:
                 pars_copy = [p.data.clone() for p in ss.model.parameters()]
                 
-            print(f'after pars_copy', file=stderr)
-            stderr.flush()
+            # print(f'after pars_copy', file=stderr)
+            # stderr.flush()
 
             if self.is_tpu:
                 xm.optimizer_step(ss.optim)
             else:
                 ss.optim.step()
 
-            print(f'after optimizer_step', file=stderr)
-            stderr.flush()
+            # print(f'after optimizer_step', file=stderr)
+            # stderr.flush()
 
             ss.optim_step += 1
 
@@ -179,8 +180,8 @@ class Chassis(object):
                 original = t.stack([p.norm() for p in pars_copy])
                 uw_ratio = updates / original
 
-                print(f'after uw_ratio calc', file=stderr)
-                stderr.flush()
+                # print(f'after uw_ratio calc', file=stderr)
+                # stderr.flush()
 
                 # for name, par in ss.model.named_parameters():
                 if False:
@@ -192,8 +193,8 @@ class Chassis(object):
                 if self.is_tpu:
                     xm.rendezvous('add_histogram')
 
-                print(f'after add_histogram', file=stderr)
-                stderr.flush()
+                # print(f'after add_histogram', file=stderr)
+                # stderr.flush()
 
                 if False:
                     if self.is_tpu:
@@ -236,23 +237,23 @@ class Chassis(object):
                 print('after current_stats.update', file=stderr)
                 stderr.flush()
                 
-                if batch_num in range(50, 100):
-                    self.writer.add_scalars('metrics', { k: current_stats[k].cpu() for k
-                        in ('loss', 'tprb_m') }, ss.optim_step)
+                # if batch_num in range(50, 100):
+                self.writer.add_scalars('metrics', { k: current_stats[k].cpu() for k
+                    in ('loss', 'tprb_m') }, ss.optim_step)
 
-                    self.writer.add_scalars('uwr', { k: current_stats[k].cpu() for k
-                        in ('uwr_min', 'uwr_max') }, ss.optim_step)
+                self.writer.add_scalars('uwr', { k: current_stats[k].cpu() for k
+                    in ('uwr_min', 'uwr_max') }, ss.optim_step)
 
-                print('after add_scalars (4)', file=stderr)
-                stderr.flush()
+                # print('after add_scalars (4)', file=stderr)
+                # stderr.flush()
 
                 # if not self.is_tpu or xm.is_master_ordinal():
-                if batch_num in range(25, 50) or batch_num in range(75, 100):
-                    netmisc.print_metrics(current_stats, self.replica_index, 100)
-                    stderr.flush()
-                elapsed = time.time() - start_time
-                print(f'{elapsed}, worker {self.replica_index}, batch {batch_num}', file=stderr)
+                # if batch_num in range(25, 50) or batch_num in range(75, 100):
+                netmisc.print_metrics(current_stats, self.replica_index, 100)
                 stderr.flush()
+                elapsed = time.time() - start_time
+                # print(f'{elapsed}, worker {self.replica_index}, batch {batch_num}', file=stderr)
+                # stderr.flush()
 
 
     def save_checkpoint(self, position):
