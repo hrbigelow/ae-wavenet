@@ -97,7 +97,10 @@ class Chassis(object):
             self.state.to(device)
 
         self.state.init_torch_generator()
-        self.writer = SummaryWriter(f'{hps.log_dir}.{rank}')
+        if not self.is_tpu or xm.is_master_ordinal():
+            self.writer = SummaryWriter(f'{hps.log_dir}')
+        else:
+            self.writer = None
 
     def train(self):
         hps = self.state.hps
@@ -173,31 +176,29 @@ class Chassis(object):
                 original = t.stack([p.norm() for p in pars_copy])
                 uw_ratio = updates / original
 
-                # print(f'after uw_ratio calc', file=stderr)
-                # stderr.flush()
-
-                # print(f'after add_histogram', file=stderr)
-                # stderr.flush()
-
                 current_stats.update({
                        'uwr_min': uw_ratio.min(),
                        'uwr_max': uw_ratio.max()
                        })
 
-                if False:
-                    if self.is_tpu:
-                        loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
-                    else:
-                        loss_red = loss
-                    current_stats.update({ 'loss_r': loss_red })
+                if self.is_tpu:
+                    loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
+                    tprb_red = xm.mesh_reduce('mesh_tprb', tprb_m, reduce_mean)
+                else:
+                    loss_red = loss
+                    tprb_red = tprb_m
+
+                current_stats.update({ 'loss_r': loss_red })
+                current_stats.update({ 'tprb_r': tprb_red })
 
                 current_stats.update({
+                        'optim_step': ss.optim_step,
                         'gstep': len(ss.data.dataset) * position[0] + position[1],
                         'epoch': position[0],
                         'step': position[1],
                         'loss': loss,
                         'lrate': ss.optim.param_groups[0]['lr'],
-                        'tprb_m': tprb_m,
+                        # 'tprb_m': tprb_m,
                         # 'pk_d_m': avg_peak_dist
                         })
                 current_stats.update(ss.model.objective.metrics)
@@ -212,7 +213,8 @@ class Chassis(object):
 
                 if self.is_tpu:
                     xm.add_step_closure(
-                            self.train_update, args=(current_stats,))
+                            self.train_update,
+                            args=(current_stats))
                 else:
                     self.train_update(current_stats)
 
@@ -227,10 +229,10 @@ class Chassis(object):
         netmisc.print_metrics(stats, self.replica_index, 100)
         if self.writer:
             self.writer.add_scalars('metrics', { k: stats[k].item() for k
-                in ('loss', 'tprb_m') }, self.state.optim_step)
+                in ('loss_r', 'tprb_r') }, stats['optim_step'])
 
             self.writer.add_scalars('uwr', { k: stats[k].item() for k
-                in ('uwr_min', 'uwr_max') }, self.state.optim_step)
+                in ('uwr_min', 'uwr_max') }, stats['optim_step'])
 
         
     def save_checkpoint(self, position):
