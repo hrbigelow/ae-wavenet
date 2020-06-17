@@ -164,9 +164,6 @@ class Chassis(object):
             else:
                 ss.optim.step()
 
-            # print(f'after optimizer_step', file=stderr)
-            # stderr.flush()
-
             ss.optim_step += 1
 
             if ss.model.bn_type == 'vqvae-ema' and ss.data.global_step == 10000:
@@ -175,23 +172,13 @@ class Chassis(object):
             tprb_m = self.avg_prob_target()
 
             if batch_num % hps.progress_interval == 0:
-                iterator = zip(pars_copy, ss.model.named_parameters())
-                updates = t.stack([t.norm(c - np[1].data) for c, np in iterator])
-                original = t.stack([p.norm() for p in pars_copy])
-                uw_ratio = updates / original
+                # iterator = zip(pars_copy, ss.model.named_parameters())
+                # updates = t.stack([t.norm(c - np[1].data) for c, np in iterator])
+                # original = t.stack([p.norm() for p in pars_copy])
+                # uw_ratio = updates / original
 
                 # print(f'after uw_ratio calc', file=stderr)
                 # stderr.flush()
-
-                # for name, par in ss.model.named_parameters():
-                if False:
-                    if self.writer is not None:
-                        self.writer.add_histogram(name, par.data.cpu(), ss.optim_step)
-                    print(f'adding parameter {name}', file=stderr)
-                    stderr.flush()
-
-                if self.is_tpu:
-                    xm.rendezvous('add_histogram')
 
                 # print(f'after add_histogram', file=stderr)
                 # stderr.flush()
@@ -199,14 +186,8 @@ class Chassis(object):
                 if False:
                     if self.is_tpu:
                         loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
-                        # tprb_m_red = xm.mesh_reduce('mesh_tprb_m', tprb_m, reduce_mean)
-                        # print(f'index: {index}, loss: {loss}, loss_reduced: {loss_reduced}',
-                        #         file=stderr)
-                        pass
                     else:
                         loss_red = loss
-                        # tprb_m_red = tprb_m
-                        pass
                     current_stats.update({ 'loss_r': loss_red })
 
                 current_stats.update({
@@ -234,28 +215,29 @@ class Chassis(object):
                 if ss.model.bn_type in ('vqvae', 'vqvae-ema', 'ae', 'vae'):
                     current_stats.update(ss.model.encoder.metrics)
 
-                # print('after current_stats.update', file=stderr)
-                # stderr.flush()
-                
-                # if batch_num in range(50, 100):
-                self.writer.add_scalars('metrics', { k: current_stats[k].cpu() for k
-                    in ('loss', 'tprb_m') }, ss.optim_step)
-
-                self.writer.add_scalars('uwr', { k: current_stats[k].cpu() for k
-                    in ('uwr_min', 'uwr_max') }, ss.optim_step)
-
-                # print('after add_scalars (4)', file=stderr)
-                # stderr.flush()
+                if self.is_tpu:
+                    xm.add_step_closure(
+                            self.train_update, args=(current_stats))
+                else:
+                    self.train_update(current_stats)
 
                 # if not self.is_tpu or xm.is_master_ordinal():
                 # if batch_num in range(25, 50) or batch_num in range(75, 100):
-                netmisc.print_metrics(current_stats, self.replica_index, 100)
                 stderr.flush()
                 elapsed = time.time() - start_time
                 # print(f'{elapsed}, worker {self.replica_index}, batch {batch_num}', file=stderr)
                 # stderr.flush()
 
+    def train_update(self, stats):
+        netmisc.print_metrics(stats, self.replica_index, 100)
+        if self.writer:
+            self.writer.add_scalars('metrics', { k: stats[k].item() for k
+                in ('loss', 'tprb_m') }, ss.optim_step)
 
+            self.writer.add_scalars('uwr', { k: stats[k].item() for k
+                in ('uwr_min', 'uwr_max') }, ss.optim_step)
+
+        
     def save_checkpoint(self, position):
         global_step = len(self.state.data.dataset) * position[0] + position[1]
         ckpt_file = self.ckpt_path.path(global_step.item())
