@@ -231,10 +231,10 @@ class Chassis(object):
         netmisc.print_metrics(stats, self.replica_index, 100)
         if self.writer:
             self.writer.add_scalars('metrics', { k: stats[k].item() for k
-                in ('loss', 'tprb_m') }, ss.optim_step)
+                in ('loss', 'tprb_m') }, self.state.optim_step)
 
             self.writer.add_scalars('uwr', { k: stats[k].item() for k
-                in ('uwr_min', 'uwr_max') }, ss.optim_step)
+                in ('uwr_min', 'uwr_max') }, self.state.optim_step)
 
         
     def save_checkpoint(self, position):
