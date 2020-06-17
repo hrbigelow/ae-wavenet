@@ -172,10 +172,10 @@ class Chassis(object):
             tprb_m = self.avg_prob_target()
 
             if batch_num % hps.progress_interval == 0:
-                # iterator = zip(pars_copy, ss.model.named_parameters())
-                # updates = t.stack([t.norm(c - np[1].data) for c, np in iterator])
-                # original = t.stack([p.norm() for p in pars_copy])
-                # uw_ratio = updates / original
+                iterator = zip(pars_copy, ss.model.named_parameters())
+                updates = t.stack([t.norm(c - np[1].data) for c, np in iterator])
+                original = t.stack([p.norm() for p in pars_copy])
+                uw_ratio = updates / original
 
                 # print(f'after uw_ratio calc', file=stderr)
                 # stderr.flush()
@@ -183,10 +183,10 @@ class Chassis(object):
                 # print(f'after add_histogram', file=stderr)
                 # stderr.flush()
 
-                # current_stats.update({
-                #        'uwr_min': uw_ratio.min(),
-                #        'uwr_max': uw_ratio.max()
-                #        })
+                current_stats.update({
+                       'uwr_min': uw_ratio.min(),
+                       'uwr_max': uw_ratio.max()
+                       })
 
                 if False:
                     if self.is_tpu:
