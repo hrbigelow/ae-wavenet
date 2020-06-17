@@ -216,7 +216,7 @@ class Chassis(object):
 
                 if self.is_tpu:
                     xm.add_step_closure(
-                            self.train_update, args=(current_stats))
+                            self.train_update, args=(current_stats,))
                 else:
                     self.train_update(current_stats)
 
