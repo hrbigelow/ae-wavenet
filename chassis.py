@@ -73,8 +73,6 @@ class Chassis(object):
         if not self.is_tpu or xm.is_master_ordinal():
             print('Hyperparameters:\n', file=stderr)
             print('\n'.join(f'{k} = {v}' for k, v in hps.items()), file=stderr)
-        if self.is_tpu:
-            xm.rendezvous('print_hyperparameters')
 
         self.learning_rates = dict(zip(hps.learning_rate_steps,
             hps.learning_rate_rates))
@@ -85,8 +83,6 @@ class Chassis(object):
 
         self.ckpt_path = util.CheckpointPath(hps.ckpt_template, not self.is_tpu
                 or xm.is_master_ordinal())
-        if self.is_tpu:
-            xm.rendezvous('util_checkpoint_path')
 
         self.softmax = t.nn.Softmax(1) # input to this is (B, Q, N)
         self.hw = hps.hw
