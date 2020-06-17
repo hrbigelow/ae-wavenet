@@ -183,18 +183,17 @@ class Chassis(object):
                 # print(f'after add_histogram', file=stderr)
                 # stderr.flush()
 
+                # current_stats.update({
+                #        'uwr_min': uw_ratio.min(),
+                #        'uwr_max': uw_ratio.max()
+                #        })
+
                 if False:
                     if self.is_tpu:
                         loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
                     else:
                         loss_red = loss
                     current_stats.update({ 'loss_r': loss_red })
-
-                current_stats.update({
-                        # 'tprb_m_r': tprb_m_red,
-                        'uwr_min': uw_ratio.min(),
-                        'uwr_max': uw_ratio.max()
-                        })
 
                 current_stats.update({
                         'gstep': len(ss.data.dataset) * position[0] + position[1],
