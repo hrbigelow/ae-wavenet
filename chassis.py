@@ -100,7 +100,7 @@ class Chassis(object):
          
         if not self.is_tpu or xm.is_master_ordinal():
             print(f'attempting to create writer to {hps.log_dir}', file=stderr, flush=True)
-            # self.writer = SummaryWriter(f'{hps.log_dir}')
+            self.writer = SummaryWriter(log_dir=hps.log_dir)
             print(f'created SummaryWriter to {hps.log_dir}', file=stderr,
                     flush=True)
         else:
@@ -218,7 +218,7 @@ class Chassis(object):
                 if self.is_tpu:
                     xm.add_step_closure(
                             self.train_update,
-                            args=(current_stats))
+                            args=(current_stats,))
                 else:
                     self.train_update(current_stats)
 
