@@ -185,8 +185,11 @@ class Chassis(object):
                        })
 
                 if self.is_tpu:
-                    loss_red = xm.all_reduce('all_loss', loss, reduce_mean)
-                    tprb_red = xm.all_reduce('all_tprb', tprb_m, reduce_mean)
+                    count = torch_xla._XLAC._xla_get_replication_devices_count()
+                    loss_red, tprb_red = xm.all_reduce('sum', [loss, tprb_m],
+                            scale=1.0 / count)
+                    # loss_red = xm.all_reduce('all_loss', loss, reduce_mean)
+                    # tprb_red = xm.all_reduce('all_tprb', tprb_m, reduce_mean)
                 else:
                     loss_red = loss
                     tprb_red = tprb_m
