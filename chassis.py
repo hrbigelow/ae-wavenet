@@ -100,7 +100,11 @@ class Chassis(object):
          
         if not self.is_tpu or xm.is_master_ordinal():
             print(f'attempting to create writer to {hps.log_dir}', file=stderr, flush=True)
-            self.writer = SummaryWriter(f'{hps.log_dir}')
+            try:
+                self.writer = SummaryWriter(f'{hps.log_dir}')
+            except:
+                print('could not create SummaryWriter', file=stderr,
+                        flush=True)
             print(f'created SummaryWriter to {hps.log_dir}', file=stderr,
                     flush=True)
         else:
