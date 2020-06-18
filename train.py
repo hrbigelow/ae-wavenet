@@ -31,10 +31,8 @@ def _mp_fn(index, _hps, _dat_file):
             file=stderr, flush=True) 
 
     pre_inst_time = time.time()
-    print(f'Replica {index} instantiating Chassis...', end='', file=stderr,
-            flush=True)
     m = ch.Chassis(device, index, _hps, _dat_file)
-    print(f'done in {time.time() - pre_inst_time:3.5} seconds.', file=stderr, flush=True)
+    print(f'Created Chassis in {time.time() - pre_inst_time:3.5} seconds.', file=stderr, flush=True)
     # xm.rendezvous('init')
     m.train()
 
