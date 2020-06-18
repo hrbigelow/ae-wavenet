@@ -185,8 +185,8 @@ class Chassis(object):
                        })
 
                 if self.is_tpu:
-                    loss_red = xm.mesh_reduce('mesh_loss', loss, reduce_mean)
-                    tprb_red = xm.mesh_reduce('mesh_tprb', tprb_m, reduce_mean)
+                    loss_red = xm.all_reduce('all_loss', loss, reduce_mean)
+                    tprb_red = xm.all_reduce('all_tprb', tprb_m, reduce_mean)
                 else:
                     loss_red = loss
                     tprb_red = tprb_m
@@ -199,7 +199,7 @@ class Chassis(object):
                         'gstep': len(ss.data.dataset) * position[0] + position[1],
                         'epoch': position[0],
                         'step': position[1],
-                        'loss': loss,
+                        # 'loss': loss,
                         'lrate': ss.optim.param_groups[0]['lr'],
                         # 'tprb_m': tprb_m,
                         # 'pk_d_m': avg_peak_dist
