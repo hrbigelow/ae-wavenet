@@ -1,6 +1,8 @@
 from sys import stderr
 import torch as t
-from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
+# this SummaryWriter doesn't work with torch_xla, causes crash
+# from torch.utils.tensorboard import SummaryWriter
 import data
 import autoencoder_model as ae
 import mfcc_inverter as mi
