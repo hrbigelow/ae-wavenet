@@ -33,7 +33,7 @@ def _mp_fn(index, _hps, _dat_file):
     pre_inst_time = time.time()
     m = ch.Chassis(device, index, _hps, _dat_file)
     print(f'Created Chassis in {time.time() - pre_inst_time:3.5} seconds.', file=stderr, flush=True)
-    # xm.rendezvous('init')
+    xm.rendezvous('init')
     m.train()
 
 def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):

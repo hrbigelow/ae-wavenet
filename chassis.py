@@ -98,6 +98,7 @@ class Chassis(object):
 
         self.state.init_torch_generator()
          
+        print(f'before creating SummaryWriter', file=stderr, flush=True)
         if not self.is_tpu or xm.is_master_ordinal():
             self.writer = SummaryWriter(f'{hps.log_dir}')
             print(f'created SummaryWriter to {hps.log_dir}', file=stderr,
