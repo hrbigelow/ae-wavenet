@@ -24,20 +24,18 @@ def _mp_fn(index, _hps, _dat_file):
 
     # Acquires the (unique) Cloud TPU core corresponding to this process's index
     pre_dev_time = time.time()
-    print(f'Replica {index} acquiring a device...', end='', file=stderr)
     device = xm.xla_device()  
     device_str = xm.xla_real_devices([str(device)])[0]
     elapsed = time.time() - pre_dev_time
-    print(f'process {index} acquired {device_str} in {elapsed} seconds', file=stderr) 
-    stderr.flush()
+    print(f'process {index} acquired {device_str} in {elapsed} seconds',
+            file=stderr, flush=True) 
 
     pre_inst_time = time.time()
-    print(f'Replica {index} instantiating Chassis...', end='', file=stderr)
+    print(f'Replica {index} instantiating Chassis...', end='', file=stderr,
+            flush=True)
     m = ch.Chassis(device, index, _hps, _dat_file)
-    elapsed = time.time() - pre_inst_time
-    print(f'done in {elapsed} seconds.', file=stderr)
-    stderr.flush()
-    xm.rendezvous('init')
+    print(f'done in {time.time() - pre_inst_time:3.5} seconds.', file=stderr, flush=True)
+    # xm.rendezvous('init')
     m.train()
 
 def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
@@ -60,12 +58,12 @@ def run(dat_file, hps='mfcc_inverter,mfcc,train', **kwargs):
         # chs.state.model.print_geometry()
         chs.train()
     elif hps.hw == 'TPU':
-        print('Spawning new processes.', file=stderr)
-        stderr.flush()
+        print('Spawning new processes.', file=stderr, flush=True)
         xmp.spawn(_mp_fn, args=(hps, dat_file), nprocs=8, start_method='fork')
 
 
 if __name__ == '__main__':
-    print(sys.executable, ' '.join(arg for arg in sys.argv), file=stderr)
+    print(sys.executable, ' '.join(arg for arg in sys.argv), file=stderr,
+            flush=True)
     fire.Fire(run)
 
