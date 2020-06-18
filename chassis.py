@@ -97,8 +97,11 @@ class Chassis(object):
             self.state.to(device)
 
         self.state.init_torch_generator()
+         
         if not self.is_tpu or xm.is_master_ordinal():
             self.writer = SummaryWriter(f'{hps.log_dir}')
+            print(f'created SummaryWriter to {hps.log_dir}', file=stderr,
+                    flush=True)
         else:
             self.writer = None
 
