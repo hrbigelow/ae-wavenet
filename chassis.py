@@ -101,10 +101,7 @@ class Chassis(object):
         self.state.init_torch_generator()
          
         if not self.is_tpu or xm.is_master_ordinal():
-            print(f'attempting to create writer to {hps.log_dir}', file=stderr, flush=True)
             self.writer = SummaryWriter(log_dir=hps.log_dir)
-            print(f'created SummaryWriter to {hps.log_dir}', file=stderr,
-                    flush=True)
         else:
             self.writer = None
 
@@ -232,13 +229,15 @@ class Chassis(object):
                 # stderr.flush()
 
     def train_update(self, stats):
-        netmisc.print_metrics(stats, self.replica_index, 100)
+        if self.replica_index == 0:
+            netmisc.print_metrics(stats, self.replica_index, 100)
         if self.writer:
             self.writer.add_scalars('metrics', { k: stats[k].item() for k
                 in ('loss_r', 'tprb_r') }, stats['optim_step'])
 
             self.writer.add_scalars('uwr', { k: stats[k].item() for k
                 in ('uwr_min', 'uwr_max') }, stats['optim_step'])
+            self.writer.flush()
 
         
     def save_checkpoint(self, position):
