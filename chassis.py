@@ -180,6 +180,7 @@ class Chassis(object):
                 uw_ratio = updates / original
 
                 current_stats.update({
+                       'uwr': uw_ratio,
                        'uwr_min': uw_ratio.min(),
                        'uwr_max': uw_ratio.max()
                        })
@@ -238,7 +239,8 @@ class Chassis(object):
             self.writer.add_scalars('metrics', { k: stats[k].item() for k
                 in ('loss_r', 'tprb_r') }, stats['optim_step'])
 
-            self.writer.add_histogram('uwr_h', uw_ratio, stats['optim_step'])
+            self.writer.add_histogram('uwr_h', stats['uw_ratio'],
+                    stats['optim_step'])
             self.writer.add_scalars('uwr', { k: stats[k].item() for k
                 in ('uwr_min', 'uwr_max') }, stats['optim_step'])
             self.writer.flush()
