@@ -221,9 +221,9 @@ class Chassis(object):
                 if self.is_tpu:
                     xm.add_step_closure(
                             self.train_update,
-                            args=(writer_stats,))
+                            args=(writer_stats, current_stats))
                 else:
-                    self.train_update(writer_stats)
+                    self.train_update(writer_stats, current_stats)
 
                 # if not self.is_tpu or xm.is_master_ordinal():
                 # if batch_num in range(25, 50) or batch_num in range(75, 100):
@@ -232,14 +232,14 @@ class Chassis(object):
                 # print(f'{elapsed}, worker {self.replica_index}, batch {batch_num}', file=stderr)
                 # stderr.flush()
 
-    def train_update(self, stats):
+    def train_update(self, writer_stats, stdout_stats):
         if self.replica_index == 0:
-            netmisc.print_metrics(stats, self.replica_index, 100)
+            netmisc.print_metrics(stdout_stats, self.replica_index, 100)
         if self.writer:
-            self.writer.add_scalars('metrics', { k: stats[k].item() for k
-                in ('loss_r', 'tprb_r') }, stats['optim_step'])
+            self.writer.add_scalars('metrics', { k: writer_stats[k].item() for k
+                in ('loss_r', 'tprb_r') }, writer_stats['optim_step'])
 
-            self.writer.add_scalars('uw ratio', stats['uwr'], stats['optim_step'])
+            self.writer.add_scalars('uw ratio', writer_stats['uwr'], writer_stats['optim_step'])
             self.writer.flush()
 
         
