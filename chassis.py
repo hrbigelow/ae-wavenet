@@ -109,6 +109,7 @@ class Chassis(object):
         hps = self.state.hps
         ss = self.state 
         current_stats = {}
+        writer_stats = {}
 
         # for resuming the learning rate 
         sorted_lr_steps = sorted(self.learning_rates.keys())
@@ -175,15 +176,10 @@ class Chassis(object):
 
             if batch_num % hps.progress_interval == 0:
                 iterator = zip(pars_copy, ss.model.named_parameters())
-                updates = t.stack([t.norm(c - np[1].data) for c, np in iterator])
-                original = t.stack([p.norm() for p in pars_copy])
-                uw_ratio = updates / original
+                uw_ratio = { np[0]: t.norm(c - np[1].data) / c.norm() for c, np
+                        in iterator }
 
-                current_stats.update({
-                       'uwr': uw_ratio,
-                       'uwr_min': uw_ratio.min(),
-                       'uwr_max': uw_ratio.max()
-                       })
+                writer_stats.update({ 'uwr': uw_ratio })
 
                 if self.is_tpu:
                     count = torch_xla._XLAC._xla_get_replication_devices_count()
@@ -195,8 +191,12 @@ class Chassis(object):
                     loss_red = loss
                     tprb_red = tprb_m
 
-                current_stats.update({ 'loss_r': loss_red })
-                current_stats.update({ 'tprb_r': tprb_red })
+                writer_stats.update({ 
+                    'loss_r': loss_red,
+                    'tprb_r': tprb_red,
+                    'optim_step': ss.optim_step
+                    })
+
 
                 current_stats.update({
                         'optim_step': ss.optim_step,
@@ -221,9 +221,9 @@ class Chassis(object):
                 if self.is_tpu:
                     xm.add_step_closure(
                             self.train_update,
-                            args=(current_stats,))
+                            args=(writer_stats,))
                 else:
-                    self.train_update(current_stats)
+                    self.train_update(writer_stats)
 
                 # if not self.is_tpu or xm.is_master_ordinal():
                 # if batch_num in range(25, 50) or batch_num in range(75, 100):
@@ -239,10 +239,8 @@ class Chassis(object):
             self.writer.add_scalars('metrics', { k: stats[k].item() for k
                 in ('loss_r', 'tprb_r') }, stats['optim_step'])
 
-            self.writer.add_histogram('uwr_h', stats['uwr'],
+            self.writer.add_scalars('uwr_h', stats['uwr'],
                     stats['optim_step'])
-            self.writer.add_scalars('uwr', { k: stats[k].item() for k
-                in ('uwr_min', 'uwr_max') }, stats['optim_step'])
             self.writer.flush()
 
         
