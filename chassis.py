@@ -239,8 +239,7 @@ class Chassis(object):
             self.writer.add_scalars('metrics', { k: stats[k].item() for k
                 in ('loss_r', 'tprb_r') }, stats['optim_step'])
 
-            self.writer.add_scalars('uwr_h', stats['uwr'],
-                    stats['optim_step'])
+            self.writer.add_scalars('uw ratio', stats['uwr'], stats['optim_step'])
             self.writer.flush()
 
         
