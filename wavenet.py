@@ -30,8 +30,8 @@ class GatedResidualCondConv(nn.Module):
         self.proj_gate = nn.Conv1d(n_cond, hps.n_dil, kernel_size=1, bias=False)
         self.dil_skp = nn.Conv1d(hps.n_dil, hps.n_skp, kernel_size=1, bias=False)
         
-        # if not final_layer:
-        self.dil_res = nn.Conv1d(hps.n_dil, hps.n_res, kernel_size=1, bias=False)
+        if not final_layer:
+            self.dil_res = nn.Conv1d(hps.n_dil, hps.n_res, kernel_size=1, bias=False)
 
         # The dilated autoregressive convolution produces an output at the
         # right-most position of the receptive field.  (At the very end of a
@@ -102,11 +102,11 @@ class GatedResidualCondConv(nn.Module):
         z = torch.tanh(filt) * torch.sigmoid(gate)
         skp = self.dil_skp(z[:,:,sl:])
 
-        # if self.final_layer:
-            # sig = None
-        # else:
-        sig = self.dil_res(z)
-        sig += x[:,:,lw:]
+        if self.final_layer:
+            sig = x[:,:,lw:] 
+        else:
+            sig = self.dil_res(z)
+            sig += x[:,:,lw:]
 
         return sig, skp 
 
