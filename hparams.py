@@ -5,7 +5,10 @@ DEFAULTS = {}
 
 class Hyperparams(dict):
     def __getattr__(self, attr):
-        return self[attr]
+        try:
+            return self[attr]
+        except KeyError:
+            raise AttributeError(f'attribute {attr} undefined')
 
     def __setattr__(self, attr, value):
         self[attr] = value
@@ -96,4 +99,13 @@ train_tpu = Hyperparams(
 HPARAMS_REGISTRY["train"] = train_tpu
 DEFAULTS["train"] = train_tpu
 
+test = Hyperparams(
+    sample_rate = 16000,
+    output_dir = '/tmp',
+    dec_n_replicas = 1,
+    jit_script_path = None
+)
+
+HPARAMS_REGISTRY["test"] = test
+DEFAULTS["test"] = test
 

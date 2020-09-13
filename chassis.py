@@ -31,7 +31,8 @@ class GPULoaderIter(object):
 
     def __next__(self):
         items = next(self.loader_iter)
-        return tuple(item.to(self.device) for item in items)
+        return tuple(item.to(self.device) if isinstance(item, t.Tensor) else
+            item for item in items)
 
 
 def reduce_add(vlist):
@@ -280,56 +281,54 @@ class InferenceChassis(object):
     """
     Coordinates construction of model and dataset for running inference
     """
-    def __init__(self, mode, opts):
-        self.output_dir = opts.output_dir
-        self.n_replicas = opts.dec_n_replicas
-        self.data_write_tmpl = opts.data_write_tmpl
+    def __init__(self, device, index, hps, dat_file):
+        self.output_dir = hps.output_dir
+        self.n_replicas = hps.dec_n_replicas
+        try:
+            self.data_write_tmpl = hps.data_write_tmpl
+        except AttributeError:
+            self.data_write_tmpl = None
 
-        self.state = ckpt.InferenceState()
-        self.state.load(opts.ckpt_file, opts.dat_file)
+        self.state = ckpt.InferenceState(hps, dat_file, hps.ckpt_file)
         self.state.model.wavenet.set_n_replicas(self.n_replicas)
         self.state.model.eval()
+        self.sample_rate = hps.sample_rate
 
-        if opts.hwtype in ('GPU', 'CPU'):
-            if opts.hwtype == 'GPU':
-                self.device = t.device('cuda')
-            else:
-                self.device = t.device('cpu')
-            self.data_loader = self.state.data_loader
-            self.data_loader.set_target_device(self.device)
-            self.data_iter = GPULoaderIter(iter(self.data_loader))
+        if hps.hw in ('GPU', 'CPU'):
+            self.device_loader = GPULoaderIter(self.state.data.loader, device)
+            self.state.to(device)
         else:
             import torch_xla.core.xla_model as xm
             import torch_xla.distributed.parallel_loader as pl
-            self.device = xm.xla_device()
-            self.data_loader = pl.ParallelLoader(self.state.data_loader, [self.device])
-            self.data_iter = TPULoaderIter(self.data_loader, self.device)
+            para_loader = pl.ParallelLoader(self.state.data.loader, [device])
+            self.device_loader = para_loader.per_device_loader(device) 
+            self.num_devices = xm.xrt_world_size()
+            self.state.to(device)
 
     def infer(self, model_scr=None):
-        self.state.to(self.device)
-        sample_rate = self.state.data_loader.dataset.sample_rate
         n_quant = self.state.model.wavenet.n_quant
 
-        for vb in self.data_iter:
+        for batch in self.device_loader:
+            wav, mel, voice_idx, jitter_idx, file_paths, position = batch
             if self.data_write_tmpl:
                 dc = t.jit.script(DataContainer({
-                    'mel': vb.mel,
-                    'wav': vb.wav,
-                    'voice': vb.voice_idx,
-                    'jitter': vb.jitter_idx
+                    'mel': mel,
+                    'wav': wav,
+                    'voice': voice_idx,
+                    'jitter': jitter_idx
                     }))
                 dc.save(self.data_write_tmpl)
                 print('saved {}'.format(self.data_write_tmpl))
 
             out_template = os.path.join(self.output_dir,
-                    os.path.basename(os.path.splitext(vb.file_path)[0])
+                    os.path.basename(os.path.splitext(file_paths[0])[0])
                     + '.{}.wav')
 
             if model_scr:
                 with t.no_grad():
-                    wav = model_scr(vb)
+                    wav = model_scr(wav, mel, voice_idx, jitter_idx)
             else:
-                wav = self.state.model(vb)
+                wav = self.state.model(wav, mel, voice_idx, jitter_idx)
 
             wav_orig, wav_sample = wav[0,...], wav[1:,...]
 
@@ -337,11 +336,11 @@ class InferenceChassis(object):
             for i in range(self.n_replicas):
                 wav_final = util.mu_decode_torch(wav_sample[i], n_quant)
                 path = out_template.format('rep' + str(i)) 
-                librosa.output.write_wav(path, wav_final.cpu().numpy(), sample_rate) 
+                librosa.output.write_wav(path, wav_final.cpu().numpy(), self.sample_rate) 
 
             wav_final = util.mu_decode_torch(wav_orig, n_quant)
             path = out_template.format('orig') 
-            librosa.output.write_wav(path, wav_final.cpu().numpy(), sample_rate) 
+            librosa.output.write_wav(path, wav_final.cpu().numpy(), self.sample_rate) 
 
             print('Wrote {}'.format(
                 out_template.format('0-'+str(self.n_replicas-1))))

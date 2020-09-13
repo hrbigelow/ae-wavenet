@@ -20,7 +20,7 @@ class Checkpoint(object):
     def __init__(self, override_hps, dat_file, train_mode=True, ckpt_file=None,
             num_replicas=1, rank=0):
         """
-        Initialize total state.  If ckpt_file is provided, hps will be ignored. 
+        Initialize total state
         """
         if ckpt_file is not None:
             ckpt = t.load(ckpt_file)
@@ -139,37 +139,29 @@ class InferenceState(object):
     Restores a trained model for inference
     """
 
-    def __init__(self, model=None, dataset=None):
-        self.model = model 
-        self.data_loader = data.WavLoader(dataset)
+    def __init__(self, override_hps, dat_file, ckpt_file):
+
+        ckpt = t.load(ckpt_file)
+        if 'hps' in ckpt:
+            hps = hparams.Hyperparams(**ckpt['hps'])
+        hps.update(override_hps)
+
+        if hps.global_model == 'autoencoder':
+            self.model = ae.AutoEncoder(hps)
+        elif hps.global_model == 'mfcc_inverter':
+            self.model = mi.MfccInverter(hps)
+
+        sub_state = { k: v for k, v in ckpt['model_state_dict'].items() if
+                '_lead' not in k and 'left_wing_size' not in k }
+        self.model.load_state_dict(sub_state, strict=False)
+        self.model.override(n_win_batch=1)
+
+        self.data = data.DataProcessor(hps, dat_file, self.model.mfcc,
+                slice_size=None, train_mode=False)
+
         self.device = None
-        self.torch_rng_state = t.get_rng_state()
-        if t.cuda.is_available():
-            self.torch_cuda_rng_states = t.cuda.get_rng_state_all()
-        else:
-            self.torch_cuda_rng_states = None
 
     def to(self, device):
         self.device = device
         self.model.to(device)
-
-    def load(self, ckpt_file, dat_file):
-        ckpt = t.load(ckpt_file)
-
-        # This is the required order for model and data init 
-        self.model = pickle.loads(ckpt['model'])
-
-        # win batch of 1 is inference mode
-        self.model.override(n_win_batch=1)
-
-        # ignore the pickled dataset characteristics
-        dataset = data.MfccInference(pickle.loads(ckpt['dataset']), dat_file)
-
-        # dataset.load_data(dat_file)
-        self.model.post_init(dataset)
-        sub_state = { k: v for k, v in ckpt['model_state_dict'].items() if '_lead' not
-                in k and 'left_wing_size' not in k }
-        self.model.load_state_dict(sub_state, strict=False)
-        dataset.post_init(self.model)
-        self.data_loader = data.WavLoader(dataset)
 

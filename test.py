@@ -4,68 +4,72 @@
 
 import sys
 from sys import stderr
-import torch
+import torch as t
+import fire
 import parse_tools
 import checkpoint
 import chassis
+from hparams import setup_hparams, Hyperparams
 
 
-def main():
-    if len(sys.argv) == 1 or sys.argv[1] not in ('inverter'):
-        print(parse_tools.test_usage, file=stderr)
-        return
+def run(dat_file, hps='mfcc_inverter,mfcc,test', **kwargs):
+    hps = setup_hparams(hps, kwargs)
+    assert hps.hw in ('GPU', 'CPU'), 'Currently, Only GPU or CPU supported for sampling'
 
-    mode = sys.argv[1]
-    del sys.argv[1]
+    if 'random_seed' not in hps:
+        hps.random_seed = 2507
 
-    if mode == 'inverter':
-        inv_parser = parse_tools.wav_gen_parser()
-        opts = parse_tools.two_stage_parse(inv_parser)
-
-    if opts.hwtype == 'GPU':
-        if not torch.cuda.is_available():
+    if hps.hw == 'GPU':
+        if not t.cuda.is_available():
             raise RuntimeError('GPU requested but not available')
-    elif opts.hwtype in ('TPU', 'TPU-single'):
-        import torch_xla.distributed.xla_multiprocessing as xmp
-    elif opts.hwtype == 'CPU':
+    # elif hps.hw in ('TPU', 'TPU-single'):
+        # import torch_xla.distributed.xla_multiprocessing as xmp
+    elif hps.hw == 'CPU':
         pass
     else:
         raise RuntimeError(
                 ('Invalid device {} requested.  ' 
-                + 'Must be GPU or TPU').format(opts.hwtype))
+                + 'Must be GPU or TPU').format(hps.hw))
 
-    print('Using {}'.format(opts.hwtype), file=stderr)
+    print('Using {}'.format(hps.hw), file=stderr)
     stderr.flush()
 
     # generate requested data
     # n_quant = ch.state.model.wavenet.n_quant
 
-    assert opts.hwtype in ('GPU', 'CPU'), 'Currently, Only GPU or CPU supported for sampling'
 
-    if opts.hwtype in ('CPU', 'GPU'):
-        chs = chassis.InferenceChassis(mode, opts)
-        if opts.jit_script_path:
-            # data_scr = torch.jit.script(chs.state.data_loader.dataset)
-            model_scr = torch.jit.script(chs.state.model.wavenet)
-            model_scr.save(opts.jit_script_path)
+    if hps.hw in ('CPU', 'GPU'):
+        if hps.hw == 'GPU':
+            device = t.device('cuda')
+            hps.n_loader_workers = 0
+        else:
+            device = t.device('cpu')
+
+        chs = chassis.InferenceChassis(device, 0, hps, dat_file)
+        if hps.jit_script_path:
+            # data_scr = t.jit.script(chs.state.data_loader.dataset)
+            model_scr = t.jit.script(chs.state.model.wavenet)
+            model_scr.save(hps.jit_script_path)
             model_scr.to(chs.device)
             # print(model_scr.code)
-            print('saved {}'.format(opts.jit_script_path))
+            print('saved {}'.format(hps.jit_script_path))
             chs.infer(model_scr)
             return
 
         # chs.state.model.print_geometry()
         chs.infer()
-    elif opts.hwtype == 'TPU':
-        def _mp_fn(index, mode, opts):
-            m = chassis.InferenceChassis(mode, opts)
-            m.infer(index)
-        xmp.spawn(_mp_fn, args=(mode, opts), nprocs=1, start_method='fork')
-    elif opts.hwtype == 'TPU-single':
-        chs = chassis.InferenceChassis(mode, opts)
-        chs.infer()
+    # elif hps.hw == 'TPU':
+        # def _mp_fn(index, mode, hps):
+            # m = chassis.InferenceChassis(mode, hps)
+            # m.infer(index)
+        # xmp.spawn(_mp_fn, args=(mode, hps), nprocs=1, start_method='fork')
+    # elif hps.hw == 'TPU-single':
+        # chs = chassis.InferenceChassis(mode, hps)
+        # chs.infer()
 
 
 if __name__ == '__main__':
-    main()
+    print(sys.executable, ' '.join(arg for arg in sys.argv), file=stderr,
+            flush=True)
+    fire.Fire(run)
 

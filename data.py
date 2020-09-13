@@ -3,7 +3,7 @@ from sys import stderr, exit
 import pickle
 import numpy as np
 import torch as t
-from torch.utils.data import Dataset, DataLoader, Sampler
+from torch.utils.data import Dataset, DataLoader, Sampler, SequentialSampler
 import jitter
 from torch import nn
 import vconv
@@ -186,7 +186,7 @@ class WavFileDataset(Dataset):
     """
     Returns entire wav files
     """
-    def __init__(self, hps):
+    def __init__(self):
         super().__init__()
 
     def load_data(self, dat_file):
@@ -202,7 +202,7 @@ class WavFileDataset(Dataset):
         return len(self.samples) 
 
     def __getitem__(self, item):
-        sam = ds.samples[item]
+        sam = self.samples[item]
         return (self.snd_data[sam.wav_b:sam.wav_e],
                 sam.voice_index,
                 sam.file_path)
