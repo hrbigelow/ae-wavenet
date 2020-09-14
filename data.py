@@ -85,24 +85,28 @@ SpokenSample = namedtuple('SpokenSample', [
 
 
 class LoopingRandomSampler(Sampler):
-    def __init__(self, dataset, num_replicas=1, rank=0):
+    def __init__(self, dataset, num_replicas=1, rank=0, start_epoch=0):
         super().__init__(dataset)
         self.dataset = dataset
         self.num_replicas = num_replicas
         self.rank = rank
+        self.epoch = start_epoch
         print(f'LoopingRandomSampler with {self.rank} out of {self.num_replicas}', file=stderr)
 
     def __iter__(self):
         def _gen():
             while True:
+                g = t.Generator()
+                g.manual_seed(self.epoch * self.num_replicas + self.rank)
                 n = len(self.dataset)
                 vals = list(range(self.rank, n, self.num_replicas))
-                perms = t.randperm(len(vals)).tolist()
+                perms = t.randperm(len(vals), generator=g).tolist()
                 print(f'LoopingRandomSampler: first 10 perms: {perms[:10]}',
                         file=stderr)
                 indices = [vals[i] for i in perms]
                 for i in indices:
                     yield i
+            self.epoch += 1
 
         return _gen()
 
@@ -251,7 +255,8 @@ class DataProcessor():
             stderr.flush()
             self.dataset = TrackerDataset(slice_dataset, start_epoch,
                     start_step, sampling_freq=num_replicas)
-            self.sampler = LoopingRandomSampler(self.dataset, num_replicas, rank)
+            self.sampler = LoopingRandomSampler(self.dataset, num_replicas,
+                    rank, start_epoch)
             self.loader = DataLoader(self.dataset, sampler=self.sampler,
                     # If set >0, multiprocessing is used, which prevents
                     # getting accurate position information
