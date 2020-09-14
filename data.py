@@ -98,6 +98,8 @@ class LoopingRandomSampler(Sampler):
                 n = len(self.dataset)
                 vals = list(range(self.rank, n, self.num_replicas))
                 perms = t.randperm(len(vals)).tolist()
+                print(f'LoopingRandomSampler: first 10 perms: {perms[:10]}',
+                        file=stderr)
                 indices = [vals[i] for i in perms]
                 for i in indices:
                     yield i
