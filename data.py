@@ -106,7 +106,7 @@ class LoopingRandomSampler(Sampler):
                 indices = [vals[i] for i in perms]
                 for i in indices:
                     yield i
-            self.epoch += 1
+                self.epoch += 1
 
         return _gen()
 
