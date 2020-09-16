@@ -140,8 +140,10 @@ class Chassis(object):
             if hps.skip_loop_body:
                 continue
 
-            if ss.data.global_step in self.learning_rates:
-                ss.update_learning_rate(self.learning_rates[ss.data.global_step])
+            lr_index = util.greatest_lower_bound(sorted_lr_steps, ss.data.global_step)
+            ss.update_learning_rate(self.learning_rates[sorted_lr_steps[lr_index]])
+            # if ss.data.global_step in self.learning_rates:
+                # ss.update_learning_rate(self.learning_rates[ss.data.global_step])
 
             if ss.model.bn_type == 'vae' and ss.step in self.anneal_schedule:
                 ss.model.objective.update_anneal_weight(self.anneal_schedule[ss.data.global_step])
