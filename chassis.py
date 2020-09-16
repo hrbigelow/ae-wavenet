@@ -140,7 +140,7 @@ class Chassis(object):
             if hps.skip_loop_body:
                 continue
 
-            lr_index = util.greatest_lower_bound(sorted_lr_steps, ss.data.global_step)
+            lr_index = util.greatest_lower_bound(sorted_lr_steps, global_step)
             ss.update_learning_rate(self.learning_rates[sorted_lr_steps[lr_index]])
             # if ss.data.global_step in self.learning_rates:
                 # ss.update_learning_rate(self.learning_rates[ss.data.global_step])
@@ -203,8 +203,8 @@ class Chassis(object):
 
                 current_stats.update({
                         'optim_step': ss.optim_step,
-                        # 'gstep': len(ss.data.dataset) * position[0] + position[1],
-                        'gstep': ss.data.global_step,
+                        'gstep': global_step,
+                        # 'gstep': ss.data.global_step,
                         'epoch': position[0],
                         'step': position[1],
                         # 'loss': loss,
