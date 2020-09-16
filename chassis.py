@@ -203,7 +203,8 @@ class Chassis(object):
 
                 current_stats.update({
                         'optim_step': ss.optim_step,
-                        'gstep': len(ss.data.dataset) * position[0] + position[1],
+                        # 'gstep': len(ss.data.dataset) * position[0] + position[1],
+                        'gstep': ss.data.global_step,
                         'epoch': position[0],
                         'step': position[1],
                         # 'loss': loss,
